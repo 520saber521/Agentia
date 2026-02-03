@@ -25,6 +25,41 @@ from validation.validator import ValidationError, validate_message  # noqa: E402
 
 from cli.config import load_config, resolve_router_url, resolve_workspace  # noqa: E402
 from launcher import launch as launch_windows  # noqa: E402
+from scheduler import (  # noqa: E402
+    TaskScheduler,
+    ResultAggregator,
+    judge_complexity,
+    SPECIALIZED_AGENTS,
+)
+from scheduler.complexity import TaskInput  # noqa: E402
+from scheduler.design import (  # noqa: E402
+    analyze_and_design,
+    print_design_for_review,
+    DesignStatus,
+    ProjectType,
+)
+from scheduler.analyzer import (  # noqa: E402
+    analyze_project,
+    analyze_impact,
+    format_project_analysis,
+    format_impact_analysis,
+)
+from scheduler.collaboration import (  # noqa: E402
+    create_collaboration_hub,
+    CollaborationHub,
+)
+
+# 全局协作中心（在启动时初始化）
+_collaboration_hub: Optional[CollaborationHub] = None
+
+
+def _get_collaboration_hub(client=None) -> CollaborationHub:
+    """获取或创建协作中心"""
+    global _collaboration_hub
+    if _collaboration_hub is None:
+        send_fn = client.send_message if client else None
+        _collaboration_hub = create_collaboration_hub(send_fn)
+    return _collaboration_hub
 
 
 def _now_ms() -> int:
@@ -1157,6 +1192,497 @@ def handle_listen(args: argparse.Namespace) -> None:
         return
 
 
+def handle_run(args: argparse.Namespace) -> None:
+    """
+    智能任务入口
+
+    自动判断任务复杂度，简单任务单Agent处理，复杂任务多Agent并行协作。
+    """
+    client = RouterClient(args.router_url)
+
+    # 1. 解析任务输入
+    files = _parse_csv(args.files) if args.files else []
+    task = TaskInput(
+        description=args.task,
+        files=files,
+        context=args.context,
+    )
+
+    # 2. 创建调度器并调度任务
+    scheduler = TaskScheduler(router_client=client)
+    schedule_result = scheduler.schedule(task)
+
+    # 3. 输出调度结果
+    print(schedule_result.summary)
+    print()
+
+    # 4. 如果是 dry-run 模式，只输出计划
+    if args.dry_run:
+        _print_json({
+            "status": "dry_run",
+            "mode": schedule_result.mode,
+            "task_id": schedule_result.task_id,
+            "complexity": {
+                "level": schedule_result.complexity.level,
+                "score": schedule_result.complexity.score,
+                "reasons": schedule_result.complexity.reasons,
+                "domains": list(schedule_result.complexity.domains),
+            },
+            "assignments": [
+                {
+                    "agent": a.agent,
+                    "task_id": a.task_id,
+                    "domain": a.subtask.domain,
+                    "description": a.subtask.description[:100],
+                }
+                for a in schedule_result.assignments
+            ],
+        })
+        return
+
+    # 5. 执行调度
+    exec_result = scheduler.execute(schedule_result)
+
+    # 6. 如果需要等待结果
+    if args.wait and exec_result.get("status") == "executed":
+        task_ids = [t["task_id"] for t in exec_result.get("sent_tasks", [])]
+        if task_ids:
+            print(f"\n等待 {len(task_ids)} 个子任务完成...")
+            aggregator = ResultAggregator(router_client=client)
+            results = aggregator.wait_for_results(
+                task_ids,
+                timeout=args.wait_timeout,
+                trace_fn=lambda tid: client.trace(task_id=tid),
+            )
+            final = aggregator.aggregate(results, schedule_result.task_id)
+            print(final.summary)
+            exec_result["final_result"] = {
+                "status": final.status,
+                "success_count": final.success_count,
+                "fail_count": final.fail_count,
+                "timeout_count": final.timeout_count,
+            }
+
+    _print_json(exec_result)
+
+
+def handle_analyze(args: argparse.Namespace) -> None:
+    """
+    分析现有项目
+
+    在加新功能前，先搞清楚：
+    1. 项目结构是什么样的
+    2. 有哪些组件、API、数据模型
+    3. 新功能会影响哪些地方
+    4. 风险有多大
+    """
+    project_path = args.path or os.getcwd()
+
+    # 1. 分析项目结构
+    print("正在分析项目结构...")
+    structure = analyze_project(project_path)
+
+    print("=" * 60)
+    print(format_project_analysis(structure))
+    print("=" * 60)
+
+    # 2. 如果指定了新功能，进行影响分析
+    if args.feature:
+        print()
+        print("正在分析新功能影响...")
+        impact = analyze_impact(structure, args.feature)
+
+        print("=" * 60)
+        print(format_impact_analysis(impact))
+        print("=" * 60)
+
+        # 风险提示
+        if impact.overall_risk.value in ["high", "critical"]:
+            print()
+            print("⚠️  风险较高！建议：")
+            print("   1. 仔细审阅上述分析报告")
+            print("   2. 与团队讨论实现方案")
+            print("   3. 分阶段实现，先做核心功能")
+            print("   4. 编写测试用例保护现有功能")
+        else:
+            print()
+            print("✅ 风险可控，可以继续：")
+            print(f"   team design --requirement \"{args.feature}\" --existing")
+
+    # 3. JSON 输出
+    if args.json:
+        _print_json({
+            "project_type": structure.project_type,
+            "total_files": structure.total_files,
+            "files_by_language": structure.files_by_language,
+            "components_count": len(structure.components),
+            "apis_count": len(structure.apis),
+            "models_count": len(structure.models),
+        })
+
+
+def handle_design(args: argparse.Namespace) -> None:
+    """
+    需求分析与设计
+
+    这是最关键的一步！新项目必须先设计，确认后才能实现。
+    流程：用户需求 → 生成设计 → 用户确认 → 开始实现
+    """
+    # 1. 分析需求并生成设计
+    project_type = ProjectType.NEW
+    if args.existing:
+        project_type = ProjectType.EXISTING
+    elif args.refactor:
+        project_type = ProjectType.REFACTOR
+
+    design_doc = analyze_and_design(
+        user_input=args.requirement,
+        project_name=args.name or "新项目",
+    )
+    design_doc.project_type = project_type
+
+    # 2. 输出设计文档
+    print("=" * 60)
+    print(print_design_for_review(design_doc))
+    print("=" * 60)
+
+    # 3. 输出 JSON 格式（可保存）
+    if args.json:
+        _print_json({
+            "status": "design_generated",
+            "project_name": design_doc.project_name,
+            "project_type": design_doc.project_type.value,
+            "design_status": design_doc.status.value,
+            "requirements_count": len(design_doc.requirements),
+            "entities_count": len(design_doc.entities),
+            "api_count": len(design_doc.api_endpoints),
+            "screens_count": len(design_doc.screens),
+            "clarification_questions": design_doc.clarification_questions,
+        })
+
+    # 4. 提示用户
+    print()
+    print("⚠️  请审阅以上设计文档！")
+    print("   如果设计符合预期，使用以下命令继续：")
+    print(f"   team run --task \"{args.requirement}\" --design-approved")
+    print()
+    print("   如果需要修改，请重新描述需求或回答上述问题。")
+
+
+def handle_board(args: argparse.Namespace) -> None:
+    """
+    查看进度看板
+
+    显示所有 Agent 的实时进度
+    """
+    client = RouterClient(args.router_url)
+    hub = _get_collaboration_hub(client)
+    
+    task_id = args.task if hasattr(args, 'task') else None
+    
+    # 输出进度看板
+    print(hub.progress_board.format_board(task_id))
+    
+    # 显示被阻塞的 Agent
+    blocked = hub.progress_board.get_blocked_agents()
+    if blocked:
+        print()
+        print("⚠️ 阻塞情况:")
+        for b in blocked:
+            print(f"  - {b.agent} 被阻塞: {b.blocked_reason or '未知原因'}")
+    
+    # JSON 输出
+    if args.json:
+        board = hub.progress_board.get_board(task_id)
+        _print_json({
+            "task_id": task_id,
+            "agents": {
+                a: {
+                    "status": p.status,
+                    "progress": p.progress,
+                    "current_step": p.current_step,
+                    "blocked_by": p.blocked_by,
+                }
+                for a, p in board.items()
+            },
+            "blocked_count": len(blocked),
+        })
+
+
+def handle_progress(args: argparse.Namespace) -> None:
+    """
+    报告进度
+
+    Agent 报告自己的当前进度
+    """
+    client = RouterClient(args.router_url)
+    hub = _get_collaboration_hub(client)
+    
+    agent = args.agent or os.environ.get("TEAM_ROLE") or "A"
+    
+    hub.report_progress(
+        agent=agent,
+        task_id=args.task,
+        subtask_id=args.subtask or args.task,
+        progress=args.percent,
+        status=args.status,
+        current_step=args.step,
+    )
+    
+    print(f"✅ 进度已更新: {agent} - {args.percent}% - {args.step}")
+
+
+def handle_lock(args: argparse.Namespace) -> None:
+    """
+    文件锁定
+
+    锁定或解锁文件，防止冲突
+    """
+    client = RouterClient(args.router_url)
+    hub = _get_collaboration_hub(client)
+    
+    agent = args.agent or os.environ.get("TEAM_ROLE") or "A"
+    
+    if args.unlock:
+        # 解锁
+        for file_path in _parse_csv(args.files):
+            success = hub.file_lock_manager.unlock(file_path, agent)
+            if success:
+                print(f"🔓 已解锁: {file_path}")
+            else:
+                print(f"❌ 解锁失败: {file_path}（可能不是你锁定的）")
+    else:
+        # 锁定
+        for file_path in _parse_csv(args.files):
+            success, result = hub.file_lock_manager.try_lock(
+                file_path=file_path,
+                agent=agent,
+                task_id=args.task,
+                reason=args.reason or "开发中",
+            )
+            if success:
+                print(f"🔒 已锁定: {file_path}")
+            else:
+                print(f"❌ 锁定失败: {file_path} - {result}")
+    
+    # 显示当前锁定状态
+    if args.list:
+        locks = hub.file_lock_manager.get_agent_locks(agent)
+        if locks:
+            print(f"\n{agent} 当前锁定的文件:")
+            for lock in locks:
+                print(f"  - {lock.file_path} ({lock.reason})")
+        else:
+            print(f"\n{agent} 没有锁定任何文件")
+
+
+def handle_notify(args: argparse.Namespace) -> None:
+    """
+    发送变更通知
+
+    通知其他 Agent 接口或代码发生了变更
+    """
+    client = RouterClient(args.router_url)
+    hub = _get_collaboration_hub(client)
+    
+    agent = args.agent or os.environ.get("TEAM_ROLE") or "A"
+    
+    recipients = hub.broadcaster.broadcast_interface_change(
+        from_agent=agent,
+        task_id=args.task,
+        change_type=args.change_type,
+        interface_name=args.interface,
+        old_value=args.old_value,
+        new_value=args.new_value,
+        reason=args.reason or "",
+    )
+    
+    print(f"📢 已通知接口变更: {args.interface}")
+    if recipients:
+        print(f"   接收者: {', '.join(recipients)}")
+    else:
+        print("   （暂无订阅者）")
+
+
+def handle_watch(args: argparse.Namespace) -> None:
+    """
+    实时监控所有 Agent 状态
+    
+    持续显示所有 Agent 的在线状态和活动信息
+    """
+    import signal
+    
+    client = RouterClient(args.router_url)
+    running = True
+    
+    def signal_handler(sig, frame):
+        nonlocal running
+        running = False
+        print("\n👋 停止监控")
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    role_names = {
+        "MAIN": "协调者",
+        "A": "前端专家",
+        "B": "后端专家", 
+        "C": "数据专家",
+        "D": "辅助专家",
+    }
+    
+    status_icons = {
+        "online": "🟢",
+        "offline": "⚫",
+        "busy": "🟡",
+    }
+    
+    print("📊 Agent 状态监控 (Ctrl+C 退出)")
+    print("=" * 60)
+    
+    while running:
+        try:
+            # 获取 presence 数据
+            response = client.presence()
+            agents = response.get("agents", {})
+            
+            # 获取活动状态
+            try:
+                with urlopen(f"{args.router_url}/activity", timeout=5) as resp:
+                    activity_response = json.loads(resp.read().decode("utf-8"))
+                activities = activity_response.get("activities", {})
+            except Exception:
+                activities = {}
+            
+            # 清屏并显示
+            print("\033[H\033[J", end="")  # 清屏
+            print("📊 Agent 状态监控 (Ctrl+C 退出)")
+            print("=" * 60)
+            print(f"时间: {time.strftime('%H:%M:%S')}")
+            print()
+            
+            for agent_id, info in agents.items():
+                role = info.get("meta", {}).get("role", "?")
+                role_name = role_names.get(role, role)
+                status = info.get("status", "offline")
+                icon = status_icons.get(status, "❓")
+                
+                # 计算离线时间
+                last_seen = info.get("last_seen", 0)
+                now = response.get("now", int(time.time() * 1000))
+                offline_sec = (now - last_seen) // 1000
+                
+                # 获取活动状态
+                activity = activities.get(agent_id, {})
+                activity_text = activity.get("status", "")
+                activity_task = activity.get("task", "")
+                
+                print(f"{icon} {role} ({role_name})")
+                if status == "online":
+                    if activity_text:
+                        print(f"   💭 {activity_text}")
+                        if activity_task:
+                            print(f"   📋 任务: {activity_task}")
+                    else:
+                        print(f"   ⏳ 待命中")
+                else:
+                    print(f"   ⏱️  离线 {offline_sec}s")
+                print()
+            
+            time.sleep(args.interval)
+            
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"❌ 错误: {e}")
+            time.sleep(args.interval)
+
+
+def handle_activity(args: argparse.Namespace) -> None:
+    """
+    上报当前活动状态
+    
+    让其他 Agent 和监控知道自己在做什么
+    """
+    agent = args.agent or os.environ.get("TEAM_AGENT_ID") or os.environ.get("TEAM_ROLE") or "A"
+    
+    payload = {
+        "agent": agent,
+        "status": args.status,
+        "task": args.task or "",
+        "ts": int(time.time() * 1000),
+    }
+    
+    try:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = Request(
+            f"{args.router_url}/activity",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req, timeout=5) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        print(f"✅ 状态已更新: {args.status}")
+        if args.task:
+            print(f"📋 关联任务: {args.task}")
+    except Exception as e:
+        # 如果 Router 不支持这个端点，本地打印
+        print(f"💭 当前状态: {args.status}")
+        if args.task:
+            print(f"📋 关联任务: {args.task}")
+
+
+def handle_schedule(args: argparse.Namespace) -> None:
+    """
+    仅调度任务（不执行）
+
+    分析任务并输出调度计划。
+    """
+    # 解析任务输入
+    files = _parse_csv(args.files) if args.files else []
+    task = TaskInput(
+        description=args.task,
+        files=files,
+        context=args.context,
+    )
+
+    # 创建调度器并调度任务
+    scheduler = TaskScheduler()
+    schedule_result = scheduler.schedule(task)
+
+    # 输出调度结果
+    print(schedule_result.summary)
+    print()
+
+    # 输出JSON格式
+    _print_json({
+        "status": "scheduled",
+        "mode": schedule_result.mode,
+        "task_id": schedule_result.task_id,
+        "complexity": {
+            "level": schedule_result.complexity.level,
+            "score": schedule_result.complexity.score,
+            "reasons": schedule_result.complexity.reasons,
+            "domains": list(schedule_result.complexity.domains),
+            "parallelizable": schedule_result.complexity.parallelizable,
+        },
+        "assignments": [
+            {
+                "agent": a.agent,
+                "agent_name": SPECIALIZED_AGENTS[a.agent].name if a.agent in SPECIALIZED_AGENTS else a.agent,
+                "task_id": a.task_id,
+                "domain": a.subtask.domain,
+                "description": a.subtask.description,
+                "files": a.subtask.files,
+                "success_criteria": a.subtask.success_criteria,
+                "dependencies": a.subtask.dependencies,
+            }
+            for a in schedule_result.assignments
+        ],
+        "execution_order": schedule_result.decompose_result.execution_order if schedule_result.decompose_result else [],
+    })
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", help="config JSON path")
@@ -1353,12 +1879,112 @@ def build_parser() -> argparse.ArgumentParser:
     listen.add_argument("--pending-max-age", type=int, default=604800, help="seconds to keep pending entries")
     listen.set_defaults(func=handle_listen, ack=True)
 
+    # 项目分析（加新功能前必须先分析！）
+    analyze = subparsers.add_parser("analyze", parents=[common], help="分析现有项目结构和影响范围")
+    analyze.add_argument("--path", "-p", help="项目路径（默认当前目录）")
+    analyze.add_argument("--feature", "-f", help="要添加的新功能（进行影响分析）")
+    analyze.add_argument("--json", action="store_true", help="同时输出 JSON 格式")
+    analyze.set_defaults(func=handle_analyze)
+
+    # 需求分析与设计（最重要的一步！）
+    design = subparsers.add_parser("design", parents=[common], help="需求分析与设计 - 新项目必须先设计")
+    design.add_argument("--requirement", "-r", required=True, help="用户需求描述")
+    design.add_argument("--name", "-n", help="项目名称")
+    design.add_argument("--existing", action="store_true", help="已有项目（基于现有架构）")
+    design.add_argument("--refactor", action="store_true", help="重构项目")
+    design.add_argument("--json", action="store_true", help="同时输出 JSON 格式")
+    design.set_defaults(func=handle_design)
+
+    # 智能任务入口
+    run = subparsers.add_parser("run", parents=[common], help="智能任务入口 - 自动判断复杂度并分流")
+    run.add_argument("--task", required=True, help="任务描述")
+    run.add_argument("--files", help="涉及的文件列表（逗号分隔）")
+    run.add_argument("--context", help="上下文信息")
+    run.add_argument("--dry-run", action="store_true", help="仅输出调度计划，不执行")
+    run.add_argument("--wait", action="store_true", help="等待所有子任务完成")
+    run.add_argument("--wait-timeout", type=int, default=3600, help="等待超时时间（秒）")
+    run.add_argument("--design-approved", action="store_true", help="确认设计已通过审核")
+    run.set_defaults(func=handle_run)
+
+    # 任务调度（仅分析）
+    schedule = subparsers.add_parser("schedule", parents=[common], help="分析任务并输出调度计划")
+    schedule.add_argument("--task", required=True, help="任务描述")
+    schedule.add_argument("--files", help="涉及的文件列表（逗号分隔）")
+    schedule.add_argument("--context", help="上下文信息")
+    schedule.set_defaults(func=handle_schedule)
+
+    # ============================================================
+    # 协作命令
+    # ============================================================
+
+    # 进度看板
+    board = subparsers.add_parser("board", parents=[common], help="查看进度看板")
+    board.add_argument("--task", "-t", help="筛选特定任务")
+    board.add_argument("--json", action="store_true", help="输出 JSON 格式")
+    board.set_defaults(func=handle_board)
+
+    # 报告进度
+    progress = subparsers.add_parser("progress", parents=[common], help="报告当前进度")
+    progress.add_argument("--task", "-t", required=True, help="任务 ID")
+    progress.add_argument("--subtask", help="子任务 ID")
+    progress.add_argument("--percent", "-p", type=int, required=True, help="完成百分比 0-100")
+    progress.add_argument("--status", "-s", default="in_progress", 
+                          choices=["pending", "in_progress", "blocked", "completed", "failed"],
+                          help="状态")
+    progress.add_argument("--step", required=True, help="当前步骤描述")
+    progress.add_argument("--agent", "-a", help="Agent 角色（默认从环境变量）")
+    progress.set_defaults(func=handle_progress)
+
+    # 文件锁定
+    lock = subparsers.add_parser("lock", parents=[common], help="锁定/解锁文件")
+    lock.add_argument("--files", "-f", required=True, help="文件列表（逗号分隔）")
+    lock.add_argument("--task", "-t", required=True, help="任务 ID")
+    lock.add_argument("--unlock", "-u", action="store_true", help="解锁文件")
+    lock.add_argument("--reason", "-r", help="锁定原因")
+    lock.add_argument("--agent", "-a", help="Agent 角色")
+    lock.add_argument("--list", "-l", action="store_true", help="列出当前锁定的文件")
+    lock.set_defaults(func=handle_lock)
+
+    # 变更通知
+    notify = subparsers.add_parser("notify", parents=[common], help="通知接口/代码变更")
+    notify.add_argument("--task", "-t", required=True, help="任务 ID")
+    notify.add_argument("--interface", "-i", required=True, help="接口名称")
+    notify.add_argument("--change-type", "-c", required=True, 
+                        choices=["add", "modify", "remove"], help="变更类型")
+    notify.add_argument("--old-value", help="旧值")
+    notify.add_argument("--new-value", help="新值")
+    notify.add_argument("--reason", "-r", help="变更原因")
+    notify.add_argument("--agent", "-a", help="Agent 角色")
+    notify.set_defaults(func=handle_notify)
+
+    # 实时监控
+    watch = subparsers.add_parser("watch", parents=[common], help="实时监控所有 Agent 状态")
+    watch.add_argument("--interval", "-i", type=float, default=2.0, help="刷新间隔（秒）")
+    watch.set_defaults(func=handle_watch)
+    
+    # 上报活动状态
+    activity = subparsers.add_parser("activity", parents=[common], help="上报当前活动状态")
+    activity.add_argument("--status", "-s", required=True, help="状态描述（如：思考中、编码中、测试中）")
+    activity.add_argument("--task", "-t", help="关联的任务 ID")
+    activity.add_argument("--agent", "-a", help="Agent 角色")
+    activity.set_defaults(func=handle_activity)
+
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # 这些命令不需要 router 连接
+    no_router_commands = ("schedule", "design", "analyze", "board", "progress", "lock", "notify")
+    if args.command in no_router_commands:
+        try:
+            args.func(args)
+        except Exception as exc:
+            _print_json({"status": "error", "error": str(exc)})
+            sys.exit(1)
+        return
 
     if args.command != "start":
         config = load_config(args.config, args.workspace)

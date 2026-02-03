@@ -57,6 +57,45 @@ Manage AI collaborative development just like managing a human team.
 - Generate standard documentation templates
 - Inject AI role prompts
 
+### 🧠 Intelligent Task Scheduling (NEW)
+
+```bash
+# Analyze project before adding features
+team analyze --path . --feature "user login"
+
+# Generate design document
+team design --requirement "user login with OAuth"
+
+# Smart execution with contract-first design
+team run --task "implement login" --design-approved
+```
+
+- **Complexity Judgment** - Auto-detect simple/complex tasks
+- **Task Decomposition** - Break down into subtasks by domain
+- **Contract-First Design** - Generate interface contracts before coding
+- **Specialized Agents** - Frontend(A), Backend(B), Database(C), Support(D)
+
+### 🤝 Real-time Collaboration (NEW)
+
+```bash
+# View progress board
+team board
+
+# Report progress
+team progress --task TASK-001 --percent 50 --step "implementing API"
+
+# Lock files to prevent conflicts
+team lock --files "src/api.py" --task TASK-001
+
+# Notify interface changes
+team notify --task TASK-001 --interface "POST /api/login" --change-type modify
+```
+
+- **Progress Board** - Real-time visibility of all agents
+- **File Locking** - Prevent code conflicts
+- **Change Broadcasting** - Auto-notify when interfaces change
+- **Dependency Tracking** - Track and alert on blocked tasks
+
 ### 🔄 Reliable Message Delivery
 
 - **ACK Confirmation** - Dual acknowledgment at delivery and application layer
@@ -67,14 +106,15 @@ Manage AI collaborative development just like managing a human team.
 ### 📋 Complete Collaboration Protocol
 
 ```
-review (review) -> assign (assign) -> execute (execute) -> verify (verify)
+analyze -> design -> confirm -> schedule -> execute -> aggregate
 ```
 
 Standardized AI-to-AI communication protocol supporting:
-- Document/code review
-- Task assignment
-- Q&A coordination
-- Result verification
+- Project analysis & impact assessment
+- Design document generation
+- Contract-first task decomposition
+- Parallel execution with coordination
+- Result aggregation
 
 ### 💾 State Persistence & Recovery
 
@@ -120,10 +160,13 @@ Standardized AI-to-AI communication protocol supporting:
 ```
 
 **Role Responsibilities:**
-| Agent | Role | Responsibilities |
-|:-----:|:-----:|:------------------|
-| **MAIN** | Coordinator | Task planning, document writing, problem solving, final review |
-| **A/B/C/D** | Executors | Task execution, document review, feedback collection |
+| Agent | Role | Specialty | Responsibilities |
+|:-----:|:-----:|:---------:|:------------------|
+| **MAIN** | Coordinator | - | Task planning, design review, problem solving |
+| **A** | Frontend Expert | UI/UX | React, Vue, CSS, components, pages |
+| **B** | Backend Expert | API | FastAPI, business logic, services |
+| **C** | Database Expert | Data | Models, migrations, queries |
+| **D** | Support Expert | DevOps | Testing, docs, deployment |
 
 ---
 
@@ -232,20 +275,32 @@ AgentHub/
 ## Common Commands
 
 ```bash
-# Start system
-./scripts/start_team.sh
+# === System Management ===
+./scripts/start_team.sh          # Start system
+./scripts/status_team.sh         # Check status
+./scripts/stop_team.sh           # Stop system
 
-# Check status
-./scripts/status_team.sh
+# === Smart Task Flow (NEW) ===
+team analyze --path . --feature "new feature"    # Analyze impact
+team design --requirement "feature description"   # Generate design
+team run --task "feature" --design-approved       # Execute with contracts
+team schedule --task "feature description"        # Preview schedule only
 
-# Send message
-python3 src/cli/team.py say --from MAIN --to A --text "Start task"
+# === Collaboration (NEW) ===
+team board                                        # View progress board
+team progress --task T1 --percent 50 --step "..."# Report progress
+team lock --files "src/api.py" --task T1         # Lock files
+team notify --task T1 --interface "API" -c modify # Notify changes
 
-# View message queue
-curl http://127.0.0.1:8765/status | python3 -m json.tool
+# === Messaging ===
+team say --from MAIN --to A --text "Start task"  # Send message
+team review --to A,B,C,D --task T1 --file doc.md # Request review
+team assign --to B --task T1 --files "src/*"     # Assign task
 
-# Stop system
-./scripts/stop_team.sh
+# === Monitoring ===
+team status --tasks                              # View task status
+team trace --task T1                             # Trace task messages
+curl http://127.0.0.1:8765/status | jq           # Raw API status
 ```
 
 ---

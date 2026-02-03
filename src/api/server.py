@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 from urllib.parse import parse_qs, urlparse
@@ -32,6 +33,10 @@ def _send_json(handler: BaseHTTPRequestHandler, status: int, payload: Dict[str, 
 
 _ensure_src_on_path()
 from router import Router, RouterConfig  # noqa: E402
+
+
+# 全局活动状态存储
+_agent_activities: Dict[str, Dict[str, Any]] = {}
 
 
 class RouterHandler(BaseHTTPRequestHandler):
@@ -71,6 +76,21 @@ class RouterHandler(BaseHTTPRequestHandler):
                 agent = payload.get("agent")
                 result = self.router.heartbeat(agent)
                 _send_json(self, 200, result)
+                return
+            if parsed.path == "/activity":
+                if not payload:
+                    _send_json(self, 400, {"error": "agent required"})
+                    return
+                agent = payload.get("agent")
+                status = payload.get("status", "")
+                task = payload.get("task", "")
+                ts = payload.get("ts", int(time.time() * 1000))
+                _agent_activities[agent] = {
+                    "status": status,
+                    "task": task,
+                    "ts": ts,
+                }
+                _send_json(self, 200, {"agent": agent, "status": status, "recorded": True})
                 return
         except ValueError as exc:
             _send_json(self, 400, {"error": str(exc)})
@@ -125,6 +145,9 @@ class RouterHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/health":
             _send_json(self, 200, {"status": "ok"})
+            return
+        if parsed.path == "/activity":
+            _send_json(self, 200, {"activities": _agent_activities})
             return
         _send_json(self, 404, {"error": "not found"})
 
