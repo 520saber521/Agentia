@@ -7,6 +7,7 @@ import json
 from protocol.enums import (
     ACTION_TYPES,
     BODY_ENCODINGS,
+    CARD_TYPES,
     CATEGORY_TYPES,
     DEFAULT_BODY_ENCODING,
     MESSAGE_TYPES,
@@ -177,6 +178,16 @@ def validate_message(message, *, allow_missing_generated=False):
         errors.append("deadline must be int-like")
     if "ttl_ms" in message and not _is_int_like(message["ttl_ms"]):
         errors.append("ttl_ms must be int-like")
+
+    # W3/W4 optional fields (backward-compatible, no validation errors when present)
+    if "conversation_id" in message and not isinstance(message["conversation_id"], str):
+        errors.append("conversation_id must be string")
+    if "card_type" in message:
+        card_type = message["card_type"]
+        if not isinstance(card_type, str) or card_type not in CARD_TYPES:
+            errors.append(f"card_type invalid: {card_type}")
+    if "artifact_id" in message and not isinstance(message["artifact_id"], str):
+        errors.append("artifact_id must be string")
 
     has_body = "body" in message
     has_body_ref = "body_ref" in message

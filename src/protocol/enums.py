@@ -54,3 +54,12 @@ BODY_ENCODINGS = (
 )
 
 DEFAULT_BODY_ENCODING = "json"
+
+CARD_TYPES = (
+    "text",
+    "code",
+    "diff",
+    "preview",
+    "file",
+    "task_status",
+)

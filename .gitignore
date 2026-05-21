@@ -6,3 +6,10 @@
 __pycache__/
 .DS_Store
 **/__pycache__/
+
+# BFF (server/) 本地运行时
+server/.venv/
+server/*.db
+server/*.db-journal
+server/.agenthub/
+.agenthub/

@@ -1,0 +1,116 @@
+"""SQLAlchemy 2.x ORM 模型（与 ``docs/ARCHITECTURE.md`` §6.2 一致）。
+
+Day3 落地四张表：``conversation`` / ``conversation_member`` / ``message`` / ``agent``。
+W3 新增 ``task`` 表用于任务状态机。
+W4 再补 ``artifact``。
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from typing import Optional
+
+from sqlalchemy import ForeignKey, Index, Integer, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+class Base(DeclarativeBase):
+    """所有 ORM 模型的基类。"""
+
+
+class Conversation(Base):
+    __tablename__ = "conversation"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    type: Mapped[str] = mapped_column(String, nullable=False)  # 'single' | 'group'
+    created_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+    pinned: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    archived: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_msg_preview: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    owner_user_id: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class ConversationMember(Base):
+    __tablename__ = "conversation_member"
+
+    conversation_id: Mapped[str] = mapped_column(
+        String, ForeignKey("conversation.id", ondelete="CASCADE"), primary_key=True
+    )
+    member_id: Mapped[str] = mapped_column(String, primary_key=True)
+    member_type: Mapped[str] = mapped_column(String, nullable=False)  # 'user' | 'agent'
+    role: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    joined_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+
+
+class Message(Base):
+    __tablename__ = "message"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String, ForeignKey("conversation.id", ondelete="CASCADE"), nullable=False
+    )
+    sender_id: Mapped[str] = mapped_column(String, nullable=False)
+    sender_type: Mapped[str] = mapped_column(String, nullable=False)  # 'user' | 'agent'
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string
+    reply_to: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    mentions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array string
+    pinned: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    artifact_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    agenthub_msg_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+
+    __table_args__ = (
+        Index("idx_msg_conv", "conversation_id", "created_at"),
+        Index("idx_msg_agenthub", "agenthub_msg_id"),
+    )
+
+
+class Agent(Base):
+    __tablename__ = "agent"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    avatar: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    adapter_type: Mapped[str] = mapped_column(String, nullable=False)
+    config: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
+    capabilities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
+    owner_user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+
+
+class Task(Base):
+    __tablename__ = "task"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String, ForeignKey("conversation.id", ondelete="CASCADE"), nullable=False
+    )
+    parent_task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    domain: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    assigned_agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    originating_message_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    progress_pct: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+
+    __table_args__ = (
+        Index("idx_task_conv", "conversation_id"),
+        Index("idx_task_parent", "parent_task_id"),
+        Index("idx_task_status", "status"),
+    )

@@ -66,6 +66,14 @@ def build_message(
         if body_ref is not None:
             message["body_ref"] = body_ref
 
+    # W3/W4 optional fields (backward-compatible, default None)
+    if "conversation_id" in locals() and conversation_id is not None:
+        message["conversation_id"] = conversation_id
+    if "card_type" in locals() and card_type is not None:
+        message["card_type"] = card_type
+    if "artifact_id" in locals() and artifact_id is not None:
+        message["artifact_id"] = artifact_id
+
     return message
 
 

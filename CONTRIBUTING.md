@@ -101,13 +101,15 @@ git checkout -b fix/your-bug-fix
 ### 2. Test Your Changes
 
 ```bash
-# Run the team system
-./scripts/start_team.sh
+# Start the v2 system (BFF + Web)
+# PowerShell:
+.\scripts\dev.ps1
+# Or manually start BFF:
+cd server && python -m uvicorn main:app --host 127.0.0.1 --port 8788 --reload
 
 # Run tests (if available)
-python3 -m pytest
-
-# Test manually with your changes
+cd server && python -m pytest
+cd web && npx vitest run
 ```
 
 ### 3. Commit
