@@ -12,8 +12,42 @@ export interface TextContent {
   text: string;
 }
 
-/** 富媒体卡片的占位（Day5+ 起逐步填充） */
-export type MessageContent = TextContent | { type: string; [key: string]: unknown };
+export interface CodeContent {
+  type: "code";
+  code: string;
+  language?: string;
+  title?: string;
+}
+
+export interface DiffContent {
+  type: "diff";
+  before: string;
+  after: string;
+  fileName?: string;
+}
+
+export interface PreviewContent {
+  type: "preview";
+  title: string;
+  mimeType: string;
+  fileSize?: number;
+}
+
+export interface FileContent {
+  type: "file";
+  fileName: string;
+  mimeType: string;
+  fileSize?: number;
+}
+
+export type MessageContent =
+  | TextContent
+  | CodeContent
+  | DiffContent
+  | PreviewContent
+  | FileContent
+  | { type: "task_status"; [key: string]: unknown }
+  | { type: string; [key: string]: unknown };
 
 export interface Message {
   id: string;
@@ -142,6 +176,13 @@ export type ServerEvent =
       conversation_id: string;
       task: Task;
       action: TaskUpdateAction;
+    }
+  | {
+      type: "artifact_ready";
+      ts: number;
+      conversation_id: string;
+      artifact: Artifact;
+      message_id: string | null;
     };
 
 export type ClientEvent =
@@ -184,4 +225,33 @@ export interface TaskUpdateEvent {
   conversation_id: string;
   task: Task;
   action: TaskUpdateAction;
+}
+
+/**
+ * W4 F-W4-2: Artifact entity matching server/services/artifact.py artifact_to_dict().
+ */
+export interface Artifact {
+  id: string;
+  conversation_id: string;
+  parent_id: string | null;
+  kind: "code" | "preview" | "file" | "diff";
+  title: string;
+  mime_type: string;
+  file_name: string | null;
+  file_size: number;
+  storage_path: string;
+  source_message_id: string | null;
+  created_by: string;
+  meta: Record<string, unknown>;
+  version: number;
+  created_at: number;
+}
+
+/** W4 F-W4-2: artifact_ready WS event. */
+export interface ArtifactReadyEvent {
+  type: "artifact_ready";
+  ts: number;
+  conversation_id: string;
+  artifact: Artifact;
+  message_id: string | null;
 }

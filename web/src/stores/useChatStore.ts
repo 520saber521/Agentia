@@ -49,6 +49,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   streamingMessageIds: [],
   agentTyping: false,
   agents: [],
+  tasks: {},
 
   init() {
     ws.onStatus((s) => set({ status: s }));
@@ -134,5 +135,6 @@ function sliceFromState(s: ChatState): ChatSlice {
     streamingMessageIds: s.streamingMessageIds,
     agentTyping: s.agentTyping,
     agents: s.agents,
+    tasks: s.tasks ?? {},
   };
 }

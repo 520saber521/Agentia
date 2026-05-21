@@ -23,14 +23,16 @@ function findMentionAtCursor(
 function syncMentionsFromText(
   text: string,
   agentsByName: Map<string, Agent>,
-): Map<string, string> {
-  const result = new Map<string, string>();
-  for (const [name, agent] of agentsByName) {
-    const idx = text.indexOf(`@${name}`);
-    if (idx !== -1) {
-      const after = text.slice(idx + name.length + 1);
-      if (after.length === 0 || after[0] === " " || after[0] === "\n") {
-        result.set(agent.id, name);
+): Map<string, Agent> {
+  const result = new Map<string, Agent>();
+  const mentionRegex = /@(\S+)/g;
+  let match;
+  while ((match = mentionRegex.exec(text)) !== null) {
+    const mentionedName = match[1];
+    for (const [agentName, agent] of agentsByName) {
+      if (agentName.toLowerCase().startsWith(mentionedName.toLowerCase())) {
+        result.set(agent.id, agent);
+        break;
       }
     }
   }
@@ -39,7 +41,7 @@ function syncMentionsFromText(
 
 export function Composer() {
   const [text, setText] = useState("");
-  const [mentions, setMentions] = useState<Map<string, string>>(new Map());
+  const [mentions, setMentions] = useState<Map<string, Agent>>(new Map());
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
   const [agentsByName, setAgentsByName] = useState<Map<string, Agent>>(new Map());
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -113,7 +115,7 @@ export function Composer() {
 
     setText(newText);
     setMentionQuery(null);
-    setMentions(new Map(mentions).set(agent.id, agent.name));
+    setMentions(new Map(mentions).set(agent.id, agent));
 
     const ta = textRef.current;
     if (ta) {

@@ -33,6 +33,9 @@ async def _upsert_agent(s, *, agent_id: str, fields: dict[str, Any]) -> None:
     row = await s.scalar(select(Agent).where(Agent.id == agent_id))
     if row is None:
         s.add(Agent(id=agent_id, **fields))
+    else:
+        for key, value in fields.items():
+            setattr(row, key, value)
 
 
 async def seed_defaults() -> None:
@@ -46,8 +49,16 @@ async def seed_defaults() -> None:
                 name="Mock Agent",
                 avatar=None,
                 adapter_type="mock",
-                config=json.dumps({"delay_ms": 20}, ensure_ascii=False),
-                capabilities=json.dumps(["text", "mock"], ensure_ascii=False),
+                config=json.dumps({
+                    "delay_ms": 20,
+                    "role": "通用助手",
+                    "reply": (
+                        "我是通用助手 MockAgent，收到你的消息：\n"
+                        "{echo}\n\n"
+                        "我正在处理你的请求，请稍候..."
+                    ),
+                }, ensure_ascii=False),
+                capabilities=json.dumps(["text", "mock", "general"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )
@@ -58,8 +69,16 @@ async def seed_defaults() -> None:
                 name="Mock Agent 2",
                 avatar=None,
                 adapter_type="mock",
-                config=json.dumps({"delay_ms": 35}, ensure_ascii=False),
-                capabilities=json.dumps(["text", "mock", "demo"], ensure_ascii=False),
+                config=json.dumps({
+                    "delay_ms": 35,
+                    "role": "后端开发",
+                    "reply": (
+                        "[后端 MockAgent] 收到 API / 数据处理相关任务：\n"
+                        "{echo}\n\n"
+                        "我在设计接口和数据模型，请其他 Agent 配合前端对接。"
+                    ),
+                }, ensure_ascii=False),
+                capabilities=json.dumps(["text", "mock", "backend"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )
@@ -82,7 +101,15 @@ async def seed_defaults() -> None:
                 name="Orchestrator",
                 avatar=None,
                 adapter_type="mock",
-                config=json.dumps({"delay_ms": 10}, ensure_ascii=False),
+                config=json.dumps({
+                    "delay_ms": 10,
+                    "role": "任务编排器",
+                    "reply": (
+                        "【Orchestrator 任务编排器】\n"
+                        "正在分析任务：{echo}\n\n"
+                        "我将把任务拆解为子任务并分配给各 Agent。"
+                    ),
+                }, ensure_ascii=False),
                 capabilities=json.dumps(["task_management", "scheduling", "decomposition", "aggregation"], ensure_ascii=False),
                 owner_user_id=None,
             ),

@@ -180,6 +180,7 @@ async def _dispatch_subtask(
     appropriate adapter. For now, we create a placeholder message and
     mark the task as running.
     """
+    Session = get_sessionmaker()
     async with Session() as s:
         await update_task_status(s, st.id, "running")
         task_dict = task_to_dict(st)

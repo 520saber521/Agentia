@@ -8,7 +8,7 @@
 > - `In Progress` —— 已在当前 Sprint 中开始动手；至少有一个 PR / 分支正在改。
 > - `Planned` —— 仅在路线图里，未动代码（包括 Sprint 已启动但 Feature 排在后面的情况）。
 >
-> 当前 Sprint 重心：**W2（Adapter + 群聊）**，详见 [`REBUILD_PLAN.md §5 Sprint W2`](../REBUILD_PLAN.md)。
+> 当前 Sprint 重心：**W4（富媒体与产物）**，详见 [`REBUILD_PLAN.md §5 Sprint W4`](../REBUILD_PLAN.md)。
 
 ---
 

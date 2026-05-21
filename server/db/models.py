@@ -90,6 +90,38 @@ class Agent(Base):
     created_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
 
 
+class Artifact(Base):
+    """产物表 — F-W4-2: artifact 一等对象与版本链。
+
+    所有"可被预览 / 编辑 / 下载"的对象都落在这里。
+    消息的 ``content`` 只存 ``artifact_id`` 与预览元数据。
+    """
+
+    __tablename__ = "artifact"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String, ForeignKey("conversation.id", ondelete="CASCADE"), nullable=False
+    )
+    parent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # 'code' | 'preview' | 'file' | 'diff'
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String, nullable=False)
+    file_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    file_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    storage_path: Mapped[str] = mapped_column(String, nullable=False)
+    source_message_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+    meta: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+
+    __table_args__ = (
+        Index("idx_artifact_conv", "conversation_id"),
+        Index("idx_artifact_parent", "parent_id"),
+    )
+
+
 class Task(Base):
     __tablename__ = "task"
 

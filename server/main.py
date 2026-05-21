@@ -33,8 +33,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api import router as rest_router
+from api.artifacts import router as artifacts_router
 from db import dispose, init_db, seed_defaults
 from handlers import dispatch
+from services.artifact import ARTIFACTS_DIR
 from ws import Connection, event, hub
 
 logger = logging.getLogger("agenthub.bff")
@@ -58,6 +60,7 @@ SERVER_VERSION = "0.0.5"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("%s/%s starting up …", SERVER_NAME, SERVER_VERSION)
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     await init_db()
     await seed_defaults()
     logger.info("DB ready & defaults seeded.")
@@ -83,6 +86,7 @@ app.add_middleware(
 )
 
 app.include_router(rest_router)
+app.include_router(artifacts_router)
 
 
 @app.get("/health")
