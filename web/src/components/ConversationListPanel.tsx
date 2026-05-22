@@ -12,7 +12,7 @@ export function ConversationListPanel() {
   const [showCreate, setShowCreate] = useState(false);
 
   return (
-    <aside className="bg-panel flex flex-col min-h-0">
+    <aside className="bg-panel flex flex-col min-h-0 w-64 shrink-0">
       <div className="px-4 h-12 flex items-center justify-between border-b border-border shrink-0">
         <h2 className="text-xs uppercase tracking-[0.08em] text-muted font-semibold">
           会话

@@ -23,10 +23,40 @@ from adapters import build_adapter
 from db import DEFAULT_CONV_ID, DEFAULT_USER_ID, get_sessionmaker
 from db.models import Agent, Conversation, ConversationMember, new_id
 from orchestrator import ORCHESTRATOR_AGENT_ID, handle_orchestrator_mention
-from services import create_message, message_to_dict, update_message_content
+from services import create_message, list_messages, message_to_dict, update_message_content
 from ws import Connection, event
 
 logger = logging.getLogger("agenthub.handlers.send_message")
+
+
+def _build_messages_context(
+    history: list[dict[str, Any]],
+    current_user_text: str,
+) -> list[dict[str, str]]:
+    """Convert DB message history + current message to OpenAI-style message list.
+
+    Args:
+        history: List of message dicts from ``list_messages()``, ordered by created_at ASC.
+        current_user_text: The user's latest message text.
+
+    Returns:
+        OpenAI-style messages list with role and content fields.
+    """
+    messages: list[dict[str, str]] = []
+    for msg in history:
+        content = msg.get("content", {})
+        if isinstance(content, dict):
+            text = content.get("text", "")
+        elif isinstance(content, str):
+            text = content
+        else:
+            text = str(content)
+
+        sender_type = msg.get("sender_type", "user")
+        role = "assistant" if sender_type == "agent" else "user"
+        messages.append({"role": role, "content": text})
+    messages.append({"role": "user", "content": current_user_text})
+    return messages
 
 
 async def resolve_targets(
@@ -253,10 +283,14 @@ async def run_agent_reply(
     seq = 0
     Session = get_sessionmaker()
 
+    # Load conversation history for context
+    async with Session() as s:
+        history = await list_messages(s, conversation_id, limit=50)
+
+    messages_context = _build_messages_context(history, user_text)
+
     try:
-        async for chunk in adapter.send(
-            messages=[{"role": "user", "content": user_text}]
-        ):
+        async for chunk in adapter.send(messages=messages_context):
             ctype = chunk.get("type")
             if ctype == "text":
                 seq += 1

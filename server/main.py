@@ -17,10 +17,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Ensure server/ is on sys.path before src/ to avoid import conflicts
+# Ensure server/ is on sys.path BEFORE any other paths to avoid import conflicts with src/api
 _HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+# Remove any parent dirs that might shadow server/api
+new_path = [p for p in sys.path if not (Path(p) / "api").exists() or str(_HERE) in p]
+if str(_HERE) not in new_path:
+    new_path.insert(0, str(_HERE))
+sys.path[:] = new_path
 
 import asyncio
 import logging
