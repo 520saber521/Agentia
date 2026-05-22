@@ -6,7 +6,7 @@
  * - `ApiError.code` 让 UI 能展示具体文案（如"群聊需要至少 1 个 Agent"）。
  */
 
-import type { Agent, Conversation, Message } from "../types";
+import type { Agent, Artifact, Attachment, Conversation, Message } from "../types";
 
 /**
  * 后端业务错误的稳定枚举码（与 `server/api/rest.py` 的 detail 一致）。
@@ -17,6 +17,7 @@ export type ApiErrorCode =
   | "invalid_type"
   | "group_requires_agents"
   | "unknown_agent"
+  | "artifact_conflict"
   | "unknown";
 
 export class ApiError extends Error {
@@ -33,6 +34,7 @@ export class ApiError extends Error {
       "invalid_type",
       "group_requires_agents",
       "unknown_agent",
+      "artifact_conflict",
     ];
     this.code = (KNOWN as string[]).includes(detail)
       ? (detail as ApiErrorCode)
@@ -130,6 +132,89 @@ export async function createConversation(
   return body.conversation;
 }
 
+// ---------------------------------------------------------------------------
+// Artifact API (F-W4-2 / F-W4-4)
+// ---------------------------------------------------------------------------
+
+export interface FetchArtifactContentResult {
+  content: string;
+}
+
+export interface SaveArtifactVersionInput {
+  conversation_id: string;
+  kind: string;
+  title: string;
+  mime_type: string;
+  content: string;
+  parent_id: string;
+  source_message_id?: string;
+}
+
+export interface ApplyDiffInput {
+  base_artifact_id: string;
+  before: string;
+  after: string;
+  summary?: string;
+  file_name?: string;
+  source_message_id?: string;
+}
+
+export async function fetchArtifactContent(
+  artifactId: string,
+): Promise<string> {
+  const body = await getJson<FetchArtifactContentResult>(
+    `/api/artifacts/${encodeURIComponent(artifactId)}/content`,
+  );
+  return body.content;
+}
+
+export async function fetchArtifact(artifactId: string): Promise<Artifact> {
+  const body = await getJson<{ artifact: Artifact }>(
+    `/api/artifacts/${encodeURIComponent(artifactId)}`,
+  );
+  return body.artifact;
+}
+
+export async function uploadFile(
+  file: File,
+  conversationId: string,
+): Promise<Attachment> {
+  const form = new FormData();
+  form.append("file", file);
+  const url = `/api/upload?conversation_id=${encodeURIComponent(conversationId)}`;
+  const r = await fetch(url, { method: "POST", body: form });
+  if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
+  const body = (await r.json()) as { artifact: Artifact };
+  return {
+    artifact_id: body.artifact.id,
+    file_name: body.artifact.file_name ?? file.name,
+    mime_type: body.artifact.mime_type,
+    file_size: body.artifact.file_size,
+  };
+}
+
+export async function saveArtifactVersion(
+  input: SaveArtifactVersionInput,
+): Promise<Artifact> {
+  const body = await postJson<{ artifact: Artifact }>("/api/artifacts", input);
+  return body.artifact;
+}
+
+export async function applyDiffArtifact(
+  input: ApplyDiffInput,
+): Promise<{ artifact: Artifact; message: Message }> {
+  return postJson<{ artifact: Artifact; message: Message }>(
+    `/api/artifacts/${encodeURIComponent(input.base_artifact_id)}/apply-diff`,
+    {
+      before: input.before,
+      after: input.after,
+      summary: input.summary,
+      file_name: input.file_name,
+      source_message_id: input.source_message_id,
+    },
+  );
+}
+
 /**
  * 把 `ApiError.code` 翻译成中文文案，用于模态错误提示。
  * 不属于 `ApiErrorCode` 白名单的 fallback 到通用文案。
@@ -145,6 +230,8 @@ export function describeApiError(err: unknown): string {
         return "群聊需要至少 1 个 Agent";
       case "unknown_agent":
         return "选择的 Agent 中存在无效项，请刷新成员列表";
+      case "artifact_conflict":
+        return "目标产物已有新版本，请先打开最新版本或重新生成 Diff";
       case "unknown":
         return err.detail || "请求失败，请稍后再试";
     }

@@ -26,6 +26,7 @@ DEFAULT_AGENT_ID = "agent_mock"
 DEFAULT_AGENT_ID_2 = "agent_mock_2"
 DEFAULT_AGENT_CLAUDE = "agent_claude"
 DEFAULT_AGENT_ORCHESTRATOR = "agent_orchestrator"
+DEFAULT_AGENT_DEEPSEEK = "agent_deepseek"
 DEFAULT_CONV_ID = "conv_demo"
 
 
@@ -35,6 +36,13 @@ async def _upsert_agent(s, *, agent_id: str, fields: dict[str, Any]) -> None:
         s.add(Agent(id=agent_id, **fields))
     else:
         for key, value in fields.items():
+            if key == "config" and row.config:
+                existing_cfg = json.loads(row.config)
+                new_cfg = json.loads(value) if isinstance(value, str) else value
+                existing_api_key = existing_cfg.get("api_key", "")
+                if existing_api_key:
+                    new_cfg["api_key"] = existing_api_key
+                value = json.dumps(new_cfg, ensure_ascii=False)
             setattr(row, key, value)
 
 
@@ -111,6 +119,22 @@ async def seed_defaults() -> None:
                     ),
                 }, ensure_ascii=False),
                 capabilities=json.dumps(["task_management", "scheduling", "decomposition", "aggregation"], ensure_ascii=False),
+                owner_user_id=None,
+            ),
+        )
+        await _upsert_agent(
+            s,
+            agent_id=DEFAULT_AGENT_DEEPSEEK,
+            fields=dict(
+                name="DeepSeek V4 Flash",
+                avatar=None,
+                adapter_type="codex",
+                config=json.dumps({
+                    "api_key": "",
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com/v1",
+                }, ensure_ascii=False),
+                capabilities=json.dumps(["text", "code"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )

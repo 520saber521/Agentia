@@ -23,7 +23,11 @@ export interface DiffContent {
   type: "diff";
   before: string;
   after: string;
+  base_artifact_id?: string;
+  baseArtifactId?: string;
+  summary?: string;
   fileName?: string;
+  file_name?: string;
 }
 
 export interface PreviewContent {
@@ -185,6 +189,13 @@ export type ServerEvent =
       message_id: string | null;
     };
 
+export interface Attachment {
+  artifact_id: string;
+  file_name: string;
+  mime_type: string;
+  file_size: number;
+}
+
 export type ClientEvent =
   | { type: "ping" }
   | { type: "join"; conversation_id: string; limit?: number }
@@ -194,6 +205,8 @@ export type ClientEvent =
       content: MessageContent;
       /** W2 F-W2-1：群聊 @mention 列表（agent_id 数组）。 */
       mentions?: string[];
+      /** W4 F-W4-6：消息附件（已上传的 artifact_id 列表）。 */
+      attachments?: Attachment[];
     }
   | { type: "cancel"; message_id: string };
 
@@ -206,7 +219,7 @@ export interface Task {
   parent_task_id: string | null;
   title: string;
   description: string;
-  status: "pending" | "running" | "done" | "failed" | "cancelled";
+  status: "pending" | "planning" | "running" | "done" | "failed" | "cancelled" | "blocked" | "conflict";
   domain: string | null;
   assigned_agent_id: string | null;
   originating_message_id: string | null;

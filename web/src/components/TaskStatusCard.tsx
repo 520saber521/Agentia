@@ -5,19 +5,25 @@ interface Props {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  pending: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  running: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  done: "bg-green-500/20 text-green-400 border-green-500/30",
-  failed: "bg-red-500/20 text-red-400 border-red-500/30",
-  cancelled: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  pending: "text-amber-400 border-amber-500/40",
+  planning: "text-sky-400 border-sky-500/40",
+  running: "text-blue-400 border-blue-500/40",
+  done: "text-emerald-400 border-emerald-500/40",
+  failed: "text-red-400 border-red-500/40",
+  cancelled: "text-gray-400 border-gray-500/40",
+  blocked: "text-rose-400 border-rose-500/40",
+  conflict: "text-orange-400 border-orange-500/40",
 };
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "待处理",
-  running: "进行中",
+  planning: "规划中",
+  running: "执行中",
   done: "已完成",
   failed: "失败",
   cancelled: "已取消",
+  blocked: "阻塞",
+  conflict: "冲突",
 };
 
 export function TaskStatusCard({ task }: Props) {

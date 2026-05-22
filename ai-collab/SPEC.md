@@ -223,7 +223,7 @@
 
 ---
 
-### F-W2-4 — 三栏布局 + 成员侧栏 · `Planned`
+### F-W2-4 — 三栏布局 + 成员侧栏 · `Done`
 
 **User Story**：作为用户，进入群聊会话时我希望右侧能看到本群所有 Agent 的列表（头像、能力标签），让我清楚"这个群里有谁可以帮我做什么"。
 
@@ -268,11 +268,11 @@
 
 ---
 
-## 阶段 W3：AgentHub Router + Orchestrator · `Planned`
+## 阶段 W3：AgentHub Router + Orchestrator · `Done`
 
 > 范围对齐：[`REBUILD_PLAN.md §5 Sprint W3`](../REBUILD_PLAN.md)。
 
-### F-W3-1 — Router 接入与 trace 链路 · `Planned`
+### F-W3-1 — Router 接入与 trace 链路 · `Done`
 
 **User Story**：作为用户，我希望群聊里的多 Agent 调度不是前端硬凑出来的，而是有一条可追踪的消息链路；当某个 Agent 回复异常时，我能看到它经过了哪些节点。
 
@@ -295,7 +295,7 @@
 
 ---
 
-### F-W3-2 — Orchestrator 自动拆解与分派 · `Planned`
+### F-W3-2 — Orchestrator 自动拆解与分派 · `Done`
 
 **User Story**：作为用户，我希望在群聊里直接描述复杂任务，由 `@Orchestrator` 判断需要哪些 Agent、拆成子任务，并让它们像群聊成员一样协作完成。
 
@@ -334,7 +334,7 @@
 
 ---
 
-### F-W3-4 — 第二个真实 Adapter 接入 · `Planned`
+### F-W3-4 — 第二个真实 Adapter 接入 · `Done`
 
 **User Story**：作为用户，我希望平台不只接入 Claude，还能接入 Codex 或 OpenCode，证明 AgentHub 的统一适配器层真的屏蔽了平台差异。
 
@@ -350,7 +350,7 @@
 
 ---
 
-### F-W3-5 — 协议字段向后兼容扩展 · `Planned`
+### F-W3-5 — 协议字段向后兼容扩展 · `Done`
 
 **User Story**：作为开发者，我希望 Router / Protocol 支持 AgentHub v2 的会话、卡片和产物字段，同时不破坏 v1 已有消息。
 
@@ -365,7 +365,7 @@
 
 ---
 
-## 阶段 W4：富媒体与产物 · `Planned`
+## 阶段 W4：富媒体与产物 · `In Progress`
 
 > 范围对齐：[`REBUILD_PLAN.md §5 Sprint W4`](../REBUILD_PLAN.md)。
 

@@ -14,13 +14,13 @@ import {
   fetchMessages,
   type CreateConversationInput,
 } from "../api/client";
-import type { ConnectionStatus, Conversation, Message } from "../types";
+import type { Agent, ConnectionStatus, Conversation, Message } from "../types";
 import { WSClient } from "../ws/client";
 import { reduceEvent, type ChatSlice } from "./reducer";
 
 export interface ChatState extends ChatSlice {
-  status: WSStatus;
-  serverInfo: ServerInfo | null;
+  status: ConnectionStatus;
+  serverInfo: string | null;
   conversations: Conversation[];
   currentConvId: string | null;
   messages: Message[];

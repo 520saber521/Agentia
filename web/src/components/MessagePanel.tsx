@@ -4,7 +4,11 @@ import { useChatStore } from "../stores/useChatStore";
 import { MessageBubble } from "./MessageBubble";
 import { TaskStatusCard } from "./TaskStatusCard";
 
-export function MessagePanel() {
+interface Props {
+  onEditArtifact?: (artifactId: string) => void;
+}
+
+export function MessagePanel({ onEditArtifact }: Props) {
   const messages = useChatStore((s) => s.messages);
   const streamingIds = useChatStore((s) => s.streamingMessageIds);
   const agentTyping = useChatStore((s) => s.agentTyping);
@@ -35,7 +39,12 @@ export function MessagePanel() {
         </div>
       )}
       {messages.map((m) => (
-        <MessageBubble key={m.id} msg={m} streaming={streamingIds.includes(m.id)} />
+        <MessageBubble
+          key={m.id}
+          msg={m}
+          streaming={streamingIds.includes(m.id)}
+          onEditArtifact={onEditArtifact}
+        />
       ))}
       {currentTasks.map((task) => (
         <TaskStatusCard key={task.id} task={task} />

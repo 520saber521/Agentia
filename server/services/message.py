@@ -47,6 +47,7 @@ async def create_message(
     reply_to: Optional[str] = None,
     mentions: Optional[list[str]] = None,
     message_id: Optional[str] = None,
+    artifact_id: Optional[str] = None,
 ) -> Message:
     ts = now_ms()
     m = Message(
@@ -58,6 +59,7 @@ async def create_message(
         content=json.dumps(content, ensure_ascii=False),
         reply_to=reply_to,
         mentions=json.dumps(mentions or [], ensure_ascii=False),
+        artifact_id=artifact_id,
         created_at=ts,
     )
     s.add(m)

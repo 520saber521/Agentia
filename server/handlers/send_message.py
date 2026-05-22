@@ -15,15 +15,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 
 from adapters import build_adapter
 from db import DEFAULT_CONV_ID, DEFAULT_USER_ID, get_sessionmaker
-from db.models import Agent, Conversation, ConversationMember, new_id
+from db.models import Agent, Conversation, ConversationMember, Message, new_id
 from orchestrator import ORCHESTRATOR_AGENT_ID, handle_orchestrator_mention
+from router_client import get_router_client
 from services import create_message, message_to_dict, update_message_content
+from services.artifact import create_artifact as create_service_artifact
+from services.trace import create_trace_entry as create_trace
 from ws import Connection, event
 
 logger = logging.getLogger("agenthub.handlers.send_message")
@@ -143,6 +147,10 @@ async def handle(conn: Connection, evt: dict[str, Any]) -> None:
     if not target_agent_ids:
         return
 
+    # Generate a shared trace_id for this fan-out
+    trace_id = new_id("trace")
+    seq_counter = 0
+
     Session = get_sessionmaker()
     async with Session() as s:
         user_msg = await create_message(
@@ -164,6 +172,80 @@ async def handle(conn: Connection, evt: dict[str, Any]) -> None:
                 content={"type": "text", "text": ""},
             )
             agent_msgs.append((aid, am.id, message_to_dict(am)))
+
+        # Record user message trace entry
+        await create_trace(
+            s,
+            message_id=user_msg.id,
+            conversation_id=conversation_id,
+            trace_id=trace_id,
+            node_id=DEFAULT_USER_ID,
+            node_role="user",
+            event="send_message",
+            seq=seq_counter,
+        )
+
+    # Try to route through Router (F-W3-1)
+    router = get_router_client()
+    router_ok = await router.health()
+
+    async with Session() as s:
+        for idx, (aid, mid, _mdict) in enumerate(agent_msgs):
+            seq_counter += 1
+            detail_json = json.dumps({
+                "agent_id": aid,
+                "message_id": mid,
+                "user_text": user_text[:200],
+            })
+
+            if router_ok:
+                try:
+                    router_resp = await router.send_message({
+                        "trace_id": trace_id,
+                        "conversation_id": conversation_id,
+                        "agent_id": aid,
+                        "message_id": mid,
+                        "content": user_text,
+                    })
+                    await create_trace(
+                        s,
+                        message_id=mid,
+                        conversation_id=conversation_id,
+                        trace_id=trace_id,
+                        node_id="router",
+                        node_role="router",
+                        event="dispatch",
+                        status="ok",
+                        detail=detail_json,
+                        seq=seq_counter,
+                    )
+                except Exception as exc:
+                    router_ok = False
+                    await create_trace(
+                        s,
+                        message_id=mid,
+                        conversation_id=conversation_id,
+                        trace_id=trace_id,
+                        node_id="router",
+                        node_role="router",
+                        event="dispatch",
+                        status="failed",
+                        detail=str(exc),
+                        seq=seq_counter,
+                    )
+            else:
+                await create_trace(
+                    s,
+                    message_id=mid,
+                    conversation_id=conversation_id,
+                    trace_id=trace_id,
+                    node_id="bff",
+                    node_role="bff",
+                    event="dispatch_direct",
+                    status="ok" if not router_ok else "degraded",
+                    detail=detail_json,
+                    seq=seq_counter,
+                )
 
     await conn.send(event("message_created", message=user_msg_dict))
     for _aid, _mid, mdict in agent_msgs:
@@ -229,7 +311,7 @@ async def run_agent_reply(
 ) -> None:
     """Drive a single agent's streaming reply (may be one of N concurrent fan-out tasks).
 
-    All outbound events include ``message_id`` + ``sender_id`` for frontend routing.
+    Builds full conversation context from DB history for multi-turn memory.
     """
     loaded = await load_adapter_for(agent_id)
     if loaded is None:
@@ -249,14 +331,34 @@ async def run_agent_reply(
         event("agent_typing", agent_id=agent_id, conversation_id=conversation_id)
     )
 
+    # Build conversation context from DB history
+    Session = get_sessionmaker()
+    messages: list[dict[str, Any]] = []
+    async with Session() as s:
+        rows = (
+            await s.scalars(
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .order_by(desc(Message.created_at))
+                .limit(50)
+            )
+        ).all()
+        for m in reversed(rows):
+            role = "assistant" if m.sender_type == "agent" else "user"
+            raw = json.loads(m.content) if m.content else {}
+            text = raw.get("text", "") if isinstance(raw, dict) else ""
+            if text.strip():
+                messages.append({"role": role, "content": text})
+
+    # Fallback: ensure at least the current user message
+    if not any(msg["content"] == user_text for msg in messages):
+        messages.append({"role": "user", "content": user_text})
+
     final_parts: list[str] = []
     seq = 0
-    Session = get_sessionmaker()
 
     try:
-        async for chunk in adapter.send(
-            messages=[{"role": "user", "content": user_text}]
-        ):
+        async for chunk in adapter.send(messages=messages):
             ctype = chunk.get("type")
             if ctype == "text":
                 seq += 1
@@ -298,33 +400,65 @@ async def run_agent_reply(
             elif ctype == "done":
                 break
 
-        await persist_final(Session, ai_msg_id, "".join(final_parts))
+        final_text = "".join(final_parts)
+        await persist_final(Session, ai_msg_id, final_text)
         await conn.send(
             event(
                 "message_done",
                 message_id=ai_msg_id,
                 sender_id=agent_id,
                 conversation_id=conversation_id,
-                final_content={"type": "text", "text": "".join(final_parts)},
+                final_content={"type": "text", "text": final_text},
             )
         )
+        # Record agent completion in trace
+        async with Session() as s:
+            await create_trace(
+                s,
+                message_id=ai_msg_id,
+                conversation_id=conversation_id,
+                trace_id=new_id("trace"),
+                node_id=agent_id,
+                node_role="agent",
+                event="message_done",
+                status="ok",
+                detail=final_text[:200],
+                seq=0,
+            )
+        await _try_create_artifact(
+            Session, conn, ai_msg_id, conversation_id, agent_id, final_text
+        )
     except asyncio.CancelledError:
-        await persist_final(Session, ai_msg_id, "".join(final_parts))
+        final_text = "".join(final_parts)
+        await persist_final(Session, ai_msg_id, final_text)
         await conn.send(
             event(
                 "message_cancelled",
                 message_id=ai_msg_id,
                 sender_id=agent_id,
                 conversation_id=conversation_id,
-                final_content={"type": "text", "text": "".join(final_parts)},
+                final_content={"type": "text", "text": final_text},
             )
         )
+        async with Session() as s:
+            await create_trace(
+                s,
+                message_id=ai_msg_id,
+                conversation_id=conversation_id,
+                trace_id=new_id("trace"),
+                node_id=agent_id,
+                node_role="agent",
+                event="message_cancelled",
+                status="cancelled",
+                seq=0,
+            )
         raise
     except Exception as exc:
         logger.exception(
             "ws[%s] agent[%s] reply crashed", conn.conn_id, agent_id
         )
-        await persist_final(Session, ai_msg_id, "".join(final_parts))
+        final_text = "".join(final_parts)
+        await persist_final(Session, ai_msg_id, final_text)
         await conn.send(
             event(
                 "error",
@@ -335,6 +469,19 @@ async def run_agent_reply(
                 message=str(exc),
             )
         )
+        async with Session() as s:
+            await create_trace(
+                s,
+                message_id=ai_msg_id,
+                conversation_id=conversation_id,
+                trace_id=new_id("trace"),
+                node_id=agent_id,
+                node_role="agent",
+                event="adapter_crash",
+                status="failed",
+                detail=str(exc)[:500],
+                seq=0,
+            )
 
 
 async def _run_orchestrator(
@@ -401,6 +548,94 @@ async def _run_orchestrator(
                 message=str(exc),
             )
         )
+
+
+CODE_BLOCK_RE = re.compile(r"```(\w+)?\n([\s\S]*?)```", re.MULTILINE)
+
+
+async def _try_create_artifact(
+    Session, conn: Connection, message_id: str, conversation_id: str, agent_id: str, text: str
+) -> None:
+    """Parse final text for code blocks and create artifacts for each found.
+
+    Only creates artifacts for ``code`` / ``html`` / ``javascript`` / ``typescript`` / ``python``
+    and similar programming language blocks. Sends ``artifact_ready`` WS event.
+    """
+    matches = list(CODE_BLOCK_RE.finditer(text))
+    if not matches:
+        return
+
+    first_artifact_id: str | None = None
+
+    for idx, m in enumerate(matches):
+        lang = (m.group(1) or "text").strip().lower()
+        code = m.group(2).strip()
+        if not code:
+            continue
+
+        title = f"{lang.capitalize()} Block"
+        if idx == 0:
+            title = f"Code ({lang})"
+        elif idx > 0:
+            title = f"Code Block {idx + 1} ({lang})"
+
+        kind = "code"
+        mime_type = "text/plain"
+        ext_map = {
+            "python": ("text/x-python", ".py"),
+            "javascript": ("text/javascript", ".js"),
+            "typescript": ("text/typescript", ".ts"),
+            "jsx": ("text/jsx", ".jsx"),
+            "tsx": ("text/tsx", ".tsx"),
+            "html": ("text/html", ".html"),
+            "css": ("text/css", ".css"),
+            "json": ("application/json", ".json"),
+            "yaml": ("text/yaml", ".yaml"),
+            "markdown": ("text/markdown", ".md"),
+            "bash": ("text/x-shellscript", ".sh"),
+            "sql": ("text/x-sql", ".sql"),
+        }
+        if lang in ext_map:
+            mime_type, ext = ext_map[lang]
+            file_name = f"code{ext}"
+        else:
+            file_name = "code.txt"
+
+        async with Session() as s:
+            artifact = await create_service_artifact(
+                s,
+                conversation_id=conversation_id,
+                kind=kind,
+                title=title,
+                mime_type=mime_type,
+                file_name=file_name,
+                content=code,
+                source_message_id=message_id,
+                created_by=agent_id,
+                meta={"language": lang},
+            )
+
+        if idx == 0:
+            first_artifact_id = artifact["id"]
+
+        await conn.send(
+            event(
+                "artifact_ready",
+                conversation_id=conversation_id,
+                artifact=artifact,
+                message_id=message_id if idx == 0 else None,
+            )
+        )
+
+    # Update the first message with artifact_id
+    if first_artifact_id:
+        async with Session() as s:
+            from sqlalchemy import select
+            from db.models import Message as MessageModel
+            m = await s.scalar(select(MessageModel).where(MessageModel.id == message_id))
+            if m:
+                m.artifact_id = first_artifact_id
+                await s.commit()
 
 
 async def persist_final(Session, message_id: str, text: str) -> None:

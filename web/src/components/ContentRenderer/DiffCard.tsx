@@ -1,10 +1,26 @@
+import { useState } from "react";
+
+import { applyDiffArtifact, describeApiError } from "../../api/client";
+
 interface Props {
   before: string;
   after: string;
+  baseArtifactId?: string;
+  summary?: string;
   fileName?: string;
 }
 
-export function DiffCard({ before, after, fileName }: Props) {
+type ApplyStatus = "idle" | "applying" | "applied" | "error";
+
+export function DiffCard({
+  before,
+  after,
+  baseArtifactId,
+  summary,
+  fileName,
+}: Props) {
+  const [status, setStatus] = useState<ApplyStatus>("idle");
+  const [error, setError] = useState<string | null>(null);
   const beforeLines = before.split("\n");
   const afterLines = after.split("\n");
   const maxLines = Math.max(beforeLines.length, afterLines.length);
@@ -33,11 +49,55 @@ export function DiffCard({ before, after, fileName }: Props) {
     }
   }
 
+  const handleApply = async () => {
+    if (!baseArtifactId || status === "applying" || status === "applied") return;
+    setStatus("applying");
+    setError(null);
+    try {
+      await applyDiffArtifact({
+        base_artifact_id: baseArtifactId,
+        before,
+        after,
+        summary,
+        file_name: fileName,
+      });
+      setStatus("applied");
+    } catch (err) {
+      setStatus("error");
+      setError(describeApiError(err));
+    }
+  };
+
   return (
     <div className="rounded-lg border border-border overflow-hidden my-2">
-      {fileName && (
-        <div className="px-3 py-1.5 bg-panel border-b border-border text-xs text-muted">
-          {fileName}
+      <div className="px-3 py-2 bg-panel border-b border-border flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-medium text-fg truncate">
+            {fileName ?? "Diff 变更"}
+          </div>
+          {summary && (
+            <div className="text-[11px] text-muted truncate mt-0.5">
+              {summary}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleApply}
+          disabled={!baseArtifactId || status === "applying" || status === "applied"}
+          className="shrink-0 px-2.5 py-1 text-[11px] rounded-md bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
+          title={!baseArtifactId ? "缺少 base_artifact_id，无法应用" : undefined}
+        >
+          {status === "applying"
+            ? "应用中…"
+            : status === "applied"
+              ? "已应用"
+              : "应用"}
+        </button>
+      </div>
+      {status === "error" && (
+        <div className="px-3 py-2 text-[11px] text-red-500/80 border-b border-border bg-red-500/5">
+          {error ?? "应用 Diff 失败"}
         </div>
       )}
       <div className="overflow-x-auto max-h-96 scrollbar-thin">

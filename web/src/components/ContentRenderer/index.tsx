@@ -8,28 +8,44 @@ import { TextBubble } from "./TextBubble";
 interface Props {
   content: MessageContent;
   artifactId?: string | null;
+  onEditArtifact?: (artifactId: string) => void;
 }
 
-export function ContentRenderer({ content, artifactId }: Props) {
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) {
   switch (content.type) {
     case "text":
-      return <TextBubble text={content.text} />;
+      return <TextBubble text={stringValue(content.text) ?? ""} />;
 
     case "code":
       return (
         <CodeBlock
-          code={content.code}
-          language={content.language}
-          title={content.title}
+          code={stringValue(content.code) ?? ""}
+          language={stringValue(content.language)}
+          title={stringValue(content.title)}
+          artifactId={artifactId}
+          onEdit={onEditArtifact}
         />
       );
 
     case "diff":
       return (
         <DiffCard
-          before={content.before}
-          after={content.after}
-          fileName={content.fileName}
+          before={stringValue(content.before) ?? ""}
+          after={stringValue(content.after) ?? ""}
+          baseArtifactId={
+            stringValue(content.base_artifact_id) ??
+            stringValue(content.baseArtifactId)
+          }
+          summary={stringValue(content.summary)}
+          fileName={stringValue(content.fileName) ?? stringValue(content.file_name)}
         />
       );
 
@@ -37,18 +53,18 @@ export function ContentRenderer({ content, artifactId }: Props) {
       return (
         <PreviewCard
           artifactId={artifactId ?? ""}
-          title={content.title}
-          mimeType={content.mimeType}
-          fileSize={content.fileSize ?? 0}
+          title={stringValue(content.title) ?? "预览"}
+          mimeType={stringValue(content.mimeType) ?? "text/plain"}
+          fileSize={numberValue(content.fileSize) ?? 0}
         />
       );
 
     case "file":
       return (
         <FileCard
-          fileName={content.fileName}
-          mimeType={content.mimeType}
-          fileSize={content.fileSize ?? 0}
+          fileName={stringValue(content.fileName) ?? "untitled"}
+          mimeType={stringValue(content.mimeType) ?? "application/octet-stream"}
+          fileSize={numberValue(content.fileSize) ?? 0}
           downloadUrl={`/api/artifacts/${artifactId}/content`}
         />
       );

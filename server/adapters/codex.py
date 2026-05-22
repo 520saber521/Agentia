@@ -11,6 +11,7 @@ Adapter contract compliance (``ai-collab/rules/adapter.mdc``):
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, AsyncIterator, List, Optional
 
 import httpx
@@ -38,7 +39,11 @@ class CodexAdapter(AgentAdapter):
 
     def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
         super().__init__(config)
-        self.api_key: str = str(self.config.get("api_key") or "")
+        self.api_key: str = str(
+            self.config.get("api_key")
+            or os.environ.get("OPENAI_API_KEY")
+            or ""
+        )
         self.model: str = str(self.config.get("model", DEFAULT_MODEL))
         self.base_url: str = str(self.config.get("base_url", OPENAI_API_BASE)).rstrip("/")
         self.max_tokens: int = int(self.config.get("max_tokens", DEFAULT_MAX_TOKENS))

@@ -133,6 +133,14 @@ async def read_artifact_content_with_session(
     return p.read_text(encoding="utf-8")
 
 
+async def artifact_has_child_version(s: AsyncSession, artifact_id: str) -> bool:
+    """Return true when another artifact already uses this one as parent."""
+    child = await s.scalar(
+        select(Artifact.id).where(Artifact.parent_id == artifact_id).limit(1)
+    )
+    return child is not None
+
+
 async def list_artifacts(
     s: AsyncSession,
     conversation_id: str,

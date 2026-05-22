@@ -4,9 +4,10 @@ import type { Message } from "../types";
 interface Props {
   msg: Message;
   streaming?: boolean;
+  onEditArtifact?: (artifactId: string) => void;
 }
 
-export function MessageBubble({ msg, streaming }: Props) {
+export function MessageBubble({ msg, streaming, onEditArtifact }: Props) {
   const isUser = msg.sender_type === "user";
   const time = new Date(msg.created_at).toLocaleTimeString();
 
@@ -26,6 +27,7 @@ export function MessageBubble({ msg, streaming }: Props) {
         <ContentRenderer
           content={msg.content}
           artifactId={msg.artifact_id}
+          onEditArtifact={onEditArtifact}
         />
         {streaming && msg.content.type === "text" && (
           <span className="ml-1 inline-block text-fg/70 animate-blink">▍</span>

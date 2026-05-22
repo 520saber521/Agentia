@@ -146,3 +146,29 @@ class Task(Base):
         Index("idx_task_parent", "parent_task_id"),
         Index("idx_task_status", "status"),
     )
+
+
+class TraceEntry(Base):
+    """Message routing trace — F-W3-1.
+
+    Records each hop a message takes: user → Router → Adapter → done.
+    """
+
+    __tablename__ = "trace_entry"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    message_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String, nullable=False)
+    trace_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    node_role: Mapped[str] = mapped_column(String, nullable=False)
+    event: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ok")
+    detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+
+    __table_args__ = (
+        Index("idx_trace_msg", "message_id", "seq"),
+        Index("idx_trace_id", "trace_id"),
+    )

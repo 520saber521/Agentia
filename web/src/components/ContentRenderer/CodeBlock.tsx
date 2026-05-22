@@ -4,9 +4,11 @@ interface Props {
   code: string;
   language?: string;
   title?: string;
+  artifactId?: string | null;
+  onEdit?: (artifactId: string) => void;
 }
 
-export function CodeBlock({ code, language, title }: Props) {
+export function CodeBlock({ code, language, title, artifactId, onEdit }: Props) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
@@ -26,13 +28,24 @@ export function CodeBlock({ code, language, title }: Props) {
           {language && <span className="mr-2">{language}</span>}
           {title && <span>{title}</span>}
         </span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="text-xs text-muted hover:text-fg transition-colors"
-        >
-          {copied ? "已复制" : "复制"}
-        </button>
+        <div className="flex items-center gap-2">
+          {artifactId && onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(artifactId)}
+              className="text-xs text-muted hover:text-accent transition-colors"
+            >
+              编辑
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="text-xs text-muted hover:text-fg transition-colors"
+          >
+            {copied ? "已复制" : "复制"}
+          </button>
+        </div>
       </div>
       <pre className="p-3 overflow-x-auto text-xs leading-relaxed max-h-80 scrollbar-thin">
         <code>{code}</code>

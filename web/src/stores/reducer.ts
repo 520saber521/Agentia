@@ -182,6 +182,20 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       return { next: state, effects };
     }
 
+    case "artifact_ready": {
+      if (
+        evt.conversation_id !== state.currentConvId ||
+        !evt.message_id
+      ) {
+        return { next: state, effects };
+      }
+      const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+      if (idx < 0) return { next: state, effects };
+      const messages = state.messages.slice();
+      messages[idx] = { ...messages[idx], artifact_id: evt.artifact.id };
+      return { next: { ...state, messages }, effects };
+    }
+
     default:
       // pong / echo / usage 等不更新 UI 状态。
       return { next: state, effects };

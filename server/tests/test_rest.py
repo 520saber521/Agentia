@@ -177,3 +177,109 @@ async def test_create_conversation_single_with_agent_ok(client) -> None:
     assert r.status_code == 201
     conv = r.json()["conversation"]
     assert conv["type"] == "single"
+
+
+# ---------------------------------------------------------------------------
+# W4 F-W4-5 Diff apply
+# ---------------------------------------------------------------------------
+
+
+async def test_apply_diff_creates_artifact_version_and_message(client) -> None:
+    created = await client.post(
+        "/api/artifacts",
+        json={
+            "conversation_id": "conv_demo",
+            "kind": "code",
+            "title": "hello.py",
+            "mime_type": "text/x-python",
+            "file_name": "hello.py",
+            "content": "print('old')\n",
+            "meta": {"language": "python"},
+        },
+    )
+    assert created.status_code == 201
+    base = created.json()["artifact"]
+
+    applied = await client.post(
+        f"/api/artifacts/{base['id']}/apply-diff",
+        json={
+            "before": "print('old')\n",
+            "after": "print('new')\n",
+            "summary": "更新输出文本",
+            "file_name": "hello.py",
+        },
+    )
+    assert applied.status_code == 200
+    body = applied.json()
+    assert body["artifact"]["parent_id"] == base["id"]
+    assert body["artifact"]["version"] == 2
+    assert body["message"]["artifact_id"] == body["artifact"]["id"]
+    assert body["message"]["content"]["type"] == "code"
+
+    content = await client.get(f"/api/artifacts/{body['artifact']['id']}/content")
+    assert content.status_code == 200
+    assert content.json()["content"] == "print('new')\n"
+
+
+async def test_create_artifact_version_inserts_diff_message(client) -> None:
+    created = await client.post(
+        "/api/artifacts",
+        json={
+            "conversation_id": "conv_demo",
+            "kind": "code",
+            "title": "hello.py",
+            "mime_type": "text/x-python",
+            "file_name": "hello.py",
+            "content": "print('old')\n",
+        },
+    )
+    assert created.status_code == 201
+    base = created.json()["artifact"]
+
+    saved = await client.post(
+        "/api/artifacts",
+        json={
+            "conversation_id": "conv_demo",
+            "kind": "code",
+            "title": "hello.py",
+            "mime_type": "text/x-python",
+            "file_name": "hello.py",
+            "content": "print('new')\n",
+            "parent_id": base["id"],
+        },
+    )
+    assert saved.status_code == 201
+    body = saved.json()
+    assert body["artifact"]["parent_id"] == base["id"]
+    assert body["message"]["artifact_id"] == body["artifact"]["id"]
+    assert body["message"]["content"]["type"] == "diff"
+    assert body["message"]["content"]["before"] == "print('old')\n"
+    assert body["message"]["content"]["after"] == "print('new')\n"
+
+
+async def test_apply_diff_rejects_outdated_base_version(client) -> None:
+    created = await client.post(
+        "/api/artifacts",
+        json={
+            "conversation_id": "conv_demo",
+            "kind": "code",
+            "title": "hello.py",
+            "mime_type": "text/x-python",
+            "file_name": "hello.py",
+            "content": "print('old')\n",
+        },
+    )
+    base = created.json()["artifact"]
+
+    first = await client.post(
+        f"/api/artifacts/{base['id']}/apply-diff",
+        json={"before": "print('old')\n", "after": "print('new')\n"},
+    )
+    assert first.status_code == 200
+
+    second = await client.post(
+        f"/api/artifacts/{base['id']}/apply-diff",
+        json={"before": "print('old')\n", "after": "print('again')\n"},
+    )
+    assert second.status_code == 409
+    assert second.json()["detail"] == "artifact_conflict"
