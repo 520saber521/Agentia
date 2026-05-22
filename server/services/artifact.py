@@ -39,6 +39,8 @@ def artifact_to_dict(a: Artifact) -> dict[str, Any]:
         "file_name": a.file_name,
         "file_size": a.file_size,
         "storage_path": a.storage_path,
+        "url": f"/api/artifacts/{a.id}/content",
+        "preview_url": f"/preview/{a.id}",
         "source_message_id": a.source_message_id,
         "created_by": a.created_by,
         "meta": json.loads(a.meta) if isinstance(a.meta, str) else a.meta,
@@ -164,36 +166,38 @@ async def list_artifacts(
 async def list_artifact_history(
     s: AsyncSession, artifact_id: str
 ) -> list[dict[str, Any]]:
-    """沿 parent_id 追踪版本链，从最旧到最新。"""
-    result: list[Artifact] = []
-    current_id: Optional[str] = artifact_id
+    """沿 parent_id 返回完整版本链，从最旧到最新。"""
+    target = await s.get(Artifact, artifact_id)
+    if target is None:
+        return []
+
+    chain: list[Artifact] = []
+    current = target
+    while current is not None:
+        chain.append(current)
+        if current.parent_id is None:
+            break
+        current = await s.get(Artifact, current.parent_id)
+
+    root = chain[-1]
+    ordered: list[Artifact] = [root]
+    current_id: Optional[str] = root.id
+    visited = {root.id}
 
     while current_id:
-        a = await s.get(Artifact, current_id)
-        if a is None:
+        child = await s.scalar(
+            select(Artifact)
+            .where(Artifact.parent_id == current_id)
+            .order_by(Artifact.created_at.asc(), Artifact.version.asc())
+            .limit(1)
+        )
+        if child is None or child.id in visited:
             break
-        result.append(a)
-        current_id = a.parent_id
+        ordered.append(child)
+        visited.add(child.id)
+        current_id = child.id
 
-    result.reverse()
-    # walk forward to find all descendants
-    all_versions: list[Artifact] = []
-    root_id = result[0].id if result else None
-    if root_id:
-        versions = (
-            await s.scalars(
-                select(Artifact)
-                .where(Artifact.id == root_id)
-                .order_by(Artifact.version)
-            )
-        ).all()
-        if not versions:
-            # Walk parent links manually
-            result.reverse()
-            return [artifact_to_dict(a) for a in result]
-        return [artifact_to_dict(a) for a in versions]
-
-    return [artifact_to_dict(a) for a in all_versions]
+    return [artifact_to_dict(a) for a in ordered]
 
 
 async def delete_artifact(s: AsyncSession, artifact_id: str) -> bool:

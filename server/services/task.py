@@ -18,14 +18,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Task, new_id, now_ms
 
-VALID_STATUSES = frozenset({"pending", "running", "done", "failed", "cancelled"})
+VALID_STATUSES = frozenset({"planning", "pending", "running", "done", "failed", "blocked", "conflict"})
 
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "pending": frozenset({"running", "cancelled"}),
-    "running": frozenset({"done", "failed", "cancelled"}),
+    "planning": frozenset({"pending", "running", "blocked", "failed"}),
+    "pending": frozenset({"running", "blocked", "failed", "conflict"}),
+    "running": frozenset({"done", "failed", "blocked", "conflict"}),
     "done": frozenset(),
     "failed": frozenset(),
-    "cancelled": frozenset(),
+    "blocked": frozenset({"running", "failed"}),
+    "conflict": frozenset({"running", "failed", "blocked"}),
 }
 
 

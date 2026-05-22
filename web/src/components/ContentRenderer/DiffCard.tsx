@@ -3,24 +3,29 @@ import { useState } from "react";
 import { applyDiffArtifact, describeApiError } from "../../api/client";
 
 interface Props {
+  diff?: string;
   before: string;
   after: string;
   baseArtifactId?: string;
   summary?: string;
   fileName?: string;
+  onApplied?: () => void;
 }
 
 type ApplyStatus = "idle" | "applying" | "applied" | "error";
 
 export function DiffCard({
+  diff,
   before,
   after,
   baseArtifactId,
   summary,
   fileName,
+  onApplied,
 }: Props) {
   const [status, setStatus] = useState<ApplyStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const diffLines = diff ? diff.split("\n") : null;
   const beforeLines = before.split("\n");
   const afterLines = after.split("\n");
   const maxLines = Math.max(beforeLines.length, afterLines.length);
@@ -62,6 +67,7 @@ export function DiffCard({
         file_name: fileName,
       });
       setStatus("applied");
+      onApplied?.();
     } catch (err) {
       setStatus("error");
       setError(describeApiError(err));
@@ -101,7 +107,27 @@ export function DiffCard({
         </div>
       )}
       <div className="overflow-x-auto max-h-96 scrollbar-thin">
-        <table className="w-full text-[11px] font-mono leading-relaxed">
+        {diffLines ? (
+          <pre className="p-3 text-[11px] font-mono leading-relaxed whitespace-pre min-w-max">
+            {diffLines.map((line, index) => (
+              <div
+                key={index}
+                className={
+                  line.startsWith("+") && !line.startsWith("+++")
+                    ? "text-green-400 bg-green-500/5"
+                    : line.startsWith("-") && !line.startsWith("---")
+                      ? "text-red-400 bg-red-500/5"
+                      : line.startsWith("@@")
+                        ? "text-sky-300 bg-sky-500/5"
+                        : "text-fg/70"
+                }
+              >
+                {line || " "}
+              </div>
+            ))}
+          </pre>
+        ) : (
+          <table className="w-full text-[11px] font-mono leading-relaxed">
           <tbody>
             {changes.map((c, i) => (
               <tr
@@ -138,7 +164,8 @@ export function DiffCard({
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        )}
       </div>
     </div>
   );

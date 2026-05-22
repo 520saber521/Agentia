@@ -33,6 +33,30 @@ from ws import Connection, event
 logger = logging.getLogger("agenthub.handlers.send_message")
 
 
+async def _conversation_agent_members(conversation_id: str) -> set[str]:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        rows = (
+            await s.scalars(
+                select(ConversationMember).where(
+                    ConversationMember.conversation_id == conversation_id,
+                    ConversationMember.member_type == "agent",
+                )
+            )
+        ).all()
+    return {row.member_id for row in rows}
+
+
+def _looks_complex_task(user_text: str) -> bool:
+    lower = user_text.lower()
+    keywords = [
+        "设计", "实现", "开发", "拆", "分派", "网页", "页面", "html", "web", "应用",
+        "前端", "后端", "数据", "接口", "测试", "订单", "登录", "注册", "商品",
+        "orchestrator", "协调", "多 agent", "multi-agent",
+    ]
+    return len(user_text) >= 24 or any(k in lower for k in keywords)
+
+
 async def resolve_targets(
     conversation_id: str,
     mentions: list[str],
@@ -99,15 +123,20 @@ async def resolve_targets(
         return [next(iter(agent_member_ids))], None
 
     if "@" in user_text:
+        if "@orchestrator" in user_text.lower() or "@任务编排器" in user_text:
+            if ORCHESTRATOR_AGENT_ID in agent_member_ids:
+                return [ORCHESTRATOR_AGENT_ID], None
         return [], event(
             "error",
             code="bad_mentions",
             message="text contains @ but mentions[] is empty",
         )
+    if ORCHESTRATOR_AGENT_ID in agent_member_ids and _looks_complex_task(user_text):
+        return [ORCHESTRATOR_AGENT_ID], None
     return [], event(
         "error",
         code="no_target",
-        message="group conversation requires explicit @mentions until W3",
+        message="group conversation requires explicit @mentions or a complex task for Orchestrator",
     )
 
 
@@ -254,15 +283,43 @@ async def handle(conn: Connection, evt: dict[str, Any]) -> None:
     has_orchestrator = ORCHESTRATOR_AGENT_ID in target_agent_ids
     non_orch_agents = [a for a in target_agent_ids if a != ORCHESTRATOR_AGENT_ID]
 
+    active_count = len(agent_msgs)
+    active_lock = asyncio.Lock()
+
+    async def _on_agent_done(mid: str) -> None:
+        nonlocal active_count
+        async with active_lock:
+            active_count -= 1
+            if active_count == 0:
+                await conn.send(
+                    event(
+                        "fan_out_done",
+                        conversation_id=conversation_id,
+                        total_agents=len(agent_msgs),
+                    )
+                )
+                logger.debug(
+                    "ws[%s] fan-out complete for conv=%s (%d agents)",
+                    conn.conn_id, conversation_id, len(agent_msgs),
+                )
+
+    async def _wrap_agent_task(coro, mid: str) -> None:
+        try:
+            await coro
+        finally:
+            await _on_agent_done(mid)
+
     for aid, mid, _mdict in agent_msgs:
         if aid == ORCHESTRATOR_AGENT_ID:
+            coro = _run_orchestrator(conn, mid, conversation_id, user_text, target_agent_ids)
             task = asyncio.create_task(
-                _run_orchestrator(conn, mid, conversation_id, user_text, target_agent_ids),
+                _wrap_agent_task(coro, mid),
                 name=f"orchestrator-{mid}",
             )
         else:
+            coro = run_agent_reply(conn, aid, mid, conversation_id, user_text)
             task = asyncio.create_task(
-                run_agent_reply(conn, aid, mid, conversation_id, user_text),
+                _wrap_agent_task(coro, mid),
                 name=f"agent-reply-{mid}",
             )
         conn.in_flight[mid] = task
@@ -270,7 +327,6 @@ async def handle(conn: Connection, evt: dict[str, Any]) -> None:
             lambda _t, _m=mid: conn.in_flight.pop(_m, None)
         )
 
-    # If Orchestrator is mentioned alongside other agents, also fan-out
     if has_orchestrator and non_orch_agents:
         logger.info(
             "Orchestrator + %d other agents mentioned in same message",
@@ -355,6 +411,7 @@ async def run_agent_reply(
         messages.append({"role": "user", "content": user_text})
 
     final_parts: list[str] = []
+    artifact_messages: list[dict[str, Any]] = []
     seq = 0
 
     try:
@@ -384,6 +441,25 @@ async def run_agent_reply(
                         output_tokens=chunk.get("output_tokens", 0),
                     )
                 )
+            elif ctype == "artifact":
+                artifact_payload = chunk.get("artifact") or {}
+                artifact_message = await persist_artifact_chunk(
+                    Session,
+                    ai_msg_id,
+                    conversation_id,
+                    agent_id,
+                    artifact_payload,
+                )
+                if artifact_message is not None:
+                    artifact_messages.append(artifact_message)
+                    await conn.send(
+                        event(
+                            "artifact_ready",
+                            conversation_id=conversation_id,
+                            artifact=artifact_message["artifact"],
+                            message_id=ai_msg_id,
+                        )
+                    )
             elif ctype == "error":
                 await persist_final(Session, ai_msg_id, "".join(final_parts))
                 await conn.send(
@@ -401,14 +477,21 @@ async def run_agent_reply(
                 break
 
         final_text = "".join(final_parts)
-        await persist_final(Session, ai_msg_id, final_text)
+        if artifact_messages:
+            final_content = artifact_messages[-1]["content"]
+        else:
+            artifact_content = await _try_create_artifact(
+                Session, conn, ai_msg_id, conversation_id, agent_id, final_text
+            )
+            final_content = artifact_content or {"type": "text", "text": final_text}
+        await persist_message_content(Session, ai_msg_id, final_content)
         await conn.send(
             event(
                 "message_done",
                 message_id=ai_msg_id,
                 sender_id=agent_id,
                 conversation_id=conversation_id,
-                final_content={"type": "text", "text": final_text},
+                final_content=final_content,
             )
         )
         # Record agent completion in trace
@@ -425,9 +508,6 @@ async def run_agent_reply(
                 detail=final_text[:200],
                 seq=0,
             )
-        await _try_create_artifact(
-            Session, conn, ai_msg_id, conversation_id, agent_id, final_text
-        )
     except asyncio.CancelledError:
         final_text = "".join(final_parts)
         await persist_final(Session, ai_msg_id, final_text)
@@ -555,7 +635,7 @@ CODE_BLOCK_RE = re.compile(r"```(\w+)?\n([\s\S]*?)```", re.MULTILINE)
 
 async def _try_create_artifact(
     Session, conn: Connection, message_id: str, conversation_id: str, agent_id: str, text: str
-) -> None:
+) -> dict[str, Any] | None:
     """Parse final text for code blocks and create artifacts for each found.
 
     Only creates artifacts for ``code`` / ``html`` / ``javascript`` / ``typescript`` / ``python``
@@ -563,9 +643,10 @@ async def _try_create_artifact(
     """
     matches = list(CODE_BLOCK_RE.finditer(text))
     if not matches:
-        return
+        return None
 
     first_artifact_id: str | None = None
+    first_content_payload: dict[str, Any] | None = None
 
     for idx, m in enumerate(matches):
         lang = (m.group(1) or "text").strip().lower()
@@ -579,7 +660,7 @@ async def _try_create_artifact(
         elif idx > 0:
             title = f"Code Block {idx + 1} ({lang})"
 
-        kind = "code"
+        kind = "preview" if lang == "html" else "code"
         mime_type = "text/plain"
         ext_map = {
             "python": ("text/x-python", ".py"),
@@ -617,6 +698,16 @@ async def _try_create_artifact(
 
         if idx == 0:
             first_artifact_id = artifact["id"]
+            content_payload = _artifact_message_content(artifact)
+            first_content_payload = content_payload
+            async with Session() as s:
+                await update_message_content(s, message_id, content_payload)
+                from sqlalchemy import select
+                from db.models import Message as MessageModel
+                m = await s.scalar(select(MessageModel).where(MessageModel.id == message_id))
+                if m:
+                    m.artifact_id = first_artifact_id
+                    await s.commit()
 
         await conn.send(
             event(
@@ -627,18 +718,96 @@ async def _try_create_artifact(
             )
         )
 
-    # Update the first message with artifact_id
     if first_artifact_id:
-        async with Session() as s:
-            from sqlalchemy import select
-            from db.models import Message as MessageModel
-            m = await s.scalar(select(MessageModel).where(MessageModel.id == message_id))
-            if m:
-                m.artifact_id = first_artifact_id
-                await s.commit()
+        return first_content_payload
+    return None
+
+
+async def persist_message_content(Session, message_id: str, content: dict[str, Any]) -> None:
+    async with Session() as s:
+        await update_message_content(s, message_id, content)
+
+
+def _artifact_message_content(artifact: dict[str, Any]) -> dict[str, Any]:
+    meta = artifact.get("meta") or {}
+    base = {
+        "artifact_id": artifact["id"],
+        "title": artifact["title"],
+        "mimeType": artifact["mime_type"],
+        "fileSize": artifact["file_size"],
+        "url": artifact.get("url"),
+        "previewUrl": artifact.get("preview_url"),
+        "version": artifact.get("version", 1),
+    }
+    if artifact["kind"] == "preview":
+        return {"type": "preview", **base}
+    if artifact["kind"] == "file":
+        return {
+            "type": "file",
+            **base,
+            "fileName": artifact["file_name"] or artifact["title"],
+        }
+    if artifact["kind"] == "diff":
+        return {
+            "type": "diff",
+            **base,
+            "fileName": artifact["file_name"] or artifact["title"],
+            "summary": meta.get("diff_summary") or "产物版本变更",
+            "applied_artifact_id": artifact["id"],
+        }
+    return {
+        "type": "code",
+        **base,
+        "fileName": artifact["file_name"] or artifact["title"],
+        "language": meta.get("language") or "plaintext",
+    }
+
+
+async def persist_artifact_chunk(
+    Session,
+    message_id: str,
+    conversation_id: str,
+    agent_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+
+    kind = str(payload.get("kind") or "file")
+    title = str(payload.get("title") or payload.get("file_name") or "Artifact")
+    mime_type = str(payload.get("mime_type") or payload.get("mimeType") or "text/plain")
+    file_name = payload.get("file_name") or payload.get("fileName")
+    content = payload.get("content")
+    if content is None:
+        content = payload.get("text", "")
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    parent_id = payload.get("parent_id") or payload.get("parentId")
+
+    async with Session() as s:
+        artifact = await create_service_artifact(
+            s,
+            conversation_id=conversation_id,
+            kind=kind,
+            title=title,
+            mime_type=mime_type,
+            file_name=str(file_name) if file_name else None,
+            content=str(content),
+            source_message_id=message_id,
+            created_by=agent_id,
+            parent_id=str(parent_id) if parent_id else None,
+            meta=meta,
+        )
+        content_payload = _artifact_message_content(artifact)
+        await update_message_content(s, message_id, content_payload)
+        from sqlalchemy import select
+        from db.models import Message as MessageModel
+        m = await s.scalar(select(MessageModel).where(MessageModel.id == message_id))
+        if m:
+            m.artifact_id = artifact["id"]
+            await s.commit()
+    return {"artifact": artifact, "content": content_payload}
 
 
 async def persist_final(Session, message_id: str, text: str) -> None:
-    """Write the accumulated (possibly partial) text back to the DB message row."""
     async with Session() as s:
         await update_message_content(s, message_id, {"type": "text", "text": text})

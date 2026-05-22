@@ -14,34 +14,73 @@ export interface TextContent {
 
 export interface CodeContent {
   type: "code";
-  code: string;
+  artifact_id?: string;
+  code?: string;
   language?: string;
   title?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
+  url?: string;
+  previewUrl?: string;
+  version?: number;
 }
 
 export interface DiffContent {
   type: "diff";
-  before: string;
-  after: string;
+  artifact_id?: string;
+  before?: string;
+  after?: string;
+  diff?: string;
   base_artifact_id?: string;
   baseArtifactId?: string;
   summary?: string;
   fileName?: string;
   file_name?: string;
+  mimeType?: string;
+  fileSize?: number;
+  applied_artifact_id?: string;
+  version?: number;
 }
 
 export interface PreviewContent {
   type: "preview";
+  artifact_id?: string;
   title: string;
   mimeType: string;
   fileSize?: number;
+  url?: string;
+  previewUrl?: string;
+  version?: number;
 }
 
 export interface FileContent {
   type: "file";
+  artifact_id?: string;
   fileName: string;
   mimeType: string;
   fileSize?: number;
+  url?: string;
+  previewUrl?: string;
+  version?: number;
+}
+
+export interface TaskStatusContent {
+  type: "task_status";
+  task_id: string;
+  status: "planning" | "pending" | "running" | "done" | "failed" | "blocked" | "conflict";
+  title?: string;
+  progress?: number;
+  summary?: string;
+}
+
+export interface DeployStatusContent {
+  type: "deploy_status";
+  deploy_id: string;
+  status: string;
+  title?: string;
+  url?: string;
+  summary?: string;
 }
 
 export type MessageContent =
@@ -50,8 +89,8 @@ export type MessageContent =
   | DiffContent
   | PreviewContent
   | FileContent
-  | { type: "task_status"; [key: string]: unknown }
-  | { type: string; [key: string]: unknown };
+  | TaskStatusContent
+  | DeployStatusContent;
 
 export interface Message {
   id: string;
@@ -219,7 +258,7 @@ export interface Task {
   parent_task_id: string | null;
   title: string;
   description: string;
-  status: "pending" | "planning" | "running" | "done" | "failed" | "cancelled" | "blocked" | "conflict";
+  status: "planning" | "pending" | "running" | "done" | "failed" | "blocked" | "conflict";
   domain: string | null;
   assigned_agent_id: string | null;
   originating_message_id: string | null;
@@ -253,6 +292,8 @@ export interface Artifact {
   file_name: string | null;
   file_size: number;
   storage_path: string;
+  url: string;
+  preview_url: string;
   source_message_id: string | null;
   created_by: string;
   meta: Record<string, unknown>;

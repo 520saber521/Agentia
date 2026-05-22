@@ -7,6 +7,7 @@ import { ConversationListPanel } from "./components/ConversationListPanel";
 import { Header } from "./components/Header";
 import { MemberPanel } from "./components/MemberPanel";
 import { MessagePanel } from "./components/MessagePanel";
+import { W4TestPanel } from "./components/W4TestPanel";
 import { useChatStore } from "./stores/useChatStore";
 import type { Artifact } from "./types";
 
@@ -44,12 +45,20 @@ export default function App() {
     setEditingConvId(null);
   }, []);
 
+  useEffect(() => {
+    const handler = () => {
+      if (currentConvId) void useChatStore.getState().selectConversation(currentConvId);
+    };
+    window.addEventListener("agenthub:artifact-applied", handler);
+    return () => window.removeEventListener("agenthub:artifact-applied", handler);
+  }, [currentConvId]);
+
   const handleEditorSaved = useCallback(
-    (_newArtifact: Artifact) => {
-      setEditingArtifact(null);
-      setEditingConvId(null);
+    (newArtifact: Artifact) => {
+      setEditingArtifact(newArtifact);
+      if (currentConvId) void useChatStore.getState().selectConversation(currentConvId);
     },
-    [],
+    [currentConvId],
   );
 
   return (
@@ -58,6 +67,7 @@ export default function App() {
       <main className="flex-1 flex min-h-0">
         <ConversationListPanel />
         <section className="flex-1 flex flex-col min-h-0 bg-panel border-l border-border">
+          <W4TestPanel />
           <MessagePanel onEditArtifact={handleEditArtifact} />
           <Composer />
         </section>

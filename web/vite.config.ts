@@ -8,16 +8,20 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8788",
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
       "/ws": {
-        target: "ws://127.0.0.1:8788",
+        target: "ws://127.0.0.1:8000",
         ws: true,
         changeOrigin: true,
       },
       "/health": {
-        target: "http://127.0.0.1:8788",
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/preview": {
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

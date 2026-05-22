@@ -1,17 +1,21 @@
 """ClaudeCodeAdapter — Anthropic Messages API via SSE streaming.
 
 Adapter contract compliance (``ai-collab/rules/adapter.mdc``):
-1. Stateless — no instance state beyond ``config``
-2. Streaming — yields text tokens as they arrive via SSE
-3. Cancel = return — ``asyncio.CancelledError`` propagates to caller
-4. Errors yielded, never raised — 429 / 5xx / timeout yield ``error`` chunk
-5. Registered in ``ADAPTER_REGISTRY``
+1. R-A-1: Stateless — no instance state beyond ``config``
+2. R-A-2: Streaming — yields text tokens as they arrive via SSE
+3. R-A-3: Cancel = return — catches ``CancelledError`` and returns
+4. R-A-4: Errors yielded, never raised — 429 / 5xx / timeout yield ``error`` chunk
+5. R-A-5: ``capabilities()`` returns only convention enums
+6. R-A-6: Registered in ``ADAPTER_REGISTRY``
+7. R-A-7: 5 test scenarios covered in ``test_adapter_claude.py``
+8. R-A-8: ``__init__`` does not read ``os.environ``
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-import os
+import re
 from typing import Any, AsyncIterator, List, Optional
 
 import httpx
@@ -24,24 +28,28 @@ DEFAULT_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_MAX_TOKENS = 4096
 REQUEST_TIMEOUT_S = 60.0
 
+# For slicing non-streaming response into token-like chunks
+_TOKEN_SPLIT_RE = re.compile(r"(\s+|[.!?،。！？、]+)")
+
+
+def _split_into_tokens(text: str) -> list[str]:
+    """Split text into 'token-like' pieces for streaming illusion.
+
+    Splits on whitespace/punctuation boundaries, yielding pieces
+    that resemble natural token boundaries.
+    """
+    parts = _TOKEN_SPLIT_RE.split(text)
+    return [p for p in parts if p]
+
 
 def _role(role: str) -> str:
-    """Map internal role to Anthropic role."""
     if role == "system":
         return "user"
     return role
 
 
 async def _parse_sse(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
-    """Parse Anthropic SSE stream, yielding parsed JSON events.
-
-    Anthropic SSE format:
-        event: message_start
-        data: {...}
-
-        event: content_block_delta
-        data: {...}
-    """
+    """Parse Anthropic SSE stream, yielding parsed JSON events."""
     buf = ""
     event_type = ""
     async for raw in response.aiter_lines():
@@ -57,6 +65,30 @@ async def _parse_sse(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
             buf = raw[6:]
     if event_type and buf:
         yield {"event": event_type, "data": buf}
+
+
+async def _sse_or_json(
+    response: httpx.Response, stream_requested: bool
+) -> AsyncIterator[dict[str, Any]]:
+    """Detect if response is SSE or complete JSON; yield parsed events either way.
+
+    If ``stream_requested`` and response is SSE, yield SSE events.
+    If non-streaming (complete JSON), yield a synthetic ``message_stop`` event.
+    """
+    content_type = response.headers.get("content-type", "")
+    is_sse = "text/event-stream" in content_type
+
+    if is_sse or stream_requested:
+        try:
+            async for parsed in _parse_sse(response):
+                yield parsed
+            return
+        except httpx.StreamError as exc:
+            yield {"event": "error_stream", "data": json.dumps({"code": "stream_interrupted", "message": str(exc)})}
+            return
+
+    body = response.json()
+    yield {"event": "message_start", "data": json.dumps(body)}
 
 
 def _last_user_text(messages: List[dict[str, Any]]) -> str:
@@ -75,17 +107,15 @@ class ClaudeCodeAdapter(AgentAdapter):
     - ``model`` (optional, default ``claude-sonnet-4-20250514``)
     - ``base_url`` (optional, default ``https://api.anthropic.com/v1``)
     - ``max_tokens`` (optional, default 4096)
+
+    R-A-8 compliance: ``__init__`` does NOT read ``os.environ``.
     """
 
     name = "claude_code"
 
     def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
         super().__init__(config)
-        self.api_key: str = str(
-            self.config.get("api_key")
-            or os.environ.get("ANTHROPIC_API_KEY")
-            or ""
-        )
+        self.api_key: str = str(self.config.get("api_key") or "")
         self.model: str = str(self.config.get("model", DEFAULT_MODEL))
         self.base_url: str = str(self.config.get("base_url", ANTHROPIC_API_BASE)).rstrip("/")
         self.max_tokens: int = int(self.config.get("max_tokens", DEFAULT_MAX_TOKENS))
@@ -176,20 +206,56 @@ class ClaudeCodeAdapter(AgentAdapter):
         input_tokens = 0
         output_tokens = 0
         current_text = ""
+        is_streaming = False
+        is_full_json = False
+
+        cancel_event = asyncio.Event()
+
+        def _on_cancel(_task=None):
+            cancel_event.set()
+
+        loop = asyncio.get_running_loop()
+        current_task = asyncio.current_task(loop=loop)
+        if current_task is not None:
+            current_task.add_done_callback(_on_cancel)
 
         try:
-            async for parsed in _parse_sse(response):
+            async for parsed in _sse_or_json(response, stream_requested=True):
+                if cancel_event.is_set():
+                    return
+
                 event = parsed["event"]
                 data = parsed["data"]
+
+                if event == "error_stream":
+                    err = json.loads(data) if data else {}
+                    yield {"type": "error", "code": err.get("code", "stream_interrupted"), "message": err.get("message", "stream interrupted")}
+                    return
+
                 try:
                     payload = json.loads(data) if data else {}
                 except (ValueError, TypeError):
                     continue
 
                 if event == "message_start":
+                    is_streaming = True
                     msg = payload.get("message") or {}
                     usage = msg.get("usage") or {}
                     input_tokens = usage.get("input_tokens", 0)
+
+                    # Detect non-streaming response (full JSON in SSE reader)
+                    content = msg.get("content") or []
+                    if content and not is_streaming:
+                        is_full_json = True
+                        text = "".join(
+                            block.get("text", "") for block in content if block.get("type") == "text"
+                        )
+                        tokens = _split_into_tokens(text)
+                        for tok in tokens:
+                            if cancel_event.is_set():
+                                return
+                            current_text += tok
+                            yield {"type": "text", "delta": tok}
 
                 elif event == "content_block_delta":
                     delta = payload.get("delta") or {}
@@ -200,16 +266,28 @@ class ClaudeCodeAdapter(AgentAdapter):
                             yield {"type": "text", "delta": text}
 
                 elif event == "message_delta":
-                    delta = payload.get("delta") or {}
                     usage = payload.get("usage") or {}
                     output_tokens = usage.get("output_tokens", 0) or len(current_text)
 
                 elif event == "message_stop":
                     break
 
-        except httpx.StreamError as exc:
-            yield {"type": "error", "code": "stream_interrupted", "message": str(exc)}
+        except asyncio.CancelledError:
+            cancel_event.set()
             return
+
+        if not is_streaming and not current_text:
+            body_data = response.json()
+            text = ""
+            for block in (body_data.get("content") or []):
+                if block.get("type") == "text":
+                    text += block.get("text", "")
+            if text:
+                tokens = _split_into_tokens(text)
+                for tok in tokens:
+                    if cancel_event.is_set():
+                        return
+                    yield {"type": "text", "delta": tok}
 
         yield {
             "type": "usage",
@@ -219,4 +297,4 @@ class ClaudeCodeAdapter(AgentAdapter):
         yield {"type": "done"}
 
     def capabilities(self) -> List[str]:
-        return ["text", "code", "tool_use", "vision"]
+        return ["text", "code", "tool_use", "vision", "web_search", "file"]

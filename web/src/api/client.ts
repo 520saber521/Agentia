@@ -18,6 +18,7 @@ export type ApiErrorCode =
   | "group_requires_agents"
   | "unknown_agent"
   | "artifact_conflict"
+  | "invalid_content"
   | "unknown";
 
 export class ApiError extends Error {
@@ -35,6 +36,7 @@ export class ApiError extends Error {
       "group_requires_agents",
       "unknown_agent",
       "artifact_conflict",
+      "invalid_content",
     ];
     this.code = (KNOWN as string[]).includes(detail)
       ? (detail as ApiErrorCode)
@@ -146,8 +148,10 @@ export interface SaveArtifactVersionInput {
   title: string;
   mime_type: string;
   content: string;
-  parent_id: string;
+  parent_id?: string;
+  file_name?: string;
   source_message_id?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface ApplyDiffInput {
@@ -196,8 +200,36 @@ export async function uploadFile(
 export async function saveArtifactVersion(
   input: SaveArtifactVersionInput,
 ): Promise<Artifact> {
-  const body = await postJson<{ artifact: Artifact }>("/api/artifacts", input);
+  const body = await postJson<{ artifact: Artifact; message?: Message | null }>("/api/artifacts", input);
   return body.artifact;
+}
+
+export async function createArtifactMessage(
+  input: SaveArtifactVersionInput,
+): Promise<{ artifact: Artifact; message: Message | null }> {
+  return postJson<{ artifact: Artifact; message: Message | null }>(
+    "/api/artifacts",
+    input,
+  );
+}
+
+export async function fetchArtifactHistory(
+  artifactId: string,
+): Promise<Artifact[]> {
+  const body = await getJson<{ artifact_id: string; history: Artifact[] }>(
+    `/api/artifacts/${encodeURIComponent(artifactId)}/history`,
+  );
+  return body.history;
+}
+
+export async function createInvalidContentProbe(): Promise<void> {
+  await postJson("/api/artifacts", {
+    conversation_id: "conv_demo",
+    kind: "invalid-kind",
+    title: "invalid",
+    mime_type: "text/plain",
+    content: "invalid",
+  });
 }
 
 export async function applyDiffArtifact(
@@ -232,6 +264,8 @@ export function describeApiError(err: unknown): string {
         return "选择的 Agent 中存在无效项，请刷新成员列表";
       case "artifact_conflict":
         return "目标产物已有新版本，请先打开最新版本或重新生成 Diff";
+      case "invalid_content":
+        return "消息内容格式不合法，请检查类型和必填字段";
       case "unknown":
         return err.detail || "请求失败，请稍后再试";
     }

@@ -3,6 +3,7 @@ import { CodeBlock } from "./CodeBlock";
 import { DiffCard } from "./DiffCard";
 import { FileCard } from "./FileCard";
 import { PreviewCard } from "./PreviewCard";
+import { DeployStatusCard, TaskStatusInlineCard } from "./StatusCards";
 import { TextBubble } from "./TextBubble";
 
 interface Props {
@@ -27,10 +28,10 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
     case "code":
       return (
         <CodeBlock
-          code={stringValue(content.code) ?? ""}
+          code={stringValue(content.artifact_id) ? undefined : stringValue(content.code)}
           language={stringValue(content.language)}
           title={stringValue(content.title)}
-          artifactId={artifactId}
+          artifactId={artifactId ?? stringValue(content.artifact_id)}
           onEdit={onEditArtifact}
         />
       );
@@ -38,6 +39,7 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
     case "diff":
       return (
         <DiffCard
+          diff={stringValue(content.diff)}
           before={stringValue(content.before) ?? ""}
           after={stringValue(content.after) ?? ""}
           baseArtifactId={
@@ -46,16 +48,18 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
           }
           summary={stringValue(content.summary)}
           fileName={stringValue(content.fileName) ?? stringValue(content.file_name)}
+          onApplied={() => window.dispatchEvent(new CustomEvent("agenthub:artifact-applied"))}
         />
       );
 
     case "preview":
       return (
         <PreviewCard
-          artifactId={artifactId ?? ""}
+          artifactId={artifactId ?? stringValue(content.artifact_id) ?? ""}
           title={stringValue(content.title) ?? "预览"}
           mimeType={stringValue(content.mimeType) ?? "text/plain"}
           fileSize={numberValue(content.fileSize) ?? 0}
+          onEdit={onEditArtifact}
         />
       );
 
@@ -65,9 +69,15 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
           fileName={stringValue(content.fileName) ?? "untitled"}
           mimeType={stringValue(content.mimeType) ?? "application/octet-stream"}
           fileSize={numberValue(content.fileSize) ?? 0}
-          downloadUrl={`/api/artifacts/${artifactId}/content`}
+          downloadUrl={`/api/artifacts/${artifactId ?? stringValue(content.artifact_id)}/content`}
         />
       );
+
+    case "task_status":
+      return <TaskStatusInlineCard content={content} />;
+
+    case "deploy_status":
+      return <DeployStatusCard content={content} />;
 
     default:
       return (

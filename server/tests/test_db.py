@@ -29,6 +29,7 @@ from db.seed import (
 from services.agent import list_agents
 from services.conversation import list_conversations, list_messages
 from services.message import create_message, update_message_content
+from handlers.send_message import persist_artifact_chunk
 
 
 async def test_init_db_is_idempotent(db_env) -> None:
@@ -47,7 +48,10 @@ async def test_seed_defaults_creates_baseline(db_env) -> None:
         agent = await s.scalar(select(Agent).where(Agent.id == DEFAULT_AGENT_ID))
         assert agent is not None
         assert agent.adapter_type == "mock"
-        assert json.loads(agent.config) == {"delay_ms": 20}
+        agent_cfg = json.loads(agent.config)
+        assert agent_cfg["delay_ms"] == 20
+        assert agent_cfg["role"] == "通用助手"
+        assert "reply" in agent_cfg
 
         conv = await s.scalar(
             select(Conversation).where(Conversation.id == DEFAULT_CONV_ID)
@@ -186,8 +190,48 @@ async def test_update_message_for_unknown_id_returns_none(db_env) -> None:
     await seed_defaults()
     Session = get_sessionmaker()
     async with Session() as s:
-        out = await update_message_content(s, "msg_does_not_exist", {"type": "text", "text": "x"})
-    assert out is None
+        result = await update_message_content(s, "msg_nope", {"type": "text", "text": "x"})
+        assert result is None
+
+
+async def test_artifact_chunk_persists_metadata_only(db_env) -> None:
+    await seed_defaults()
+    Session = get_sessionmaker()
+    async with Session() as s:
+        msg = await create_message(
+            s,
+            conversation_id=DEFAULT_CONV_ID,
+            sender_id=DEFAULT_AGENT_ID,
+            sender_type="agent",
+            content={"type": "text", "text": ""},
+        )
+
+    result = await persist_artifact_chunk(
+        Session,
+        msg.id,
+        DEFAULT_CONV_ID,
+        DEFAULT_AGENT_ID,
+        {
+            "kind": "code",
+            "title": "hello.py",
+            "mime_type": "text/x-python",
+            "file_name": "hello.py",
+            "content": "print('hello')\n",
+            "meta": {"language": "python"},
+        },
+    )
+    assert result is not None
+    assert result["content"]["type"] == "code"
+    assert result["content"]["artifact_id"] == result["artifact"]["id"]
+    assert "code" not in result["content"]
+
+    async with Session() as s:
+        stored = await s.get(Message, msg.id)
+        assert stored is not None
+        assert stored.artifact_id == result["artifact"]["id"]
+        content = json.loads(stored.content)
+        assert content["artifact_id"] == result["artifact"]["id"]
+        assert "code" not in content
 
 
 async def test_create_conversation_with_members(db_env) -> None:

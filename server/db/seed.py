@@ -39,9 +39,9 @@ async def _upsert_agent(s, *, agent_id: str, fields: dict[str, Any]) -> None:
             if key == "config" and row.config:
                 existing_cfg = json.loads(row.config)
                 new_cfg = json.loads(value) if isinstance(value, str) else value
-                existing_api_key = existing_cfg.get("api_key", "")
-                if existing_api_key:
-                    new_cfg["api_key"] = existing_api_key
+                for cfg_key, cfg_value in existing_cfg.items():
+                    if cfg_value not in (None, "", [], {}):
+                        new_cfg[cfg_key] = cfg_value
                 value = json.dumps(new_cfg, ensure_ascii=False)
             setattr(row, key, value)
 
@@ -54,19 +54,19 @@ async def seed_defaults() -> None:
             s,
             agent_id=DEFAULT_AGENT_ID,
             fields=dict(
-                name="Mock Agent",
+                name="Frontend Designer",
                 avatar=None,
                 adapter_type="mock",
                 config=json.dumps({
                     "delay_ms": 20,
-                    "role": "通用助手",
+                    "role": "前端页面 Agent",
                     "reply": (
-                        "我是通用助手 MockAgent，收到你的消息：\n"
+                        "【前端页面 Agent】我负责把需求落成可运行 UI / HTML / CSS：\n"
                         "{echo}\n\n"
-                        "我正在处理你的请求，请稍候..."
+                        "我会输出可预览的页面结构、交互状态和响应式布局。"
                     ),
                 }, ensure_ascii=False),
-                capabilities=json.dumps(["text", "mock", "general"], ensure_ascii=False),
+                capabilities=json.dumps(["text", "mock", "frontend", "html", "preview"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )
@@ -74,19 +74,19 @@ async def seed_defaults() -> None:
             s,
             agent_id=DEFAULT_AGENT_ID_2,
             fields=dict(
-                name="Mock Agent 2",
+                name="Backend Architect",
                 avatar=None,
                 adapter_type="mock",
                 config=json.dumps({
                     "delay_ms": 35,
-                    "role": "后端开发",
+                    "role": "后端接口 Agent",
                     "reply": (
-                        "[后端 MockAgent] 收到 API / 数据处理相关任务：\n"
+                        "【后端接口 Agent】我负责 API、数据模型、权限和错误码：\n"
                         "{echo}\n\n"
-                        "我在设计接口和数据模型，请其他 Agent 配合前端对接。"
+                        "我会给出接口契约、数据结构和可测试的后端边界。"
                     ),
                 }, ensure_ascii=False),
-                capabilities=json.dumps(["text", "mock", "backend"], ensure_ascii=False),
+                capabilities=json.dumps(["text", "mock", "backend", "api", "database"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )

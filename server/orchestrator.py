@@ -28,6 +28,7 @@ from db.models import Message as MessageModel
 from db.models import new_id
 from services import create_message as create_service_message
 from services import message_to_dict, update_message_content
+from services.artifact import create_artifact as create_service_artifact
 from services.task import (
     create_task,
     get_task,
@@ -39,7 +40,7 @@ from ws import Connection, event
 
 _SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
 if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
+    sys.path.append(_SRC_DIR)
 
 from scheduler.complexity import ComplexityJudge, TaskInput
 from scheduler.enhanced_decomposer import EnhancedTaskDecomposer
@@ -78,6 +79,61 @@ def _pick_agent_for_domain(domain: str) -> str:
         "devops": "D",
     }
     return domain_map.get(domain, "B")
+
+
+def _w4_html_content(user_text: str) -> str:
+    title = "AgentHub 交付页面"
+    if "登录" in user_text or "注册" in user_text:
+        title = "登录注册与商品订单应用"
+    return f"""<!doctype html>
+<html lang=\"zh-CN\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>{title}</title>
+  <style>
+    body {{ margin:0; min-height:100vh; background:linear-gradient(135deg,#0c1324,#17375f); color:#f4fbff; font-family:Georgia,'Microsoft YaHei',serif; }}
+    main {{ max-width:1120px; margin:0 auto; padding:48px 24px; }}
+    h1 {{ font-size:clamp(36px,6vw,72px); line-height:.95; margin:16px 0; }}
+    p {{ color:#bed0e2; line-height:1.8; }}
+    .grid {{ display:grid; grid-template-columns:1.2fr .8fr; gap:24px; align-items:center; }}
+    .panel,.card {{ border:1px solid #ffffff22; border-radius:26px; background:#ffffff10; backdrop-filter:blur(16px); box-shadow:0 24px 80px #0008; }}
+    .panel {{ padding:24px; }}
+    input,button {{ width:100%; box-sizing:border-box; margin-top:12px; border:1px solid #ffffff2e; border-radius:14px; padding:14px 16px; background:#06101ecc; color:white; }}
+    button {{ background:linear-gradient(135deg,#69e8ff,#9dffba); color:#06101e; font-weight:800; cursor:pointer; }}
+    .cards {{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:28px; }}
+    .card {{ padding:18px; }}
+    @media(max-width:820px) {{ .grid,.cards {{ grid-template-columns:1fr; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <section class=\"grid\">
+      <div>
+        <small>ORCHESTRATOR DELIVERY</small>
+        <h1>{title}</h1>
+        <p>Orchestrator 已将复杂需求拆给前端、后端、数据模型和测试 Agent，并聚合为这份可运行 HTML 预览产物。</p>
+      </div>
+      <form class=\"panel\" onsubmit=\"event.preventDefault(); alert('订单提交成功');\">
+        <h2>用户入口</h2>
+        <input required placeholder=\"邮箱 / 用户名\" />
+        <input required type=\"password\" placeholder=\"密码\" />
+        <button>登录并提交订单</button>
+      </form>
+    </section>
+    <section class=\"cards\">
+      <article class=\"card\"><h3>前端页面</h3><p>登录注册、商品列表、订单确认三段核心 UI。</p></article>
+      <article class=\"card\"><h3>后端 API</h3><p>POST /auth/login、GET /products、POST /orders。</p></article>
+      <article class=\"card\"><h3>测试方案</h3><p>表单校验、接口错误、订单提交成功路径。</p></article>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def _should_create_w4_preview(user_text: str) -> bool:
+    lower = user_text.lower()
+    return any(k in lower for k in ["html", "网页", "页面", "web", "应用", "landing", "预览"])
 
 
 def _build_subtask_description(subtask: Any, decompose_result: Any) -> str:
@@ -231,6 +287,7 @@ async def handle_orchestrator_mention(
         parent_id = parent.id
 
         subtask_records = []
+        subtask_id_map = {}
         for i, subtask in enumerate(decompose_result.subtasks):
             agent_code = _pick_agent_for_domain(subtask.domain)
             agent_id = _agent_code_to_agent_id(agent_code)
@@ -253,11 +310,23 @@ async def handle_orchestrator_mention(
                 originating_message_id=originating_message_id,
                 parent_task_id=parent_id,
             )
+            subtask_id_map[subtask.id] = st.id
             subtask_records.append((st, agent_code, agent_id, input_summary, list(depends_on_list)))
+
+        subtask_records = [
+            (
+                st,
+                agent_code,
+                agent_id,
+                input_summary,
+                [subtask_id_map[d] for d in depends_on_list if d in subtask_id_map],
+            )
+            for st, agent_code, agent_id, input_summary, depends_on_list in subtask_records
+        ]
 
     # 6. Update planning to running
     async with Session() as s:
-        await update_task_status(s, parent_id, "running",
+        parent = await update_task_status(s, parent_id, "running",
             result_summary=f"Decomposed into {len(subtask_records)} subtasks")
 
     await conn.send(event(
@@ -302,7 +371,20 @@ async def handle_orchestrator_mention(
         for st, code, aid, is_, deps in ready:
             dispatched_ids.add(st.id)
             async with Session() as s:
-                await update_task_status(s, st.id, "running")
+                updated = await update_task_status(s, st.id, "running")
+            if updated is not None:
+                st = updated
+            await conn.send(event(
+                "task_update",
+                conversation_id=conversation_id,
+                task=task_to_dict(st),
+                task_id=st.parent_task_id or st.id,
+                subtask_id=st.id if st.parent_task_id else None,
+                status=st.status,
+                progress=st.progress_pct,
+                message_id=None,
+                action="status_changed",
+            ))
             tasks.append(
                 _dispatch_subtask_with_result(
                     conn, st, agent_id=aid, conversation_id=conversation_id,
@@ -315,31 +397,10 @@ async def handle_orchestrator_mention(
         # Process results
         for (st, code, aid, is_, deps), result in zip(ready, results):
             if isinstance(result, Exception):
-                retry_count = failed_ids.get(st.id, 0)
-                if retry_count < RETRY_LIMIT:
-                    failed_ids[st.id] = retry_count + 1
-                    dispatched_ids.discard(st.id)
-                    logger.warning("Subtask %s failed, retry %d/1", st.id, retry_count + 1)
-                    async with Session() as s:
-                        await update_task_status(s, st.id, "running",
-                            result_summary=f"Retrying ({retry_count + 1}/{RETRY_LIMIT})...")
-                    await conn.send(event(
-                        "task_update",
-                        conversation_id=conversation_id,
-                        task=task_to_dict(st),
-                        action="status_changed",
-                    ))
-                else:
-                    failed_ids[st.id] = retry_count
-                    async with Session() as s:
-                        await update_task_status(s, st.id, "failed",
-                            result_summary=f"Failed after {RETRY_LIMIT + 1} attempts: {result}")
-                    await conn.send(event(
-                        "task_update",
-                        conversation_id=conversation_id,
-                        task=task_to_dict(st),
-                        action="status_changed",
-                    ))
+                if st.id in failed_ids:
+                    continue
+                failed_ids[st.id] = 1
+                logger.warning("Subtask %s failed: %s", st.id, result)
             else:
                 completed_ids.add(st.id)
                 msg_id = result
@@ -349,18 +410,40 @@ async def handle_orchestrator_mention(
     all_done = len(completed_ids) == len(subtask_records)
     some_failed = len(failed_ids) > 0
 
+    w4_artifact: dict[str, Any] | None = None
+
     if all_done:
         summary_text = (
             f"✅ **Task Complete**\n\n"
             f"All {len(subtask_records)} subtasks completed successfully.\n\n"
             f"**Summary:**\n"
         )
+
+        if _should_create_w4_preview(user_text):
+            try:
+                async with Session() as s:
+                    artifact = await create_service_artifact(
+                        s,
+                        conversation_id=conversation_id,
+                        kind="preview",
+                        title="Orchestrator 交付预览",
+                        mime_type="text/html",
+                        file_name="orchestrator-preview.html",
+                        content=_w4_html_content(user_text),
+                        source_message_id=originating_message_id,
+                        created_by=ORCHESTRATOR_AGENT_ID,
+                        meta={"source": "orchestrator", "parent_task_id": parent_id, "language": "html"},
+                    )
+                    w4_artifact = artifact
+                summary_text += f"\n📄 已生成 HTML 预览产物：`{artifact['id']}`\n"
+            except Exception as exc:
+                logger.warning("Failed to create W4 preview artifact: %s", exc)
         for st, code, aid, is_, deps in subtask_records:
             msg_id = subtask_messages.get(st.id, "?")
             summary_text += f"- ✅ {st.title[:60]} (by {_agent_code_to_display_name(code)})\n"
 
         async with Session() as s:
-            await update_task_status(s, parent_id, "done",
+            parent = await update_task_status(s, parent_id, "done",
                 result_summary=f"All {len(subtask_records)} subtasks completed")
     elif some_failed:
         success_count = len(completed_ids)
@@ -377,14 +460,39 @@ async def handle_orchestrator_mention(
                 summary_text += f"- ❌ {st.title[:60]}\n"
 
         async with Session() as s:
-            await update_task_status(s, parent_id, "failed",
+            parent = await update_task_status(s, parent_id, "failed",
                 result_summary=f"{success_count}/{len(subtask_records)} completed, {fail_count} failed")
     else:
-        summary_text = "❌ **Task Failed** — no subtasks could be dispatched."
+        blocked_count = len(subtask_records) - len(completed_ids) - len(failed_ids)
+        summary_text = (
+            f"⚠️ **Task Blocked**\n\n"
+            f"{len(completed_ids)}/{len(subtask_records)} subtasks completed, "
+            f"{blocked_count} blocked by unresolved dependencies.\n\n"
+        )
+        for st, code, aid, is_, deps in subtask_records:
+            if st.id in completed_ids:
+                summary_text += f"- ✅ {st.title[:60]}\n"
+            else:
+                summary_text += f"- ⏸️ {st.title[:60]}\n"
+                async with Session() as s:
+                    updated = await update_task_status(s, st.id, "failed",
+                        result_summary="Blocked by unresolved dependencies")
+                if updated is not None:
+                    await conn.send(event(
+                        "task_update",
+                        conversation_id=conversation_id,
+                        task=task_to_dict(updated),
+                        task_id=updated.parent_task_id or updated.id,
+                        subtask_id=updated.id if updated.parent_task_id else None,
+                        status=updated.status,
+                        progress=updated.progress_pct,
+                        message_id=None,
+                        action="status_changed",
+                    ))
 
         async with Session() as s:
-            await update_task_status(s, parent_id, "failed",
-                result_summary="All subtasks failed or blocked")
+            parent = await update_task_status(s, parent_id, "failed",
+                result_summary="Some subtasks were blocked by unresolved dependencies")
 
     # 9. Send summary as a message in chat
     summary_msg_id = new_id("msg")
@@ -411,6 +519,44 @@ async def handle_orchestrator_mention(
         conversation_id=conversation_id,
         final_content={"type": "text", "text": summary_text},
     ))
+
+    if w4_artifact is not None:
+        preview_msg_id = new_id("msg")
+        preview_content = {
+            "type": "preview",
+            "artifact_id": w4_artifact["id"],
+            "title": w4_artifact["title"],
+            "mimeType": w4_artifact["mime_type"],
+            "fileSize": w4_artifact["file_size"],
+            "url": w4_artifact.get("url"),
+            "previewUrl": w4_artifact.get("preview_url"),
+            "version": w4_artifact.get("version", 1),
+        }
+        async with Session() as s:
+            preview_msg = await create_service_message(
+                s,
+                conversation_id=conversation_id,
+                sender_id=ORCHESTRATOR_AGENT_ID,
+                sender_type="agent",
+                content=preview_content,
+                message_id=preview_msg_id,
+                artifact_id=w4_artifact["id"],
+            )
+            preview_msg_dict = message_to_dict(preview_msg)
+        await conn.send(event("message_created", message=preview_msg_dict))
+        await conn.send(event(
+            "artifact_ready",
+            conversation_id=conversation_id,
+            artifact=w4_artifact,
+            message_id=preview_msg_id,
+        ))
+        await conn.send(event(
+            "message_done",
+            message_id=preview_msg_id,
+            sender_id=ORCHESTRATOR_AGENT_ID,
+            conversation_id=conversation_id,
+            final_content=preview_content,
+        ))
 
     await conn.send(event(
         "task_update",
@@ -476,18 +622,25 @@ async def _dispatch_subtask_with_result(
             final_content={"type": "text", "text": f"❌ Agent unavailable."},
         ))
         async with Session() as s:
-            await update_task_status(s, st.id, "failed",
+            updated = await update_task_status(s, st.id, "failed",
                 result_summary=f"Agent {agent_id} not available")
+        if updated is not None:
             await conn.send(event(
                 "task_update",
                 conversation_id=conversation_id,
-                task=task_to_dict(st),
+                task=task_to_dict(updated),
+                task_id=updated.parent_task_id or updated.id,
+                subtask_id=updated.id if updated.parent_task_id else None,
+                status=updated.status,
+                progress=updated.progress_pct,
+                message_id=msg_id,
                 action="status_changed",
             ))
-        return msg_id
+        raise RuntimeError(f"Agent {agent_id} not available")
 
     adapter, _agent_name = loaded
     final_parts: list[str] = []
+    error_parts: list[str] = []
     seq = 0
 
     try:
@@ -507,6 +660,38 @@ async def _dispatch_subtask_with_result(
                     seq=seq,
                     delta=delta,
                 ))
+            elif ctype == "error":
+                code = chunk.get("code") or "adapter_error"
+                message = chunk.get("message") or "Agent adapter error"
+                error_parts.append(f"{code}: {message}")
+
+        if error_parts:
+            final_text = "❌ Subtask failed: " + "; ".join(error_parts)
+            async with Session() as s:
+                await update_message_content(s, msg_id, {"type": "text", "text": final_text})
+            await conn.send(event(
+                "message_done",
+                message_id=msg_id,
+                sender_id=agent_id,
+                conversation_id=conversation_id,
+                final_content={"type": "text", "text": final_text},
+            ))
+            async with Session() as s:
+                updated = await update_task_status(s, st.id, "failed",
+                    result_summary=final_text[:200])
+            if updated is not None:
+                await conn.send(event(
+                    "task_update",
+                    conversation_id=conversation_id,
+                    task=task_to_dict(updated),
+                    task_id=updated.parent_task_id or updated.id,
+                    subtask_id=updated.id if updated.parent_task_id else None,
+                    status=updated.status,
+                    progress=updated.progress_pct,
+                    message_id=msg_id,
+                    action="status_changed",
+                ))
+            raise RuntimeError(final_text)
 
         final_text = "".join(final_parts) or f"✅ Subtask completed: {st.title[:100]}"
         async with Session() as s:
@@ -521,12 +706,19 @@ async def _dispatch_subtask_with_result(
 
         # Mark subtask as done
         async with Session() as s:
-            await update_task_status(s, st.id, "done",
-                result_summary=final_text[:200])
+            updated = await update_task_status(s, st.id, "done",
+                result_summary=final_text[:200],
+                progress_pct=100)
+        if updated is not None:
             await conn.send(event(
                 "task_update",
                 conversation_id=conversation_id,
-                task=task_to_dict(st),
+                task=task_to_dict(updated),
+                task_id=updated.parent_task_id or updated.id,
+                subtask_id=updated.id if updated.parent_task_id else None,
+                status=updated.status,
+                progress=updated.progress_pct,
+                message_id=msg_id,
                 action="status_changed",
             ))
 

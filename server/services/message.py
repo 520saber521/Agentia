@@ -16,6 +16,7 @@ from typing import Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Conversation, Message, new_id, now_ms
+from services.content_schema import validate_content
 
 
 def message_to_dict(m: Message) -> dict[str, Any]:
@@ -49,21 +50,22 @@ async def create_message(
     message_id: Optional[str] = None,
     artifact_id: Optional[str] = None,
 ) -> Message:
+    normalized_content = validate_content(content)
     ts = now_ms()
     m = Message(
         id=message_id or new_id("msg"),
         conversation_id=conversation_id,
         sender_id=sender_id,
         sender_type=sender_type,
-        content_type=content_type or content.get("type") or "text",
-        content=json.dumps(content, ensure_ascii=False),
+        content_type=content_type or normalized_content.get("type") or "text",
+        content=json.dumps(normalized_content, ensure_ascii=False),
         reply_to=reply_to,
         mentions=json.dumps(mentions or [], ensure_ascii=False),
         artifact_id=artifact_id,
         created_at=ts,
     )
     s.add(m)
-    await _touch_conversation(s, conversation_id, content, ts=ts)
+    await _touch_conversation(s, conversation_id, normalized_content, ts=ts)
     await s.commit()
     return m
 
@@ -77,10 +79,11 @@ async def update_message_content(
     m = await s.get(Message, message_id)
     if m is None:
         return None
-    m.content = json.dumps(content, ensure_ascii=False)
-    if isinstance(content.get("type"), str):
-        m.content_type = content["type"]
-    await _touch_conversation(s, m.conversation_id, content, ts=now_ms())
+    normalized_content = validate_content(content)
+    m.content = json.dumps(normalized_content, ensure_ascii=False)
+    if isinstance(normalized_content.get("type"), str):
+        m.content_type = normalized_content["type"]
+    await _touch_conversation(s, m.conversation_id, normalized_content, ts=now_ms())
     await s.commit()
     return m
 

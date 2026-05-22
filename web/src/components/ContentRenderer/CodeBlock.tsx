@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface Props {
-  code: string;
+  code?: string;
   language?: string;
   title?: string;
   artifactId?: string | null;
@@ -10,23 +10,60 @@ interface Props {
 
 export function CodeBlock({ code, language, title, artifactId, onEdit }: Props) {
   const [copied, setCopied] = useState(false);
+  const [loadedCode, setLoadedCode] = useState(code ?? "");
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    if (code !== undefined) {
+      setLoadedCode(code);
+      return;
+    }
+    if (!artifactId) {
+      setLoadedCode("");
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(false);
+    fetch(`/api/artifacts/${artifactId}/content`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) setLoadedCode(typeof data.content === "string" ? data.content : "");
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactId, code]);
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(loadedCode);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // fallback
+      setCopied(false);
     }
   }
 
   return (
-    <div className="rounded-lg border border-border bg-bg overflow-hidden my-2">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-panel border-b border-border">
-        <span className="text-xs text-muted">
-          {language && <span className="mr-2">{language}</span>}
-          {title && <span>{title}</span>}
+    <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
+      <div className="flex items-center justify-between px-3 py-2 bg-panel border-b border-border">
+        <span className="text-xs text-muted flex items-center gap-2 min-w-0">
+          <span className="inline-flex h-2 w-2 rounded-full bg-accent shadow-[0_0_10px_var(--accent)]" />
+          {language && <span className="uppercase tracking-[0.2em]">{language}</span>}
+          {title && <span className="truncate text-fg/80">{title}</span>}
         </span>
         <div className="flex items-center gap-2">
           {artifactId && onEdit && (
@@ -41,15 +78,22 @@ export function CodeBlock({ code, language, title, artifactId, onEdit }: Props) 
           <button
             type="button"
             onClick={handleCopy}
-            className="text-xs text-muted hover:text-fg transition-colors"
+            disabled={loading || loadError}
+            className="text-xs text-muted hover:text-fg disabled:opacity-40 transition-colors"
           >
             {copied ? "已复制" : "复制"}
           </button>
         </div>
       </div>
-      <pre className="p-3 overflow-x-auto text-xs leading-relaxed max-h-80 scrollbar-thin">
-        <code>{code}</code>
-      </pre>
+      {loadError ? (
+        <div className="p-4 text-xs text-red-400 bg-red-500/5">代码内容加载失败，请稍后重试。</div>
+      ) : loading ? (
+        <div className="p-4 text-xs text-muted">正在加载代码内容…</div>
+      ) : (
+        <pre className="p-3 overflow-auto text-xs leading-relaxed max-h-80 scrollbar-thin whitespace-pre min-w-0">
+          <code>{loadedCode}</code>
+        </pre>
+      )}
     </div>
   );
 }

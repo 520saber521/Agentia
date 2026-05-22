@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from db import DEFAULT_USER_ID
 from db.engine import get_sessionmaker
@@ -26,6 +26,7 @@ from services.artifact import (
 )
 from services.conversation import get_conversation
 from services.message import create_message, message_to_dict
+from difflib import unified_diff
 from ws import event, hub
 
 router = APIRouter()
@@ -38,7 +39,7 @@ router = APIRouter()
 
 class CreateArtifactRequest(BaseModel):
     conversation_id: str
-    kind: str  # 'code' | 'preview' | 'file' | 'diff'
+    kind: str
     title: str
     mime_type: str
     file_name: Optional[str] = None
@@ -46,6 +47,20 @@ class CreateArtifactRequest(BaseModel):
     parent_id: Optional[str] = None
     source_message_id: Optional[str] = None
     meta: Optional[dict[str, Any]] = None
+
+    @field_validator("kind")
+    @classmethod
+    def validate_kind(cls, value: str) -> str:
+        if value not in {"code", "preview", "file", "diff"}:
+            raise ValueError("invalid_content")
+        return value
+
+    @field_validator("conversation_id", "title", "mime_type")
+    @classmethod
+    def validate_required_string(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("invalid_content")
+        return value
 
 
 class ApplyDiffRequest(BaseModel):
@@ -85,20 +100,23 @@ async def api_create_artifact(body: CreateArtifactRequest) -> dict[str, Any]:
             meta=body.meta,
         )
 
-        if body.parent_id and parent_content is not None:
+        if not body.parent_id:
             msg = await create_message(
                 s,
                 conversation_id=body.conversation_id,
                 sender_id=DEFAULT_USER_ID,
                 sender_type="user",
-                content={
-                    "type": "diff",
-                    "before": parent_content,
-                    "after": body.content,
-                    "fileName": body.file_name or body.title,
-                    "summary": f"保存 {body.title} 的新版本 v{result['version']}",
-                    "applied_artifact_id": result["id"],
-                },
+                content=_message_content_for_artifact(result),
+                artifact_id=result["id"],
+            )
+            diff_message = message_to_dict(msg)
+        elif body.parent_id and parent_content is not None:
+            msg = await create_message(
+                s,
+                conversation_id=body.conversation_id,
+                sender_id=DEFAULT_USER_ID,
+                sender_type="user",
+                content=_version_message_content(parent, result, parent_content, body.content),
                 artifact_id=result["id"],
             )
             diff_message = message_to_dict(msg)
@@ -108,15 +126,15 @@ async def api_create_artifact(body: CreateArtifactRequest) -> dict[str, Any]:
             body.conversation_id,
             event("message_created", message=diff_message),
         )
-        await hub.broadcast_conversation(
-            body.conversation_id,
-            event(
-                "artifact_ready",
-                conversation_id=body.conversation_id,
-                artifact=result,
-                message_id=diff_message["id"],
-            ),
-        )
+    await hub.broadcast_conversation(
+        body.conversation_id,
+        event(
+            "artifact_ready",
+            conversation_id=body.conversation_id,
+            artifact=result,
+            message_id=diff_message["id"] if diff_message is not None else None,
+        ),
+    )
 
     return {"artifact": result, "message": diff_message}
 
@@ -174,26 +192,71 @@ async def api_artifact_history(artifact_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _message_content_for_artifact(artifact: dict[str, Any], content: str) -> dict[str, Any]:
+def _version_message_content(
+    parent: dict[str, Any],
+    artifact: dict[str, Any],
+    before: str,
+    after: str,
+) -> dict[str, Any]:
+    meta = artifact.get("meta") or {}
+    file_name = artifact.get("file_name") or parent.get("file_name") or artifact["title"]
+    diff = "\n".join(
+        unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile=f"{file_name}@v{parent.get('version', 1)}",
+            tofile=f"{file_name}@v{artifact.get('version', 1)}",
+            lineterm="",
+        )
+    )
+    return {
+        "type": "diff",
+        "artifact_id": artifact["id"],
+        "title": artifact["title"],
+        "mimeType": artifact["mime_type"],
+        "fileSize": artifact["file_size"],
+        "url": artifact.get("url"),
+        "previewUrl": artifact.get("preview_url"),
+        "version": artifact.get("version", 1),
+        "fileName": file_name,
+        "summary": meta.get("diff_summary") or "产物版本变更",
+        "diff": diff,
+        "applied_artifact_id": artifact["id"],
+        "parent_artifact_id": parent["id"],
+    }
+
+
+def _message_content_for_artifact(artifact: dict[str, Any], content: str = "") -> dict[str, Any]:
+    meta = artifact.get("meta") or {}
+    base = {
+        "artifact_id": artifact["id"],
+        "title": artifact["title"],
+        "mimeType": artifact["mime_type"],
+        "fileSize": artifact["file_size"],
+        "url": artifact.get("url"),
+        "previewUrl": artifact.get("preview_url"),
+        "version": artifact.get("version", 1),
+    }
     if artifact["kind"] == "preview":
-        return {
-            "type": "preview",
-            "title": artifact["title"],
-            "mimeType": artifact["mime_type"],
-            "fileSize": artifact["file_size"],
-        }
+        return {"type": "preview", **base}
     if artifact["kind"] == "file":
         return {
             "type": "file",
+            **base,
             "fileName": artifact["file_name"] or artifact["title"],
-            "mimeType": artifact["mime_type"],
-            "fileSize": artifact["file_size"],
         }
-    meta = artifact.get("meta") or {}
+    if artifact["kind"] == "diff":
+        return {
+            "type": "diff",
+            **base,
+            "fileName": artifact["file_name"] or artifact["title"],
+            "summary": meta.get("diff_summary") or "产物版本变更",
+            "applied_artifact_id": artifact["id"],
+        }
     return {
         "type": "code",
-        "title": artifact["title"],
-        "code": content,
+        **base,
+        "fileName": artifact["file_name"] or artifact["title"],
         "language": meta.get("language") or "plaintext",
     }
 
@@ -210,13 +273,13 @@ async def api_apply_diff(
             raise HTTPException(404, "artifact not found")
 
         if await artifact_has_child_version(s, base_artifact_id):
-            raise HTTPException(409, "artifact_conflict")
+            raise HTTPException(status_code=409, detail="artifact_conflict")
 
         current = await read_artifact_content_with_session(s, base_artifact_id)
         if current is None:
             raise HTTPException(404, "artifact content not found")
         if current != body.before:
-            raise HTTPException(409, "artifact_conflict")
+            raise HTTPException(status_code=409, detail="artifact_conflict")
 
         new_artifact = await create_artifact(
             s,
@@ -342,5 +405,6 @@ async def api_preview(artifact_id: str) -> Any:
             headers={
                 "X-Artifact-Id": a["id"],
                 "X-Artifact-Version": str(a.get("version", 1)),
+                "Cache-Control": "no-store",
             },
         )

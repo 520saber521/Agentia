@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 
-import { fetchArtifactContent, saveArtifactVersion } from "../api/client";
+import { fetchArtifactContent, saveArtifactVersion, describeApiError } from "../api/client";
 import type { Artifact } from "../types";
 
 interface Props {
@@ -50,14 +50,21 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [currentArtifact, setCurrentArtifact] = useState(artifact);
   const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setCurrentArtifact(artifact);
+  }, [artifact]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
+    setSaveStatus("idle");
+    setSaveError(null);
 
-    fetchArtifactContent(artifact.id)
+    fetchArtifactContent(currentArtifact.id)
       .then((c) => {
         if (!cancelled) {
           setContent(c);
@@ -74,29 +81,32 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     return () => {
       cancelled = true;
     };
-  }, [artifact.id]);
+  }, [currentArtifact.id]);
 
   const handleSave = useCallback(async () => {
-    if (!content || content === "") return;
+    if (content === null) return;
     setSaveStatus("saving");
     setSaveError(null);
 
     try {
       const newArtifact = await saveArtifactVersion({
         conversation_id: conversationId,
-        kind: artifact.kind,
-        title: artifact.title,
-        mime_type: artifact.mime_type,
+        kind: currentArtifact.kind,
+        title: currentArtifact.title,
+        mime_type: currentArtifact.mime_type,
+        file_name: currentArtifact.file_name ?? undefined,
         content,
-        parent_id: artifact.id,
+        parent_id: currentArtifact.id,
+        meta: currentArtifact.meta,
       });
+      setCurrentArtifact(newArtifact);
       setSaveStatus("success");
       onSaved(newArtifact);
     } catch (err) {
       setSaveStatus("error");
-      setSaveError(err instanceof Error ? err.message : "保存失败");
+      setSaveError(describeApiError(err));
     }
-  }, [content, conversationId, artifact, onSaved]);
+  }, [content, conversationId, currentArtifact, onSaved]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -113,7 +123,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  const language = detectLanguage(artifact);
+  const language = detectLanguage(currentArtifact);
 
   return (
     <div
@@ -131,10 +141,10 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           </button>
           <span className="w-px h-4 bg-border" />
           <span className="text-sm font-medium text-fg truncate">
-            {artifact.title}
+            {currentArtifact.title}
           </span>
           <span className="text-[10px] text-muted shrink-0">
-            v{artifact.version}
+            v{currentArtifact.version}
           </span>
           <span className="text-[10px] text-muted shrink-0">
             {language}
@@ -146,8 +156,8 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
             <span className="text-xs text-green-500/80">已保存</span>
           )}
           {saveStatus === "error" && (
-            <span className="text-xs text-red-500/80" title={saveError ?? ""}>
-              保存失败
+            <span className="text-xs text-red-500/80 max-w-64 truncate" title={saveError ?? ""}>
+              保存失败：{saveError ?? "可重试"}
             </span>
           )}
           <button

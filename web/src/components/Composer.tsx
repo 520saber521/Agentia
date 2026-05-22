@@ -25,12 +25,18 @@ function syncMentionsFromText(
   agentsByName: Map<string, Agent>,
 ): Map<string, Agent> {
   const result = new Map<string, Agent>();
-  const mentionRegex = /@(\S+)/g;
+  const mentionRegex = /@([^\s，,。；;：:]+)/g;
   let match;
   while ((match = mentionRegex.exec(text)) !== null) {
     const mentionedName = match[1];
     for (const [agentName, agent] of agentsByName) {
-      if (agentName.toLowerCase().startsWith(mentionedName.toLowerCase())) {
+      const normalizedAgentName = agentName.toLowerCase();
+      const normalizedMention = mentionedName.toLowerCase();
+      if (
+        normalizedAgentName.startsWith(normalizedMention) ||
+        agent.id.toLowerCase().includes(normalizedMention) ||
+        normalizedMention.includes(normalizedAgentName)
+      ) {
         result.set(agent.id, agent);
         break;
       }
@@ -77,6 +83,8 @@ export function Composer() {
         for (const a of list) {
           byId.set(a.id, a);
           byName.set(a.name, a);
+          byName.set(a.id, a);
+          byName.set(a.name.replace(/\s+/g, ""), a);
         }
         setAgents(byId);
         setAgentsByName(byName);

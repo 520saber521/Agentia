@@ -10,7 +10,6 @@ const STATUS_COLORS: Record<string, string> = {
   running: "text-blue-400 border-blue-500/40",
   done: "text-emerald-400 border-emerald-500/40",
   failed: "text-red-400 border-red-500/40",
-  cancelled: "text-gray-400 border-gray-500/40",
   blocked: "text-rose-400 border-rose-500/40",
   conflict: "text-orange-400 border-orange-500/40",
 };
@@ -21,7 +20,6 @@ const STATUS_LABELS: Record<string, string> = {
   running: "执行中",
   done: "已完成",
   failed: "失败",
-  cancelled: "已取消",
   blocked: "阻塞",
   conflict: "冲突",
 };

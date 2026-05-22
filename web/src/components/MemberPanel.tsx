@@ -69,7 +69,7 @@ export function MemberPanel() {
                       {member.agent.name}
                     </div>
                     <div className="text-xs text-muted truncate">
-                      {member.agent.capabilities.slice(0, 2).join(" · ")}
+                      {member.agent.adapter_type} · {member.agent.capabilities.slice(0, 3).join(" · ")}
                     </div>
                   </div>
                 </div>
