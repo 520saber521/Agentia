@@ -88,6 +88,24 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await r.json()) as T;
 }
 
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(path, {
+    method: "PUT",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
+  return (await r.json()) as T;
+}
+
+async function deleteJson(path: string): Promise<void> {
+  const r = await fetch(path, { method: "DELETE", headers: { Accept: "application/json" } });
+  if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
+}
+
 export async function fetchConversations(): Promise<Conversation[]> {
   const body = await getJson<{ conversations: Conversation[] }>(
     "/api/conversations",
@@ -112,6 +130,37 @@ export async function fetchMessages(
 export async function fetchAgents(): Promise<Agent[]> {
   const body = await getJson<{ agents: Agent[] }>("/api/agents");
   return body.agents;
+}
+
+export interface SaveAgentInput {
+  name: string;
+  adapter_type?: string;
+  api_key?: string;
+  model?: string;
+  base_url?: string;
+  system_prompt?: string;
+  capabilities?: string[];
+  avatar?: string | null;
+}
+
+export async function createAgent(input: SaveAgentInput): Promise<Agent> {
+  const body = await postJson<{ agent: Agent }>("/api/agents", input);
+  return body.agent;
+}
+
+export async function updateAgent(
+  agentId: string,
+  input: Partial<SaveAgentInput>,
+): Promise<Agent> {
+  const body = await putJson<{ agent: Agent }>(
+    `/api/agents/${encodeURIComponent(agentId)}`,
+    input,
+  );
+  return body.agent;
+}
+
+export async function deleteAgent(agentId: string): Promise<void> {
+  await deleteJson(`/api/agents/${encodeURIComponent(agentId)}`);
 }
 
 export interface CreateConversationInput {

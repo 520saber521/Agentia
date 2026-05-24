@@ -47,11 +47,12 @@ async def test_seed_defaults_creates_baseline(db_env) -> None:
     async with Session() as s:
         agent = await s.scalar(select(Agent).where(Agent.id == DEFAULT_AGENT_ID))
         assert agent is not None
+        assert agent.name == "MockAdapter"
         assert agent.adapter_type == "mock"
-        agent_cfg = json.loads(agent.config)
-        assert agent_cfg["delay_ms"] == 20
-        assert agent_cfg["role"] == "通用助手"
-        assert "reply" in agent_cfg
+        assert agent.avatar == "🧪"
+        caps = json.loads(agent.capabilities)
+        assert isinstance(caps, list)
+        assert "testing" in caps
 
         conv = await s.scalar(
             select(Conversation).where(Conversation.id == DEFAULT_CONV_ID)

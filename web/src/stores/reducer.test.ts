@@ -254,6 +254,77 @@ describe("reduceEvent — agent_typing & stream_chunk", () => {
     expect(next.streamingMessageIds).toEqual(["msg_a", "msg_b"]);
   });
 
+  it("stream_chunk 保留已有占位文本并追加首包内容", () => {
+    const placeholder = makeMessage({
+      id: "msg_agent",
+      sender_type: "agent",
+      sender_id: "agent_mock",
+      content: { type: "text", text: "旧占位" },
+    });
+    const state: ChatSlice = {
+      ...withConv("conv_demo"),
+      messages: [placeholder],
+      streamingMessageIds: ["msg_agent"],
+    };
+    const { next } = reduceEvent(state, {
+      type: "stream_chunk",
+      ts: 0,
+      message_id: "msg_agent",
+      conversation_id: "conv_demo",
+      seq: 1,
+      delta: "你好",
+    });
+    expect((next.messages[0].content as { text: string }).text).toBe("旧占位你好");
+  });
+
+  it("stream_chunk 兼容重叠片段，避免相邻片段导致文字重复", () => {
+    const placeholder = makeMessage({
+      id: "msg_agent",
+      sender_type: "agent",
+      sender_id: "agent_mock",
+      content: { type: "text", text: "产品/交互 Agent" },
+    });
+    const state: ChatSlice = {
+      ...withConv("conv_demo"),
+      messages: [placeholder],
+      streamingMessageIds: ["msg_agent"],
+    };
+    const { next } = reduceEvent(state, {
+      type: "stream_chunk",
+      ts: 0,
+      message_id: "msg_agent",
+      conversation_id: "conv_demo",
+      seq: 2,
+      delta: "Agent：明确页面",
+    });
+    expect((next.messages[0].content as { text: string }).text).toBe(
+      "产品/交互 Agent：明确页面",
+    );
+  });
+
+  it("stream_chunk 完全重复片段时不重复追加", () => {
+    const placeholder = makeMessage({
+      id: "msg_agent",
+      sender_type: "agent",
+      sender_id: "agent_mock",
+      content: { type: "text", text: "明明确确" },
+    });
+    const state: ChatSlice = {
+      ...withConv("conv_demo"),
+      messages: [placeholder],
+      streamingMessageIds: ["msg_agent"],
+    };
+    const { next } = reduceEvent(state, {
+      type: "stream_chunk",
+      ts: 0,
+      message_id: "msg_agent",
+      conversation_id: "conv_demo",
+      seq: 2,
+      delta: "明明确确",
+    });
+    expect((next.messages[0].content as { text: string }).text).toBe("明明确确");
+  });
+
   it("stream_chunk 找不到对应 message 时静默忽略", () => {
     const state = withConv("conv_demo");
     const { next } = reduceEvent(state, {

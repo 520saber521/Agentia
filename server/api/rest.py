@@ -21,7 +21,13 @@ from pydantic import BaseModel, Field
 from db import DEFAULT_USER_ID
 from db.engine import get_sessionmaker
 from router_client import get_router_client
-from services.agent import list_agents
+from services.agent import (
+    create_agent,
+    delete_agent,
+    list_agent_executions,
+    list_agents,
+    update_agent,
+)
 from services.conversation import (
     create_conversation,
     get_conversation,
@@ -52,6 +58,100 @@ async def api_list_agents() -> dict:
     Session = get_sessionmaker()
     async with Session() as s:
         return {"agents": await list_agents(s)}
+
+
+class CreateAgentBody(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    adapter_type: str = "mock"
+    api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+    system_prompt: str = ""
+    capabilities: list[str] = ["text"]
+    avatar: str | None = None
+
+
+class UpdateAgentBody(BaseModel):
+    name: str | None = None
+    adapter_type: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    system_prompt: str | None = None
+    capabilities: list[str] | None = None
+    avatar: str | None = None
+
+
+@router.post("/agents", status_code=201)
+async def api_create_agent(body: CreateAgentBody) -> dict:
+    """创建自定义 Agent。支持配置 adapter_type、api_key、model、system_prompt。"""
+    Session = get_sessionmaker()
+    config: dict[str, Any] = {}
+    if body.api_key:
+        config["api_key"] = body.api_key
+    if body.model:
+        config["model"] = body.model
+    if body.base_url:
+        config["base_url"] = body.base_url
+    if body.system_prompt:
+        config["system_prompt"] = body.system_prompt
+    async with Session() as s:
+        agent = await create_agent(
+            s,
+            name=body.name,
+            adapter_type=body.adapter_type,
+            config=config,
+            capabilities=body.capabilities,
+            avatar=body.avatar,
+            owner_user_id=DEFAULT_USER_ID,
+        )
+    return {"agent": agent}
+
+
+@router.put("/agents/{agent_id}")
+async def api_update_agent(agent_id: str, body: UpdateAgentBody) -> dict:
+    """更新 Agent 的可配置字段。"""
+    Session = get_sessionmaker()
+    config: dict[str, Any] = {}
+    if body.api_key is not None:
+        config["api_key"] = body.api_key
+    if body.model is not None:
+        config["model"] = body.model
+    if body.base_url is not None:
+        config["base_url"] = body.base_url
+    if body.system_prompt is not None:
+        config["system_prompt"] = body.system_prompt
+    async with Session() as s:
+        agent = await update_agent(
+            s,
+            agent_id,
+            name=body.name,
+            avatar=body.avatar,
+            adapter_type=body.adapter_type,
+            config=config if config else None,
+            capabilities=body.capabilities,
+        )
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
+    return {"agent": agent}
+
+
+@router.delete("/agents/{agent_id}", status_code=204)
+async def api_delete_agent(agent_id: str) -> None:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        result = await delete_agent(s, agent_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
+    if result == "protected":
+        raise HTTPException(status_code=409, detail="orchestrator_protected")
+
+
+@router.get("/agents/{agent_id}/executions")
+async def api_list_agent_executions(agent_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        return {"executions": await list_agent_executions(s, agent_id, limit=limit)}
 
 
 # ---------------------------------------------------------------------------

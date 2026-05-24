@@ -15,6 +15,7 @@ export function MessagePanel({ onEditArtifact }: Props) {
   const tasks = useChatStore((s) => s.tasks);
   const currentConvId = useChatStore((s) => s.currentConvId);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldStickToBottomRef = useRef(true);
 
   const currentTasks = currentConvId
     ? Object.values(tasks ?? {})
@@ -24,14 +25,28 @@ export function MessagePanel({ onEditArtifact }: Props) {
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || !shouldStickToBottomRef.current) return;
     el.scrollTop = el.scrollHeight;
   }, [messages, agentTyping, tasks]);
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    shouldStickToBottomRef.current = distanceToBottom < 80;
+  }
+
+  useEffect(() => {
+    shouldStickToBottomRef.current = true;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [currentConvId]);
 
   return (
     <div
       ref={scrollRef}
-      className="flex-1 overflow-y-auto p-6 space-y-3 min-h-0"
+      onScroll={handleScroll}
+      className="flex-1 overflow-y-auto overscroll-contain p-6 space-y-3 min-h-0"
     >
       {messages.length === 0 && currentTasks.length === 0 && (
         <div className="text-xs text-muted text-center mt-16">

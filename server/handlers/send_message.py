@@ -27,6 +27,13 @@ from orchestrator import ORCHESTRATOR_AGENT_ID, handle_orchestrator_mention
 from router_client import get_router_client
 from services import create_message, message_to_dict, update_message_content
 from services.artifact import create_artifact as create_service_artifact
+from services.agent import (
+    adapter_config_for_runtime,
+    create_agent,
+    list_agents,
+    record_agent_execution_finish,
+    record_agent_execution_start,
+)
 from services.trace import create_trace_entry as create_trace
 from ws import Connection, event
 
@@ -154,6 +161,9 @@ async def handle(conn: Connection, evt: dict[str, Any]) -> None:
         return
 
     conversation_id = evt.get("conversation_id") or DEFAULT_CONV_ID
+    if await _maybe_create_agent_from_chat(conn, conversation_id, user_text):
+        return
+
     raw_mentions = evt.get("mentions") or []
     if not isinstance(raw_mentions, list):
         await conn.send(
@@ -334,6 +344,108 @@ async def handle(conn: Connection, evt: dict[str, Any]) -> None:
         )
 
 
+def _parse_agent_create_request(user_text: str) -> dict[str, Any] | None:
+    text = user_text.strip()
+    lower = text.lower()
+    if not (
+        lower.startswith("/agent create")
+        or lower.startswith("create agent")
+        or lower.startswith("创建agent")
+        or lower.startswith("新建agent")
+    ):
+        return None
+
+    body = re.sub(
+        r"^(/agent\s+create|create\s+agent|创建agent|新建agent)\s*[:：-]?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    if not body:
+        return None
+
+    fields: dict[str, str] = {}
+    for part in re.split(r"\s+[|;]\s+|\n+", body):
+        if ":" not in part and "：" not in part:
+            continue
+        key, value = re.split(r"[:：]", part, maxsplit=1)
+        fields[key.strip().lower()] = value.strip()
+
+    name = fields.get("name") or fields.get("名称") or body.splitlines()[0].split("|")[0].strip()
+    adapter_type = fields.get("adapter") or fields.get("adapter_type") or fields.get("平台") or "codex"
+    model = fields.get("model") or fields.get("模型") or ""
+    system_prompt = fields.get("prompt") or fields.get("system_prompt") or fields.get("提示词") or ""
+    capabilities_raw = fields.get("capabilities") or fields.get("tags") or fields.get("能力") or "code"
+    capabilities = [x.strip() for x in re.split(r"[,，/]", capabilities_raw) if x.strip()]
+
+    return {
+        "name": name[:80] or "Custom Agent",
+        "adapter_type": adapter_type,
+        "model": model,
+        "system_prompt": system_prompt,
+        "capabilities": capabilities or ["code"],
+    }
+
+
+async def _maybe_create_agent_from_chat(
+    conn: Connection,
+    conversation_id: str,
+    user_text: str,
+) -> bool:
+    parsed = _parse_agent_create_request(user_text)
+    if parsed is None:
+        return False
+
+    Session = get_sessionmaker()
+    async with Session() as s:
+        user_msg = await create_message(
+            s,
+            conversation_id=conversation_id,
+            sender_id=DEFAULT_USER_ID,
+            sender_type="user",
+            content={"type": "text", "text": user_text},
+        )
+        config = {
+            key: parsed[key]
+            for key in ("model", "system_prompt")
+            if parsed.get(key)
+        }
+        agent = await create_agent(
+            s,
+            name=parsed["name"],
+            adapter_type=parsed["adapter_type"],
+            config=config,
+            capabilities=parsed["capabilities"],
+            owner_user_id=DEFAULT_USER_ID,
+        )
+        reply = await create_message(
+            s,
+            conversation_id=conversation_id,
+            sender_id=ORCHESTRATOR_AGENT_ID,
+            sender_type="agent",
+            content={
+                "type": "text",
+                "text": (
+                    f"Created Agent `{agent['name']}` with adapter `{agent['adapter_type']}` "
+                    f"and tags: {', '.join(agent['capabilities'])}."
+                ),
+            },
+        )
+        agents = await list_agents(s)
+
+    await conn.send(event("message_created", message=message_to_dict(user_msg)))
+    await conn.send(event("message_created", message=message_to_dict(reply)))
+    await conn.send(event(
+        "message_done",
+        message_id=reply.id,
+        sender_id=ORCHESTRATOR_AGENT_ID,
+        conversation_id=conversation_id,
+        final_content=json.loads(reply.content),
+    ))
+    await conn.send(event("agents", agents=agents))
+    return True
+
+
 async def load_adapter_for(agent_id: str) -> tuple[Any, str] | None:
     """Load ``(adapter_instance, agent_display_name)`` from DB row.
 
@@ -344,12 +456,9 @@ async def load_adapter_for(agent_id: str) -> tuple[Any, str] | None:
         row = await s.get(Agent, agent_id)
         if row is None:
             return None
-        try:
-            config = json.loads(row.config) if row.config else {}
-        except json.JSONDecodeError:
-            config = {}
         adapter_type = row.adapter_type
         name = row.name
+        config = adapter_config_for_runtime(row)
 
     try:
         adapter = build_adapter(adapter_type, config)
@@ -389,6 +498,15 @@ async def run_agent_reply(
 
     # Build conversation context from DB history
     Session = get_sessionmaker()
+    async with Session() as s:
+        await record_agent_execution_start(
+            s,
+            conversation_id=conversation_id,
+            message_id=ai_msg_id,
+            agent_id=agent_id,
+            input_summary=user_text,
+        )
+
     messages: list[dict[str, Any]] = []
     async with Session() as s:
         rows = (
@@ -462,6 +580,14 @@ async def run_agent_reply(
                     )
             elif ctype == "error":
                 await persist_final(Session, ai_msg_id, "".join(final_parts))
+                async with Session() as s:
+                    await record_agent_execution_finish(
+                        s,
+                        message_id=ai_msg_id,
+                        status="failed",
+                        output_summary="".join(final_parts),
+                        error=chunk.get("message", ""),
+                    )
                 await conn.send(
                     event(
                         "error",
@@ -485,6 +611,13 @@ async def run_agent_reply(
             )
             final_content = artifact_content or {"type": "text", "text": final_text}
         await persist_message_content(Session, ai_msg_id, final_content)
+        async with Session() as s:
+            await record_agent_execution_finish(
+                s,
+                message_id=ai_msg_id,
+                status="done",
+                output_summary=final_text,
+            )
         await conn.send(
             event(
                 "message_done",
@@ -511,6 +644,13 @@ async def run_agent_reply(
     except asyncio.CancelledError:
         final_text = "".join(final_parts)
         await persist_final(Session, ai_msg_id, final_text)
+        async with Session() as s:
+            await record_agent_execution_finish(
+                s,
+                message_id=ai_msg_id,
+                status="cancelled",
+                output_summary=final_text,
+            )
         await conn.send(
             event(
                 "message_cancelled",
@@ -539,6 +679,14 @@ async def run_agent_reply(
         )
         final_text = "".join(final_parts)
         await persist_final(Session, ai_msg_id, final_text)
+        async with Session() as s:
+            await record_agent_execution_finish(
+                s,
+                message_id=ai_msg_id,
+                status="failed",
+                output_summary=final_text,
+                error=str(exc),
+            )
         await conn.send(
             event(
                 "error",
@@ -591,16 +739,7 @@ async def _run_orchestrator(
         )
 
         Session = get_sessionmaker()
-        await persist_final(Session, ai_msg_id, f"✅ Task analysis complete for: {user_text[:100]}")
-        await conn.send(
-            event(
-                "message_done",
-                message_id=ai_msg_id,
-                sender_id=ORCHESTRATOR_AGENT_ID,
-                conversation_id=conversation_id,
-                final_content={"type": "text", "text": f"✅ Orchestrator has analyzed the task and dispatched subtasks."},
-            )
-        )
+        await persist_final(Session, ai_msg_id, f"✅ Orchestrator completed coordination for: {user_text[:100]}")
     except asyncio.CancelledError:
         Session = get_sessionmaker()
         await persist_final(Session, ai_msg_id, "[cancelled]")

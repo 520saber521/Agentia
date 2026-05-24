@@ -69,6 +69,21 @@ function getText(content: MessageContent | undefined | null): string {
   return "";
 }
 
+function appendStreamDelta(currentText: string, delta: string): string {
+  if (!delta) return currentText;
+  if (!currentText) return delta;
+  if (currentText.endsWith(delta)) return currentText;
+
+  const maxOverlap = Math.min(currentText.length, delta.length);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    if (currentText.endsWith(delta.slice(0, size))) {
+      return currentText + delta.slice(size);
+    }
+  }
+
+  return currentText + delta;
+}
+
 /** 主入口。永远返回新的 slice 对象（即使内容相同），便于调用方一律走相等性判断。 */
 export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
   const effects: SideEffect[] = [];
@@ -130,7 +145,10 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       const prev = messages[idx];
       messages[idx] = {
         ...prev,
-        content: { type: "text", text: getText(prev.content) + evt.delta },
+        content: {
+          type: "text",
+          text: appendStreamDelta(getText(prev.content), evt.delta),
+        },
       };
       return { next: { ...state, messages }, effects };
     }
@@ -192,7 +210,20 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       const idx = state.messages.findIndex((m) => m.id === evt.message_id);
       if (idx < 0) return { next: state, effects };
       const messages = state.messages.slice();
-      messages[idx] = { ...messages[idx], artifact_id: evt.artifact.id };
+      const current = messages[idx];
+      const content = current.content.type === "preview"
+        ? {
+            ...current.content,
+            artifact_id: evt.artifact.id,
+            title: current.content.title || evt.artifact.title,
+            mimeType: current.content.mimeType || evt.artifact.mime_type,
+            fileSize: current.content.fileSize || evt.artifact.file_size,
+            url: current.content.url || evt.artifact.url,
+            previewUrl: current.content.previewUrl || evt.artifact.preview_url,
+            version: current.content.version || evt.artifact.version,
+          }
+        : current.content;
+      messages[idx] = { ...current, artifact_id: evt.artifact.id, content };
       return { next: { ...state, messages }, effects };
     }
 

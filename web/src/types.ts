@@ -138,9 +138,18 @@ export interface Agent {
   name: string;
   avatar: string | null;
   adapter_type: string;
+  model: string;
+  base_url: string;
+  system_prompt: string;
   capabilities: string[];
+  api_key_configured: boolean;
+  api_key_mask: string;
+  is_system: boolean;
+  locked_prompt: boolean;
+  can_delete: boolean;
   owner_user_id: string | null;
   created_at: number;
+  updated_at: number;
 }
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
@@ -261,6 +270,7 @@ export interface Task {
   status: "planning" | "pending" | "running" | "done" | "failed" | "blocked" | "conflict";
   domain: string | null;
   assigned_agent_id: string | null;
+  agent_name: string | null;
   originating_message_id: string | null;
   result_summary: string | null;
   progress_pct: number;

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -50,6 +51,22 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return _state["session_maker"]  # type: ignore[return-value]
 
 
+async def _ensure_sqlite_schema(conn: Any) -> None:
+    rows = await conn.execute(text("PRAGMA table_info(task)"))
+    task_columns = {str(row[1]) for row in rows.fetchall()}
+    if task_columns and "agent_name" not in task_columns:
+        await conn.execute(text("ALTER TABLE task ADD COLUMN agent_name VARCHAR"))
+
+    rows = await conn.execute(text("PRAGMA table_info(agent)"))
+    agent_columns = {str(row[1]) for row in rows.fetchall()}
+    if agent_columns and "is_system" not in agent_columns:
+        await conn.execute(text("ALTER TABLE agent ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0"))
+    if agent_columns and "locked_prompt" not in agent_columns:
+        await conn.execute(text("ALTER TABLE agent ADD COLUMN locked_prompt INTEGER NOT NULL DEFAULT 0"))
+    if agent_columns and "updated_at" not in agent_columns:
+        await conn.execute(text("ALTER TABLE agent ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0"))
+
+
 async def init_db() -> None:
     """建表（幂等）。Day3 暂用 ``create_all``，Alembic 留到 schema 真正演进时再上。"""
     from .models import Base
@@ -57,6 +74,8 @@ async def init_db() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if engine.url.get_backend_name() == "sqlite":
+            await _ensure_sqlite_schema(conn)
 
 
 async def dispose() -> None:

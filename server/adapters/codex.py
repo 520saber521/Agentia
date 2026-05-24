@@ -180,3 +180,15 @@ class CodexAdapter(AgentAdapter):
 
     def capabilities(self) -> List[str]:
         return ["text", "code", "tool_use", "web_search"]
+
+
+class OpenCodeAdapter(CodexAdapter):
+    """OpenCode-compatible adapter.
+
+    OpenCode-compatible gateways generally expose an OpenAI-style chat
+    completions API, so this adapter intentionally reuses the Codex adapter
+    transport while allowing agents to be configured with ``adapter_type`` set
+    to ``opencode``.
+    """
+
+    name = "opencode"

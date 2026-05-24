@@ -20,7 +20,7 @@ export function MemberPanel() {
   const userMembers = members.filter((m) => m.member_type === "user");
 
   return (
-    <aside className="w-64 flex flex-col bg-bg border-l border-border shrink-0">
+    <aside className="w-64 min-w-64 max-w-64 flex flex-col bg-bg border-l border-border shrink-0 overflow-hidden">
       <div className="px-4 py-3 border-b border-border">
         <h3 className="text-sm font-medium text-fg">成员列表</h3>
         <p className="text-xs text-muted mt-0.5">

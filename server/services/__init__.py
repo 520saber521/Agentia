@@ -6,8 +6,11 @@
 
 from .agent import (
     agent_to_dict,
+    create_agent,
+    delete_agent,
     get_existing_agent_ids,
     list_agents,
+    update_agent,
 )
 from .conversation import (
     conv_to_dict,

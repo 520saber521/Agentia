@@ -60,7 +60,7 @@ export function W4TestPanel() {
         title: "w4-demo.ts",
         mime_type: "text/typescript",
         file_name: "w4-demo.ts",
-        content: "export function greet(name: string) {\n  return `Hello ${name}`;\n}\n",
+        content: "// 代码卡片测试\n// 请通过 @Orchestrator 触发真实 Agent 来生成实际代码。\nexport function placeholder() {\n  return \"等待模型输出\";\n}\n",
         meta: { language: "typescript" },
       });
       return `已生成代码卡片：${result.artifact.title}`;
@@ -73,10 +73,10 @@ export function W4TestPanel() {
       const result = await createArtifactMessage({
         conversation_id: currentConvId,
         kind: "preview",
-        title: "W4 预览页面",
+        title: "模型生成预览",
         mime_type: "text/html",
         file_name: "index.html",
-        content: "<!doctype html><html><body style='margin:0;background:#101827;color:#dff7ff;font-family:Georgia,serif;display:grid;place-items:center;min-height:100vh'><main style='text-align:center'><h1>W4 Preview Ready</h1><p>这是通过网页按钮生成的 iframe 预览产物。</p></main></body></html>",
+        content: "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>等待模型输出</title></head><body style=\"margin:0;min-height:100vh;display:grid;place-items:center;background:#101828;color:#f8fafc;font-family:system-ui,sans-serif\"><main style=\"text-align:center;padding:32px\"><p style=\"color:#cbd5e1\">此预览需要通过 @Orchestrator 触发真实模型生成。请在聊天中发送 @Orchestrator + 你的需求来获得动态生成的预览页面。</p></main></body></html>",
       });
       setLatestPreview(result.artifact);
       setHistory([]);
@@ -93,7 +93,7 @@ export function W4TestPanel() {
         title: "w4-report.txt",
         mime_type: "text/plain",
         file_name: "w4-report.txt",
-        content: "W4 文件卡片测试\n- 显示文件名\n- 显示大小\n- 支持下载\n",
+        content: "文件卡片测试\n- 请通过 @Orchestrator 触发真实 Agent 来生成实际文件内容。\n",
       });
       return `已生成文件卡片：${result.artifact.file_name ?? result.artifact.title}`;
     });
@@ -110,7 +110,7 @@ export function W4TestPanel() {
         mime_type: latestPreview.mime_type,
         file_name: latestPreview.file_name ?? "index.html",
         parent_id: latestPreview.id,
-        content: "<!doctype html><html><body style='margin:0;background:#162312;color:#e5ffd2;font-family:Georgia,serif;display:grid;place-items:center;min-height:100vh'><main style='text-align:center'><h1>Version 2</h1><p>这是通过页面操作保存的新版本。</p></main></body></html>",
+        content: "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>版本更新</title></head><body style=\"margin:0;min-height:100vh;display:grid;place-items:center;background:#101828;color:#f8fafc;font-family:system-ui,sans-serif\"><main style=\"text-align:center;padding:32px\"><p style=\"color:#cbd5e1\">预览版本已更新。请通过 @Orchestrator 触发真实模型生成来获得动态页面内容。</p></main></body></html>",
       });
       setLatestPreview(next);
       const versions = await fetchArtifactHistory(next.id);

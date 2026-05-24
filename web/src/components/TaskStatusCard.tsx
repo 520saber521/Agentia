@@ -40,7 +40,12 @@ export function TaskStatusCard({ task }: Props) {
           <div className="text-sm font-medium text-fg truncate">
             {task.title}
           </div>
-          {task.domain && (
+          {task.agent_name && (
+            <div className="text-xs text-accent mt-0.5 truncate font-medium">
+              🤖 {task.agent_name}
+            </div>
+          )}
+          {!task.agent_name && task.domain && (
             <div className="text-xs text-muted mt-0.5 truncate">
               {task.domain}
             </div>

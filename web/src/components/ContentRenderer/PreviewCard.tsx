@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { fetchArtifactContent } from "../../api/client";
 
 interface Props {
   artifactId: string;
   title: string;
   mimeType: string;
   fileSize: number;
+  url?: string;
+  previewUrl?: string;
   onEdit?: (artifactId: string) => void;
 }
 
@@ -14,11 +18,48 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-export function PreviewCard({ artifactId, title, mimeType, fileSize, onEdit }: Props) {
+export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previewUrl, onEdit }: Props) {
   const [showIframe, setShowIframe] = useState(false);
   const [iframeError, setIframeError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  const previewUrl = artifactId ? `/preview/${encodeURIComponent(artifactId)}` : "";
+  const [inlineHtml, setInlineHtml] = useState<string | null>(null);
+  const [loadingInlineHtml, setLoadingInlineHtml] = useState(false);
+  const [inlineHtmlError, setInlineHtmlError] = useState<string | null>(null);
+  const resolvedPreviewUrl = previewUrl || (artifactId ? `/preview/${encodeURIComponent(artifactId)}` : "");
+  const sourceUrl = url || (artifactId ? `/api/artifacts/${encodeURIComponent(artifactId)}/content` : "");
+  const isHtmlPreview = mimeType.toLowerCase().includes("html");
+  const fallbackHtml = useMemo(
+    () => {
+      const safeTitle = title.replace(/[<>&"']/g, "");
+      return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f7f7;color:#222;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif}.card{max-width:520px;padding:28px;border-radius:22px;background:white;box-shadow:0 20px 60px rgba(0,0,0,.12)}h1{margin:0 0 10px;font-size:24px}p{margin:0;color:#666;line-height:1.7}</style></head><body><main class="card"><h1>预览暂不可用</h1><p>当前产物没有返回可直接渲染的 HTML，已保留编辑和全屏入口。</p></main></body></html>`;
+    },
+    [title],
+  );
+  const iframeHtml = inlineHtml || fallbackHtml;
+
+  useEffect(() => {
+    if (!showIframe || !artifactId || !isHtmlPreview) return;
+    let cancelled = false;
+    setLoadingInlineHtml(true);
+    setInlineHtmlError(null);
+    fetchArtifactContent(artifactId)
+      .then((content) => {
+        if (cancelled) return;
+        setInlineHtml(content.trim() || fallbackHtml);
+        setIframeError(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setInlineHtmlError(err instanceof Error ? err.message : "预览内容加载失败");
+        setInlineHtml(fallbackHtml);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingInlineHtml(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactId, fallbackHtml, isHtmlPreview, retryKey, showIframe]);
 
   function handleTogglePreview() {
     if (!artifactId) {
@@ -33,6 +74,8 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, onEdit }: P
 
   function handleRetry() {
     setIframeError(false);
+    setInlineHtmlError(null);
+    setInlineHtml(null);
     setRetryKey((value) => value + 1);
   }
 
@@ -72,7 +115,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, onEdit }: P
             {showIframe ? "关闭预览" : "预览"}
           </button>
           <a
-            href={previewUrl}
+            href={resolvedPreviewUrl || sourceUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-full border border-border px-3 py-1.5 text-xs text-muted hover:text-fg hover:bg-bg transition-colors"
@@ -83,7 +126,17 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, onEdit }: P
       </div>
 
       {showIframe && (
-        <div className="relative w-full bg-bg" style={{ height: "400px" }}>
+        <div className="relative w-full bg-bg" style={{ height: "520px" }}>
+          {loadingInlineHtml && (
+            <div className="absolute left-3 top-3 z-10 rounded-full border border-border bg-panel/90 px-3 py-1.5 text-xs text-muted shadow-lg">
+              正在加载预览内容…
+            </div>
+          )}
+          {inlineHtmlError && !loadingInlineHtml && (
+            <div className="absolute left-3 top-3 z-10 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100 shadow-lg">
+              已启用本地兜底预览
+            </div>
+          )}
           {iframeError ? (
             <div className="flex items-center justify-center h-full text-sm text-muted">
               <div className="text-center rounded-xl border border-red-500/20 bg-red-500/5 px-6 py-5">
@@ -100,10 +153,12 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, onEdit }: P
           ) : (
             <iframe
               key={retryKey}
-              src={previewUrl}
+              src={isHtmlPreview ? undefined : resolvedPreviewUrl || sourceUrl}
+              srcDoc={isHtmlPreview ? iframeHtml : undefined}
               title={title}
               className="w-full h-full border-0 bg-white"
-              sandbox="allow-scripts allow-same-origin"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+              onLoad={() => setIframeError(false)}
               onError={() => setIframeError(true)}
             />
           )}

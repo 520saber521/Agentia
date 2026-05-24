@@ -59,6 +59,8 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
           title={stringValue(content.title) ?? "预览"}
           mimeType={stringValue(content.mimeType) ?? "text/plain"}
           fileSize={numberValue(content.fileSize) ?? 0}
+          url={stringValue(content.url)}
+          previewUrl={stringValue(content.previewUrl)}
           onEdit={onEditArtifact}
         />
       );

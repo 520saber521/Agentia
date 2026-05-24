@@ -87,7 +87,30 @@ class Agent(Base):
     config: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
     capabilities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
     owner_user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_system: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_prompt: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+
+
+class AgentExecution(Base):
+    __tablename__ = "agent_execution"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    message_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("agent.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    input_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    output_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[int] = mapped_column(Integer, default=now_ms, nullable=False)
+    finished_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        Index("idx_agent_execution_agent", "agent_id", "started_at"),
+        Index("idx_agent_execution_conv", "conversation_id", "started_at"),
+    )
 
 
 class Artifact(Base):
@@ -135,6 +158,7 @@ class Task(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     domain: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     assigned_agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    agent_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     originating_message_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     progress_pct: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

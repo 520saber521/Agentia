@@ -14,7 +14,6 @@ import type { Artifact } from "./types";
 export default function App() {
   const init = useChatStore((s) => s.init);
   const currentConvId = useChatStore((s) => s.currentConvId);
-  const conversations = useChatStore((s) => s.conversations);
 
   const [editingArtifact, setEditingArtifact] = useState<Artifact | null>(null);
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
@@ -22,9 +21,6 @@ export default function App() {
   useEffect(() => {
     init();
   }, [init]);
-
-  const currentConv = conversations.find((c) => c.id === currentConvId);
-  const isGroupChat = currentConv?.type === "group";
 
   const handleEditArtifact = useCallback(
     async (artifactId: string) => {
@@ -64,14 +60,14 @@ export default function App() {
   return (
     <div className="h-full flex flex-col bg-bg text-fg">
       <Header />
-      <main className="flex-1 flex min-h-0">
+      <main className="flex-1 grid grid-cols-[18rem_minmax(0,1fr)_16rem] min-h-0 overflow-hidden">
         <ConversationListPanel />
-        <section className="flex-1 flex flex-col min-h-0 bg-panel border-l border-border">
+        <section className="min-w-0 flex flex-col min-h-0 bg-panel border-l border-border overflow-hidden">
           <W4TestPanel />
           <MessagePanel onEditArtifact={handleEditArtifact} />
           <Composer />
         </section>
-        {isGroupChat && <MemberPanel />}
+        <MemberPanel />
       </main>
 
       {editingArtifact && editingConvId && (

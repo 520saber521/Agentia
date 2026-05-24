@@ -9,10 +9,15 @@
 import { create } from "zustand";
 
 import {
+  createAgent,
   createConversation,
+  deleteAgent,
+  fetchAgents,
   fetchConversations,
   fetchMessages,
+  updateAgent,
   type CreateConversationInput,
+  type SaveAgentInput,
 } from "../api/client";
 import type { Agent, ConnectionStatus, Conversation, Message } from "../types";
 import { WSClient } from "../ws/client";
@@ -33,6 +38,10 @@ export interface ChatState extends ChatSlice {
   refreshConversations: () => Promise<void>;
   selectConversation: (id: string) => Promise<void>;
   createAndSelect: (input: CreateConversationInput) => Promise<Conversation>;
+  createAgentContact: (input: SaveAgentInput) => Promise<Agent>;
+  updateAgentContact: (agentId: string, input: Partial<SaveAgentInput>) => Promise<Agent>;
+  deleteAgentContact: (agentId: string) => Promise<void>;
+  startAgentChat: (agentId: string) => Promise<Conversation>;
   sendText: (text: string, mentions?: string[]) => void;
   /** 取消当前所有流式（群聊场景下一次取消所有正在流的 agent）。 */
   cancelAll: () => void;
@@ -64,6 +73,9 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     });
     ws.connect();
     void get().refreshConversations();
+    void fetchAgents().then((agents) => set({ agents })).catch((err) => {
+      console.error("fetchAgents failed", err);
+    });
   },
 
   async refreshConversations() {
@@ -87,6 +99,38 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }));
     await get().selectConversation(conv.id);
     return conv;
+  },
+
+  async createAgentContact(input) {
+    const agent = await createAgent(input);
+    set((s) => ({
+      agents: [agent, ...s.agents.filter((x) => x.id !== agent.id)],
+    }));
+    return agent;
+  },
+
+  async updateAgentContact(agentId, input) {
+    const agent = await updateAgent(agentId, input);
+    set((s) => ({
+      agents: s.agents.map((x) => (x.id === agent.id ? agent : x)),
+    }));
+    return agent;
+  },
+
+  async deleteAgentContact(agentId) {
+    await deleteAgent(agentId);
+    set((s) => ({
+      agents: s.agents.filter((x) => x.id !== agentId),
+    }));
+  },
+
+  async startAgentChat(agentId) {
+    const agent = get().agents.find((a) => a.id === agentId);
+    return get().createAndSelect({
+      title: agent?.name ? `Chat with ${agent.name}` : "Agent Chat",
+      type: "single",
+      agent_ids: [agentId],
+    });
   },
 
   async selectConversation(id) {

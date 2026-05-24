@@ -8,7 +8,7 @@
 """
 
 from .engine import dispose, get_engine, get_sessionmaker, init_db
-from .models import Agent, Base, Conversation, ConversationMember, Message
+from .models import Agent, AgentExecution, Base, Conversation, ConversationMember, Message
 from .seed import (
     DEFAULT_AGENT_ID,
     DEFAULT_AGENT_ID_2,
@@ -19,6 +19,7 @@ from .seed import (
 
 __all__ = [
     "Agent",
+    "AgentExecution",
     "Base",
     "Conversation",
     "ConversationMember",

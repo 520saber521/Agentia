@@ -3,12 +3,14 @@
 启动时灌一份"演示数据"，让 BFF 不依赖任何外部状态就能跑通：
 
 - 1 个用户：``user_demo``（占位，Day3 暂不做完整用户表）
-- 内置 Agent：
-    - ``agent_mock``   → MockAdapter（流式打字，主用单聊 demo）
-    - ``agent_mock_2`` → MockAdapter 另一份配置（W2 F-W2-5 起 seed，仅为
-      让"新建群聊"模态里至少有 2 个可选 Agent；W2-T2 接入 Claude 后此 seed
-      会与 ``agent_claude`` 共存）
-- 1 个会话：``conv_demo``（单聊 user_demo ↔ agent_mock）
+- 内置 Agent（每种 Adapter 类型一个实例）：
+    - ``agent_orchestrator`` → Orchestrator（任务编排器）
+    - ``agent_claude``       → ClaudeCodeAdapter（Anthropic Claude）
+    - ``agent_deepseek``     → CodexAdapter（OpenAI 兼容）
+    - ``agent_opencode``     → OpenCodeAdapter（OpenCode 后端）
+    - ``agent_mock_2``       → CustomAgentAdapter（自定义）
+    - ``agent_mock``         → MockAdapter（离线测试）
+- 1 个会话：``conv_demo``（单聊 user_demo ↔ MockAdapter）
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ from sqlalchemy import select
 
 from .engine import get_sessionmaker
 from .models import Agent, Conversation, ConversationMember
+from services.agent import ORCHESTRATOR_SYSTEM_PROMPT
+from services.secrets import encrypt_secret
 
 DEFAULT_USER_ID = "user_demo"
 DEFAULT_AGENT_ID = "agent_mock"
@@ -27,11 +31,16 @@ DEFAULT_AGENT_ID_2 = "agent_mock_2"
 DEFAULT_AGENT_CLAUDE = "agent_claude"
 DEFAULT_AGENT_ORCHESTRATOR = "agent_orchestrator"
 DEFAULT_AGENT_DEEPSEEK = "agent_deepseek"
+DEFAULT_AGENT_OPENCODE = "agent_opencode"
 DEFAULT_CONV_ID = "conv_demo"
 
 
 async def _upsert_agent(s, *, agent_id: str, fields: dict[str, Any]) -> None:
     row = await s.scalar(select(Agent).where(Agent.id == agent_id))
+    now = __import__("time").time()
+    fields.setdefault("is_system", 0)
+    fields.setdefault("locked_prompt", 0)
+    fields.setdefault("updated_at", int(now * 1000))
     if row is None:
         s.add(Agent(id=agent_id, **fields))
     else:
@@ -54,19 +63,14 @@ async def seed_defaults() -> None:
             s,
             agent_id=DEFAULT_AGENT_ID,
             fields=dict(
-                name="Frontend Designer",
-                avatar=None,
+                name="MockAdapter",
+                avatar="🧪",
                 adapter_type="mock",
                 config=json.dumps({
-                    "delay_ms": 20,
-                    "role": "前端页面 Agent",
-                    "reply": (
-                        "【前端页面 Agent】我负责把需求落成可运行 UI / HTML / CSS：\n"
-                        "{echo}\n\n"
-                        "我会输出可预览的页面结构、交互状态和响应式布局。"
-                    ),
+                    "delay_ms": 80,
+                    "reply": "模拟回复（离线测试用）",
                 }, ensure_ascii=False),
-                capabilities=json.dumps(["text", "mock", "frontend", "html", "preview"], ensure_ascii=False),
+                capabilities=json.dumps(["text", "code", "frontend", "backend", "database", "test", "docs", "testing"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )
@@ -74,19 +78,15 @@ async def seed_defaults() -> None:
             s,
             agent_id=DEFAULT_AGENT_ID_2,
             fields=dict(
-                name="Backend Architect",
-                avatar=None,
-                adapter_type="mock",
+                name="CustomAgentAdapter",
+                avatar="🔧",
+                adapter_type="codex",
                 config=json.dumps({
-                    "delay_ms": 35,
-                    "role": "后端接口 Agent",
-                    "reply": (
-                        "【后端接口 Agent】我负责 API、数据模型、权限和错误码：\n"
-                        "{echo}\n\n"
-                        "我会给出接口契约、数据结构和可测试的后端边界。"
-                    ),
+                    "api_key": "",
+                    "model": "deepseek-v4-flash",
+                    "base_url": "https://api.deepseek.com/v1",
                 }, ensure_ascii=False),
-                capabilities=json.dumps(["text", "mock", "backend", "api", "database"], ensure_ascii=False),
+                capabilities=json.dumps(["text", "code", "custom", "flexible"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )
@@ -94,11 +94,15 @@ async def seed_defaults() -> None:
             s,
             agent_id=DEFAULT_AGENT_CLAUDE,
             fields=dict(
-                name="Claude Code",
-                avatar=None,
+                name="ClaudeCodeAdapter",
+                avatar="🤖",
                 adapter_type="claude_code",
-                config=json.dumps({"api_key": "", "model": "claude-sonnet-4-20250514"}, ensure_ascii=False),
-                capabilities=json.dumps(["text", "code", "tool_use", "vision"], ensure_ascii=False),
+                config=json.dumps({
+                    "api_key": "",
+                    "model": "gpt-5.4",
+                    "base_url": "https://api.apikey.fun/v1",
+                }, ensure_ascii=False),
+                capabilities=json.dumps(["text", "code", "tool_use", "vision", "analysis"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )
@@ -107,34 +111,49 @@ async def seed_defaults() -> None:
             agent_id=DEFAULT_AGENT_ORCHESTRATOR,
             fields=dict(
                 name="Orchestrator",
-                avatar=None,
-                adapter_type="mock",
+                avatar="🎯",
+                adapter_type="codex",
                 config=json.dumps({
-                    "delay_ms": 10,
+                    "api_key": "",
+                    "model": "gpt-4o",
                     "role": "任务编排器",
-                    "reply": (
-                        "【Orchestrator 任务编排器】\n"
-                        "正在分析任务：{echo}\n\n"
-                        "我将把任务拆解为子任务并分配给各 Agent。"
-                    ),
+                    "system_prompt": ORCHESTRATOR_SYSTEM_PROMPT,
                 }, ensure_ascii=False),
-                capabilities=json.dumps(["task_management", "scheduling", "decomposition", "aggregation"], ensure_ascii=False),
+                capabilities=json.dumps(["task_management", "scheduling", "decomposition", "aggregation", "orchestration", "conflict_detection"], ensure_ascii=False),
                 owner_user_id=None,
+                is_system=1,
+                locked_prompt=1,
             ),
         )
         await _upsert_agent(
             s,
             agent_id=DEFAULT_AGENT_DEEPSEEK,
             fields=dict(
-                name="DeepSeek V4 Flash",
-                avatar=None,
+                name="CodexAdapter",
+                avatar="⚡",
                 adapter_type="codex",
                 config=json.dumps({
                     "api_key": "",
                     "model": "deepseek-chat",
                     "base_url": "https://api.deepseek.com/v1",
                 }, ensure_ascii=False),
-                capabilities=json.dumps(["text", "code"], ensure_ascii=False),
+                capabilities=json.dumps(["text", "code", "frontend", "backend", "database"], ensure_ascii=False),
+                owner_user_id=None,
+            ),
+        )
+        await _upsert_agent(
+            s,
+            agent_id=DEFAULT_AGENT_OPENCODE,
+            fields=dict(
+                name="OpenCodeAdapter",
+                avatar="🔗",
+                adapter_type="opencode",
+                config=json.dumps({
+                    "api_key": encrypt_secret("sk-980b1a1f9aa3019f34346eab42cc5a3a07f5e70913087d813e5b2189c33768d1"),
+                    "model": "gpt-5.4",
+                    "base_url": "https://api.apikey.fun/v1",
+                }, ensure_ascii=False),
+                capabilities=json.dumps(["text", "code", "tool_use", "backend", "frontend", "fullstack"], ensure_ascii=False),
                 owner_user_id=None,
             ),
         )
@@ -144,7 +163,7 @@ async def seed_defaults() -> None:
             s.add(
                 Conversation(
                     id=DEFAULT_CONV_ID,
-                    title="Demo · 与 Mock Agent 单聊",
+                    title="Demo · 与 MockAdapter 单聊",
                     type="single",
                     owner_user_id=DEFAULT_USER_ID,
                 )

@@ -24,13 +24,14 @@ from .base import (
     ChunkUsage,
 )
 from .claude_code import ClaudeCodeAdapter
-from .codex import CodexAdapter
+from .codex import CodexAdapter, OpenCodeAdapter
 from .mock import MockAdapter
 
 ADAPTER_REGISTRY: dict[str, Type[AgentAdapter]] = {
     "mock": MockAdapter,
     "claude_code": ClaudeCodeAdapter,
     "codex": CodexAdapter,
+    "opencode": OpenCodeAdapter,
 }
 
 
@@ -55,6 +56,7 @@ __all__ = [
     "ChunkUsage",
     "ClaudeCodeAdapter",
     "CodexAdapter",
+    "OpenCodeAdapter",
     "MockAdapter",
     "build_adapter",
 ]
