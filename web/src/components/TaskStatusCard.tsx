@@ -71,13 +71,13 @@ export function TaskStatusCard({ task }: Props) {
         )}
       </div>
 
-      {task.description && task.description.length > 100 && (
+      {task.status === "done" && task.result_summary && (
         <details className="mt-2 group">
           <summary className="text-[10px] text-muted cursor-pointer hover:text-fg transition-colors">
             查看详情
           </summary>
           <p className="text-xs text-muted mt-1 whitespace-pre-wrap">
-            {task.description}
+            {task.result_summary}
           </p>
         </details>
       )}

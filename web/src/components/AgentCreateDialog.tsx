@@ -91,15 +91,17 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
     setError(null);
     setNotice(null);
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         name: name.trim(),
         adapter_type: adapterType,
-        api_key: apiKey.trim(),
         model: model.trim(),
         base_url: baseUrl.trim(),
         system_prompt: lockedPrompt ? undefined : systemPrompt.trim(),
         capabilities: capabilityTags,
       };
+      if (apiKey.trim()) {
+        payload.api_key = apiKey.trim();
+      }
       if (agent) {
         await updateAgentContact(agent.id, payload);
         setNotice("Agent configuration saved and will apply to the next message.");

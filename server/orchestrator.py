@@ -317,16 +317,8 @@ def _ensure_preview_collaboration_domains(user_text: str, domains: set[str]) -> 
 
 
 def _build_subtask_description(subtask: Any, decompose_result: Any) -> str:
-    parts = [subtask.description or ""]
-    if hasattr(subtask, "contract_section") and subtask.contract_section:
-        parts.append(f"\n\n## Contract\n{subtask.contract_section}")
-    if hasattr(subtask, "shared_models") and subtask.shared_models:
-        parts.append(f"\n\n## Shared Models\n{json.dumps(subtask.shared_models, indent=2, ensure_ascii=False)}")
-    if hasattr(subtask, "provided_interfaces") and subtask.provided_interfaces:
-        parts.append(f"\n\n## Provides\n{json.dumps(subtask.provided_interfaces, indent=2, ensure_ascii=False)}")
-    if hasattr(subtask, "required_interfaces") and subtask.required_interfaces:
-        parts.append(f"\n\n## Requires\n{json.dumps(subtask.required_interfaces, indent=2, ensure_ascii=False)}")
-    return "\n".join(parts)
+    # 只使用原始描述，不附加任何契约模板信息
+    return subtask.description or ""
 
 
 def _agent_config(agent: Agent) -> dict[str, Any]:

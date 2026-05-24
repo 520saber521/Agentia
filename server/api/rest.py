@@ -113,7 +113,7 @@ async def api_update_agent(agent_id: str, body: UpdateAgentBody) -> dict:
     """更新 Agent 的可配置字段。"""
     Session = get_sessionmaker()
     config: dict[str, Any] = {}
-    if body.api_key is not None:
+    if body.api_key:
         config["api_key"] = body.api_key
     if body.model is not None:
         config["model"] = body.model
