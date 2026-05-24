@@ -28,6 +28,8 @@ from ws import Connection, event
 
 logger = logging.getLogger("agenthub.handlers.send_message")
 
+AGENT_TIMEOUT_S = 120
+
 
 def _build_messages_context(
     history: list[dict[str, Any]],
@@ -250,6 +252,21 @@ async def load_adapter_for(agent_id: str) -> tuple[Any, str] | None:
     return adapter, name
 
 
+async def _iterate_with_timeout(agen, timeout_s: float):
+    """Wrap an async generator so total iteration time is bounded by ``timeout_s``."""
+    it = agen.__aiter__()
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            raise asyncio.TimeoutError()
+        try:
+            chunk = await asyncio.wait_for(it.__anext__(), remaining)
+            yield chunk
+        except StopAsyncIteration:
+            return
+
+
 async def run_agent_reply(
     conn: Connection,
     agent_id: str,
@@ -283,14 +300,15 @@ async def run_agent_reply(
     seq = 0
     Session = get_sessionmaker()
 
-    # Load conversation history for context
     async with Session() as s:
         history = await list_messages(s, conversation_id, limit=50)
 
     messages_context = _build_messages_context(history, user_text)
 
     try:
-        async for chunk in adapter.send(messages=messages_context):
+        async for chunk in _iterate_with_timeout(
+            adapter.send(messages=messages_context), AGENT_TIMEOUT_S
+        ):
             ctype = chunk.get("type")
             if ctype == "text":
                 seq += 1
@@ -340,6 +358,22 @@ async def run_agent_reply(
                 sender_id=agent_id,
                 conversation_id=conversation_id,
                 final_content={"type": "text", "text": "".join(final_parts)},
+            )
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "ws[%s] agent[%s] timed out after %ds",
+            conn.conn_id, agent_id, AGENT_TIMEOUT_S,
+        )
+        await persist_final(Session, ai_msg_id, "".join(final_parts))
+        await conn.send(
+            event(
+                "error",
+                message_id=ai_msg_id,
+                sender_id=agent_id,
+                conversation_id=conversation_id,
+                code="agent_timeout",
+                message=f"Agent did not complete within {AGENT_TIMEOUT_S}s",
             )
         )
     except asyncio.CancelledError:

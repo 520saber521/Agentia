@@ -1,18 +1,27 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { useChatStore } from "../stores/useChatStore";
+import type { Agent } from "../types";
 import { MessageBubble } from "./MessageBubble";
 
 export function MessagePanel() {
   const messages = useChatStore((s) => s.messages);
   const streamingIds = useChatStore((s) => s.streamingMessageIds);
   const agentTyping = useChatStore((s) => s.agentTyping);
+  const agents = useChatStore((s) => s.agents);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const agentsById = useMemo(() => {
+    const map = new Map<string, Agent>();
+    for (const a of agents) {
+      map.set(a.id, a);
+    }
+    return map;
+  }, [agents]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    // 简单粗暴：每次消息更新就滚到底
     el.scrollTop = el.scrollHeight;
   }, [messages, agentTyping]);
 
@@ -26,9 +35,17 @@ export function MessagePanel() {
           对话还是空的 —— 在下面输入一段话就开始吧。
         </div>
       )}
-      {messages.map((m) => (
-        <MessageBubble key={m.id} msg={m} streaming={streamingIds.includes(m.id)} />
-      ))}
+      {messages.map((m) => {
+        const agent = m.sender_type === "agent" ? agentsById.get(m.sender_id) : undefined;
+        return (
+          <MessageBubble
+            key={m.id}
+            msg={m}
+            streaming={streamingIds.includes(m.id)}
+            agentName={agent?.name}
+          />
+        );
+      })}
       {agentTyping && (
         <div className="text-xs text-muted px-3 animate-fade-in">
           Agent 正在思考…
