@@ -20,13 +20,27 @@ from pydantic import BaseModel, Field
 
 from db import DEFAULT_USER_ID
 from db.engine import get_sessionmaker
+from db.models import Message
 from router_client import get_router_client
-from services.agent import list_agents
+from ws import event, hub
+from services.agent import (
+    create_agent,
+    delete_agent,
+    list_agent_executions,
+    list_agents,
+    update_agent,
+)
+from services.message import (
+    create_message,
+    message_to_dict,
+    pin_message,
+)
 from services.conversation import (
     create_conversation,
     get_conversation,
     list_conversations,
     list_messages,
+    update_conversation,
 )
 
 router = APIRouter(prefix="/api", tags=["bff"])
@@ -36,6 +50,12 @@ class CreateConversationBody(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     type: Literal["single", "group"] = "single"
     agent_ids: list[str] = Field(default_factory=list)
+
+
+class UpdateConversationBody(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    pinned: bool | None = None
+    archived: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -54,16 +74,119 @@ async def api_list_agents() -> dict:
         return {"agents": await list_agents(s)}
 
 
+class CreateAgentBody(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    adapter_type: str = "mock"
+    api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+    system_prompt: str = ""
+    capabilities: list[str] = ["text"]
+    avatar: str | None = None
+
+
+class UpdateAgentBody(BaseModel):
+    name: str | None = None
+    adapter_type: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    system_prompt: str | None = None
+    capabilities: list[str] | None = None
+    avatar: str | None = None
+
+
+@router.post("/agents", status_code=201)
+async def api_create_agent(body: CreateAgentBody) -> dict:
+    """创建自定义 Agent。支持配置 adapter_type、api_key、model、system_prompt。"""
+    Session = get_sessionmaker()
+    config: dict[str, Any] = {}
+    if body.api_key:
+        config["api_key"] = body.api_key
+    if body.model:
+        config["model"] = body.model
+    if body.base_url:
+        config["base_url"] = body.base_url
+    if body.system_prompt:
+        config["system_prompt"] = body.system_prompt
+    async with Session() as s:
+        agent = await create_agent(
+            s,
+            name=body.name,
+            adapter_type=body.adapter_type,
+            config=config,
+            capabilities=body.capabilities,
+            avatar=body.avatar,
+            owner_user_id=DEFAULT_USER_ID,
+        )
+    return {"agent": agent}
+
+
+@router.put("/agents/{agent_id}")
+async def api_update_agent(agent_id: str, body: UpdateAgentBody) -> dict:
+    """更新 Agent 的可配置字段。"""
+    Session = get_sessionmaker()
+    config: dict[str, Any] = {}
+    if body.api_key:
+        config["api_key"] = body.api_key
+    if body.model is not None:
+        config["model"] = body.model
+    if body.base_url is not None:
+        config["base_url"] = body.base_url
+    if body.system_prompt is not None:
+        config["system_prompt"] = body.system_prompt
+    async with Session() as s:
+        agent = await update_agent(
+            s,
+            agent_id,
+            name=body.name,
+            avatar=body.avatar,
+            adapter_type=body.adapter_type,
+            config=config if config else None,
+            capabilities=body.capabilities,
+        )
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
+    return {"agent": agent}
+
+
+@router.delete("/agents/{agent_id}", status_code=200)
+async def api_delete_agent(agent_id: str) -> None:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        result = await delete_agent(s, agent_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
+    if result == "protected":
+        raise HTTPException(status_code=409, detail="orchestrator_protected")
+
+
+@router.get("/agents/{agent_id}/executions")
+async def api_list_agent_executions(agent_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        return {"executions": await list_agent_executions(s, agent_id, limit=limit)}
+
+
 # ---------------------------------------------------------------------------
 # /api/conversations
 # ---------------------------------------------------------------------------
 
 
 @router.get("/conversations")
-async def api_list_conversations() -> dict:
+async def api_list_conversations(
+    include_archived: bool = Query(default=False),
+    q: str | None = Query(default=None),
+) -> dict:
     Session = get_sessionmaker()
     async with Session() as s:
-        return {"conversations": await list_conversations(s)}
+        return {
+            "conversations": await list_conversations(
+                s,
+                include_archived=include_archived,
+                query=q,
+            )
+        }
 
 
 # 把 service 层抛出的 ValueError code 映射成 HTTP status + 稳定的错误码。
@@ -111,6 +234,30 @@ async def api_get_conversation(conversation_id: str) -> dict:
     return {"conversation": conv}
 
 
+@router.patch("/conversations/{conversation_id}")
+async def api_update_conversation(
+    conversation_id: str,
+    body: UpdateConversationBody,
+) -> dict:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        try:
+            conv = await update_conversation(
+                s,
+                conversation_id,
+                title=body.title,
+                pinned=body.pinned,
+                archived=body.archived,
+            )
+        except ValueError as e:
+            code = str(e)
+            status = _VALUE_ERROR_HTTP_STATUS.get(code, 400)
+            raise HTTPException(status_code=status, detail=code) from None
+    if conv is None:
+        raise HTTPException(status_code=404, detail=f"conversation not found: {conversation_id}")
+    return {"conversation": conv}
+
+
 @router.get("/conversations/{conversation_id}/messages")
 async def api_list_messages(
     conversation_id: str,
@@ -144,3 +291,75 @@ async def api_trace(message_id: str) -> dict[str, Any]:
             status_code=502,
             detail="Router not reachable or trace not found",
         ) from None
+
+
+# ---------------------------------------------------------------------------
+# /api/messages — Pin / Unpin
+# ---------------------------------------------------------------------------
+
+
+@router.post("/messages/{message_id}/pin")
+async def api_pin_message(message_id: str) -> dict:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        m = await pin_message(s, message_id, pinned=True)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"message not found: {message_id}")
+    msg_dict = message_to_dict(m)
+    await hub.broadcast_conversation(
+        m.conversation_id,
+        event("message_pinned", message=msg_dict),
+    )
+    return {"message": msg_dict}
+
+
+@router.post("/messages/{message_id}/unpin")
+async def api_unpin_message(message_id: str) -> dict:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        m = await pin_message(s, message_id, pinned=False)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"message not found: {message_id}")
+    msg_dict = message_to_dict(m)
+    await hub.broadcast_conversation(
+        m.conversation_id,
+        event("message_unpinned", message=msg_dict),
+    )
+    return {"message": msg_dict}
+
+
+@router.get("/conversations/{conversation_id}/pinned-messages")
+async def api_list_pinned_messages(conversation_id: str) -> dict:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        from sqlalchemy import select
+        rows = (
+            await s.scalars(
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .where(Message.pinned == 1)
+                .order_by(Message.created_at)
+            )
+        ).all()
+    return {"messages": [message_to_dict(m) for m in rows]}
+
+
+@router.get("/conversations/{conversation_id}/context-stats")
+async def api_context_stats(conversation_id: str) -> dict:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        from sqlalchemy import select, func
+        total_count = await s.scalar(
+            select(func.count()).select_from(Message)
+            .where(Message.conversation_id == conversation_id)
+        )
+        pinned_count = await s.scalar(
+            select(func.count()).select_from(Message)
+            .where(Message.conversation_id == conversation_id)
+            .where(Message.pinned == 1)
+        )
+    return {
+        "conversation_id": conversation_id,
+        "total_messages": total_count or 0,
+        "pinned_messages": pinned_count or 0,
+    }
