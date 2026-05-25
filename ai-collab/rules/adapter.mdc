@@ -1,0 +1,53 @@
+---
+description: AgentHub v2 Adapter 实现硬约束
+globs: ["server/adapters/**/*.py"]
+alwaysApply: true
+---
+
+# Adapter Rules (server/adapters/**/*.py)
+
+> Adapter 是 BFF 与外部模型之间的薄壳。它的稳定性直接决定了"用户能不能取消、能不能流式、能不能切换模型"。
+
+## R-A-1 无状态
+
+- Adapter 实例**禁止**持有"本次对话"级别的可变状态（消息历史 / token 计数 / 当前流的 buffer）。
+- 这些状态必须由调用方（BFF）传进来 / 接收 yield 的事件去维护。
+- 这条让一个 Adapter 可以被并发多个对话共享。
+
+## R-A-2 流式 yield，不允许整段返回
+
+- `send()` 必须是 `AsyncIterator`，yield 出 ≥1 个 `text_delta` chunk。
+- 即使上游 API 是"一段返回"，也必须自己按 token / 标点切。
+- 否则用户体验从"打字"退化为"漫长的转圈"。
+
+## R-A-3 取消是 return，不是 raise
+
+- `cancel: asyncio.Event` 被 set 时，`send()` 必须**优雅 return**。
+- 禁止 `raise asyncio.CancelledError`、禁止 `raise RuntimeError("cancelled")`。
+- 如果当前在 `await`（如读 SSE），用 `asyncio.wait` 同时等 cancel 与 IO，被取消时 break 出循环 + return。
+
+## R-A-4 错误也要 yield，不要 raise
+
+- 任何外部 API 错误（5xx / token 不足 / 网络异常）必须 yield 出 `{type:"error", code, message}` 作为最后一个 chunk。
+- 上游 BFF 会把它转成 `{type:"error", message_id}` 事件，并保留 partial content 给用户。
+- 一旦 raise 出去，整个 WS handler 必须做"善后清理"，复杂度暴涨。
+
+## R-A-5 必须实现 `capabilities()`
+
+- 返回值是 `list[str]`，元素只能来自约定枚举：`text` / `tool_use` / `vision` / `code` / `web_search` / `file`。
+- 前端 AgentPicker 与 Orchestrator 任务分派都会读它。
+
+## R-A-6 注册到工厂，不要在 main.py 里硬编码
+
+- 新 Adapter 完工后**必须**在 `server/adapters/__init__.py` 的 `ADAPTER_REGISTRY` 注册。
+- BFF 永远只通过 `build_adapter(name, **kwargs)` 取实例，禁止 `from .foo import FooAdapter`。
+
+## R-A-7 必须覆盖 5 类单测
+
+见 `ai-collab/skills/new-adapter.md` Step 5。一个不能少。
+
+## R-A-8 不要直接读环境变量
+
+- API Key 等敏感配置**必须**作为 `__init__` 参数注入。
+- `os.environ[...]` 留给 BFF 启动时读、注册到 `ADAPTER_REGISTRY` 工厂闭包里。
+- 这条让 Adapter 在测试里可以零环境变量初始化。

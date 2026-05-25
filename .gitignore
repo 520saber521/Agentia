@@ -1,0 +1,15 @@
+# AgentHub 运行时文件
+.codex_team/
+
+# 其他临时文件
+*.pyc
+__pycache__/
+.DS_Store
+**/__pycache__/
+
+# BFF (server/) 本地运行时
+server/.venv/
+server/*.db
+server/*.db-journal
+server/.agenthub/
+.agenthub/

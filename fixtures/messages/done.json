@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "session": "sess-123",
+  "epoch": 2,
+  "seq": 105,
+  "id": "sess-123-2-105",
+  "agent_instance": "A-01",
+  "from": "A",
+  "to": ["MAIN"],
+  "type": "done",
+  "action": "verified",
+  "task_id": "FEAT-001-A",
+  "corr": "sess-123-2-104",
+  "ts": 1690000500,
+  "body_encoding": "json",
+  "body": "{\"has_new_issues\":false}"
+}

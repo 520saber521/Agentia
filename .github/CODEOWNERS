@@ -1,0 +1,9 @@
+# Codeowners file
+
+# Default code owner
+* @Dmatut7
+
+# Specific areas
+*.md @Dmatut7
+scripts/* @Dmatut7
+src/router/* @Dmatut7

@@ -1,0 +1,9 @@
+{
+  "v": "1",
+  "type": "nack",
+  "ack_stage": "nack",
+  "corr": "sess-123-2-160",
+  "agent": "C",
+  "reason": "queue_full",
+  "ts": 1690000400000
+}

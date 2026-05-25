@@ -1,0 +1,56 @@
+---
+description: AgentHub v2 BFF/Gateway 后端代码硬约束
+globs: ["server/**/*.py"]
+alwaysApply: true
+---
+
+# Backend Rules (server/**/*.py)
+
+> 这些约束的目的是：保证 **`server/` 永远只关心"BFF/Gateway 与会话服务"**。一旦发现某个新增依赖让你跨越了下方任何一条，**先改设计、再写代码**。
+
+## R-B-1 全异步：禁止阻塞 IO
+
+- 所有外部 IO（HTTP / DB / 文件 / 子进程）必须 `await`。
+- 禁止 `import requests`，统一用 `httpx.AsyncClient`。
+- 禁止 `time.sleep()`，必须 `await asyncio.sleep()`。
+- 禁止在协程里写 `open(...).read()`，需要文件 IO 时用 `aiofiles` 或在 `asyncio.to_thread(...)` 里跑。
+
+## R-B-2 DB 访问必须经过 services 层
+
+- API 路由 (`server/api/**.py`) 与 WS handler (`server/main.py`) **禁止**直接拿 `select(...)` / `s.add(...)` 操作 ORM。
+- 全部 DB 操作必须收敛在 `server/services/*.py` 里。
+- 这是为了让"换 DB / 加缓存 / 加权限"这种事永远只动一处。
+
+## R-B-3 时间戳由调用方显式生成
+
+- 凡是要写库的 `created_at` / `updated_at`，**必须**在 service 里 `ts = now_ms()` 后显式赋值给 ORM 实例与传给 `_touch_conversation`，**禁止**依赖 `flush()` 后 `m.created_at` 自动回填（W1 Day3 已踩过坑）。
+
+## R-B-4 WebSocket 只允许 `Connection.send()` 写
+
+- 凡是要往一条 WS 上发数据的地方，**必须** `await conn.send(evt)`（即入队），**禁止** 直接 `await ws.send_json(evt)`。
+- 这是单写者池，保证并发协程不会抢同一个 socket 的 send 顺序。
+- 唯一例外：`Connection.writer()` 自身。
+
+## R-B-5 Adapter 取消是契约
+
+- 任何向 Adapter 发起的流式调用 **必须** 传入 `cancel: asyncio.Event`，并在 BFF 侧把 cancel 设为：
+  - 用户 `{type:"cancel", message_id}` ✅
+  - WS 断开 ✅
+  - in_flight task 超时 ✅（W2 起开启）
+- Adapter 收到 cancel 后 **必须 return 而不是 raise**（参考 `ai-collab/skills/new-adapter.md`）。
+
+## R-B-6 错误协议
+
+- BFF 任何能预期的失败 **必须** 通过 `{type:"error", code, message, [message_id]}` 推送给客户端，**禁止**让协程未捕获异常炸到 `writer()`。
+- `code` 必须是稳定的小写枚举（`bad_json` / `bad_request` / `not_found` / `internal_error` / `cancelled` / ...），前端会按 code 决定文案。
+
+## R-B-7 测试：每加一个端点必须配一个用例
+
+- 新增 REST 端点：在 `server/tests/test_rest.py` 加 ≥1 "happy path" + ≥1 "校验失败" 用例。
+- 新增 WS 事件类型：在 `server/tests/smoke_dayX.py` 里加端到端 case。
+- 新增 service 函数：在 `server/tests/test_db.py` 加最小 case。
+
+## R-B-8 不要"顺手"加新顶层模块
+
+- `server/` 下只允许这 6 个顶层子目录：`adapters/ api/ db/ services/ static/ tests/`。
+- 想加 `cache/` / `metrics/` / `auth/` 这种，先在 `docs/ARCHITECTURE.md` 里加章节说明边界，再写代码。

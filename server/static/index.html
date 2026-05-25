@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentHub BFF · W1 控制台</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --panel: #1a1d24;
+        --border: #2a2e38;
+        --muted: #98a2b3;
+        --fg: #e6e6e6;
+        --accent: #3b82f6;
+        --accent-hover: #2563eb;
+        --user: #1e3a8a;
+        --agent: #1f2937;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: -apple-system, "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      header {
+        padding: 12px 24px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+      header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+      .status { font-size: 12px; padding: 4px 10px; border-radius: 999px; user-select: none; }
+      .status.off { background: #4d1f25; color: #ff9aa6; }
+      .status.on  { background: #1f4d34; color: #8af0b8; }
+      main {
+        display: grid;
+        grid-template-columns: 220px 1.2fr 1fr;
+        gap: 16px;
+        padding: 16px 24px;
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      section h2 {
+        margin: 0 0 12px;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 600;
+      }
+      button {
+        background: var(--accent);
+        color: white;
+        border: 0;
+        padding: 7px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        font-family: inherit;
+        transition: background 0.15s;
+      }
+      button:hover:not(:disabled) { background: var(--accent-hover); }
+      button:disabled { background: var(--border); color: #6b7280; cursor: not-allowed; }
+      button.secondary { background: var(--border); color: #d1d5db; }
+      button.secondary:hover:not(:disabled) { background: #3a3f4b; }
+      button.danger { background: #9b2c2c; }
+      button.danger:hover:not(:disabled) { background: #c53030; }
+      input {
+        width: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: inherit;
+        font-size: 13px;
+      }
+      input:focus { outline: none; border-color: var(--accent); }
+      .row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+      .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+      code {
+        background: var(--bg);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+      }
+
+      /* 会话列表 */
+      .conv-list {
+        flex: 1;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-height: 240px;
+      }
+      .conv-list:empty::before {
+        content: "暂无会话。启动时会 seed 一条 conv_demo。";
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .conv-item {
+        padding: 10px 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .conv-item:hover { border-color: var(--accent); }
+      .conv-item.active { border-color: var(--accent); background: rgba(59, 130, 246, 0.10); }
+      .conv-item .conv-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+      .conv-item .conv-preview { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .conv-item .conv-meta { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+
+      /* 对话窗口 */
+      .chat {
+        flex: 1;
+        overflow: auto;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 14px;
+        margin-bottom: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 280px;
+      }
+      .chat:empty::before {
+        content: "对话窗口为空 —— 在左侧选会话，然后输入文本点 Send。";
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .bubble {
+        max-width: 80%;
+        padding: 8px 12px;
+        border-radius: 10px;
+        font-size: 13px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .bubble.user { background: var(--user); align-self: flex-end; }
+      .bubble.agent { background: var(--agent); align-self: flex-start; border: 1px solid var(--border); }
+      .bubble.agent.streaming::after {
+        content: "▍";
+        margin-left: 2px;
+        animation: blink 1s steps(2) infinite;
+        opacity: 0.7;
+      }
+      .bubble.agent.cancelled { opacity: 0.65; font-style: italic; }
+      .bubble .meta {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 4px;
+        display: block;
+      }
+      @keyframes blink { 50% { opacity: 0; } }
+
+      pre.log {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 12px;
+        flex: 1;
+        min-height: 360px;
+        overflow: auto;
+        font-size: 11.5px;
+        font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.5;
+      }
+      .badge-tx { color: #fbbf24; font-weight: 600; }
+      .badge-rx { color: #34d399; font-weight: 600; }
+      .badge-err { color: #f87171; font-weight: 600; }
+
+      .toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+
+      .tip {
+        margin-top: 10px;
+        padding: 10px 12px;
+        background: rgba(59, 130, 246, 0.08);
+        border-left: 3px solid var(--accent);
+        border-radius: 4px;
+        font-size: 12px;
+        color: #b8c5d6;
+        line-height: 1.6;
+      }
+      .tip strong { color: var(--fg); }
+      .current-conv { font-size: 12px; color: var(--muted); margin-left: 4px; }
+      .current-conv code { color: var(--fg); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>AgentHub BFF · W1 控制台</h1>
+      <span id="status" class="status off">未连接</span>
+      <span class="current-conv">当前会话：<code id="cur-conv">—</code></span>
+      <span style="flex: 1"></span>
+      <button id="btn-connect">连接</button>
+      <button id="btn-disconnect" class="secondary" disabled>断开</button>
+    </header>
+
+    <main>
+      <section>
+        <h2>① 会话</h2>
+        <div id="conv-list" class="conv-list"></div>
+        <div class="row" style="margin-top: 10px">
+          <button id="btn-refresh" class="secondary">刷新</button>
+        </div>
+        <p class="hint">点击会话即发送 <code>join</code>，下方对话区填回历史消息。</p>
+      </section>
+
+      <section>
+        <h2>② 对话</h2>
+        <div id="chat" class="chat"></div>
+        <div class="row">
+          <input id="input-text" placeholder="输入要发送给 Mock Agent 的文本" value="用 React 写一个登录页" />
+          <button id="btn-send" disabled>Send</button>
+          <button id="btn-cancel" class="danger" disabled>Cancel</button>
+        </div>
+        <div class="toolbar">
+          <button id="btn-ping" class="secondary" disabled>Ping</button>
+          <button id="btn-echo" class="secondary" disabled>Echo</button>
+          <button id="btn-bad" class="secondary" disabled>非 JSON</button>
+          <button id="btn-clear" class="secondary">清空</button>
+        </div>
+        <div class="tip">
+          <strong>Day3 验收：</strong>
+          ① 启动后会话列表里应有 <code>conv_demo</code>；
+          ② 点击它发 <code>join</code> → 收 <code>history</code>（首启为空）；
+          ③ Send 后两条消息真正入库，刷新浏览器再点会话可看到回放；
+          ④ <code>last_msg_preview</code> 随之更新。
+        </div>
+      </section>
+
+      <section>
+        <h2>③ 事件流</h2>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+
+    <script>
+      (() => {
+        const $ = (id) => document.getElementById(id);
+        const log = $("log");
+        const chat = $("chat");
+        const convList = $("conv-list");
+        const curConv = $("cur-conv");
+        const statusEl = $("status");
+        const btnConnect = $("btn-connect");
+        const btnDisconnect = $("btn-disconnect");
+        const btnSend = $("btn-send");
+        const btnCancel = $("btn-cancel");
+        const btnPing = $("btn-ping");
+        const btnEcho = $("btn-echo");
+        const btnBad = $("btn-bad");
+        const btnClear = $("btn-clear");
+        const btnRefresh = $("btn-refresh");
+        const inputText = $("input-text");
+
+        let ws = null;
+        let currentConv = null;
+        let lastAgentMsgId = null;
+        const bubbles = new Map();
+        const wsUrl =
+          (location.protocol === "https:" ? "wss" : "ws") + "://" + location.host + "/ws";
+
+        function escapeHtml(s) {
+          return String(s).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+          }[c]));
+        }
+        function appendLog(kind, text) {
+          const t = new Date().toISOString().substring(11, 23);
+          const cls = kind === "tx" ? "badge-tx" : kind === "rx" ? "badge-rx" : "badge-err";
+          log.innerHTML +=
+            '<span class="' + cls + '">[' + t + "] " + kind.toUpperCase() + "</span> " +
+            escapeHtml(text) + "\n";
+          log.scrollTop = log.scrollHeight;
+        }
+
+        function createBubble(messageId, kind, initialText = "", streaming = false) {
+          if (bubbles.has(messageId)) return bubbles.get(messageId);
+          const el = document.createElement("div");
+          el.className =
+            "bubble " + kind + (streaming && kind === "agent" ? " streaming" : "");
+          el.textContent = initialText;
+          const meta = document.createElement("span");
+          meta.className = "meta";
+          meta.textContent = (kind === "agent" ? "agent · " : "user · ") + messageId;
+          el.appendChild(meta);
+          chat.appendChild(el);
+          chat.scrollTop = chat.scrollHeight;
+          const ref = { el, kind, text: initialText, meta };
+          bubbles.set(messageId, ref);
+          return ref;
+        }
+        function appendToBubble(messageId, delta) {
+          const ref = bubbles.get(messageId);
+          if (!ref) return;
+          ref.text += delta;
+          if (ref.el.firstChild && ref.el.firstChild.nodeType === Node.TEXT_NODE) {
+            ref.el.firstChild.nodeValue = ref.text;
+          } else {
+            ref.el.insertBefore(document.createTextNode(ref.text), ref.meta);
+          }
+          chat.scrollTop = chat.scrollHeight;
+        }
+        function finalizeBubble(messageId, finalText, status) {
+          const ref = bubbles.get(messageId);
+          if (!ref) return;
+          ref.el.classList.remove("streaming");
+          if (status === "cancelled") ref.el.classList.add("cancelled");
+          if (typeof finalText === "string" && finalText.length > 0) {
+            if (ref.el.firstChild && ref.el.firstChild.nodeType === Node.TEXT_NODE) {
+              ref.el.firstChild.nodeValue = finalText;
+            } else {
+              ref.el.insertBefore(document.createTextNode(finalText), ref.meta);
+            }
+          }
+        }
+
+        function setConnected(on) {
+          statusEl.textContent = on ? "已连接" : "未连接";
+          statusEl.className = "status " + (on ? "on" : "off");
+          btnConnect.disabled = on;
+          btnDisconnect.disabled = !on;
+          btnSend.disabled = !on || !currentConv;
+          btnPing.disabled = !on;
+          btnEcho.disabled = !on;
+          btnBad.disabled = !on;
+          btnCancel.disabled = !on || !lastAgentMsgId;
+        }
+        function setStreaming(streaming) {
+          btnSend.disabled = streaming || !ws || !currentConv;
+          btnCancel.disabled = !streaming || !ws;
+        }
+
+        function clearChat() {
+          chat.innerHTML = "";
+          bubbles.clear();
+          lastAgentMsgId = null;
+        }
+
+        async function refreshConversations() {
+          try {
+            const r = await fetch("/api/conversations");
+            const body = await r.json();
+            renderConvList(body.conversations || []);
+          } catch (e) {
+            appendLog("err", "fetch /api/conversations failed: " + e);
+          }
+        }
+
+        function renderConvList(convs) {
+          convList.innerHTML = "";
+          if (!convs.length) return;
+          convs.forEach((c) => {
+            const div = document.createElement("div");
+            div.className = "conv-item" + (c.id === currentConv ? " active" : "");
+            div.innerHTML =
+              '<div class="conv-title">' + escapeHtml(c.title) + "</div>" +
+              '<div class="conv-preview">' +
+              escapeHtml(c.last_msg_preview || "(暂无消息)") +
+              "</div>" +
+              '<div class="conv-meta">' +
+              c.type + " · " + c.members.length + " 成员 · " + escapeHtml(c.id) +
+              "</div>";
+            div.onclick = () => selectConversation(c.id);
+            convList.appendChild(div);
+          });
+        }
+
+        function selectConversation(cid) {
+          currentConv = cid;
+          curConv.textContent = cid;
+          [...convList.children].forEach((el) => {
+            el.classList.toggle(
+              "active",
+              el.querySelector(".conv-meta")?.textContent.includes(cid)
+            );
+          });
+          clearChat();
+          if (ws && ws.readyState === 1) {
+            send({ type: "join", conversation_id: cid, limit: 100 });
+          }
+          setConnected(!!ws);
+        }
+
+        function renderHistory(msgs) {
+          clearChat();
+          msgs.forEach((m) => {
+            const kind = m.sender_type === "user" ? "user" : "agent";
+            const text = (m.content && m.content.text) || "";
+            createBubble(m.id, kind, text, false);
+          });
+        }
+
+        function onServerEvent(evt) {
+          switch (evt.type) {
+            case "hello":
+            case "pong":
+            case "echo":
+            case "agent_typing":
+            case "usage":
+            case "presence":
+              break;
+            case "history":
+              if (evt.conversation_id === currentConv) renderHistory(evt.messages || []);
+              break;
+            case "message_created": {
+              const m = evt.message || {};
+              if (currentConv && m.conversation_id && m.conversation_id !== currentConv) break;
+              const kind = m.sender_type === "user" ? "user" : "agent";
+              const initial = (m.content && m.content.text) || "";
+              createBubble(m.id, kind, initial, kind === "agent");
+              if (kind === "agent") {
+                lastAgentMsgId = m.id;
+                setStreaming(true);
+              }
+              break;
+            }
+            case "stream_chunk":
+              appendToBubble(evt.message_id, evt.delta || "");
+              break;
+            case "message_done":
+              finalizeBubble(
+                evt.message_id,
+                (evt.final_content && evt.final_content.text) || null,
+                "done"
+              );
+              if (evt.message_id === lastAgentMsgId) {
+                lastAgentMsgId = null;
+                setStreaming(false);
+              }
+              refreshConversations();
+              break;
+            case "message_cancelled":
+              finalizeBubble(
+                evt.message_id,
+                (evt.final_content && evt.final_content.text) || null,
+                "cancelled"
+              );
+              if (evt.message_id === lastAgentMsgId) {
+                lastAgentMsgId = null;
+                setStreaming(false);
+              }
+              break;
+            case "error":
+              if (evt.message_id) {
+                finalizeBubble(evt.message_id, null, "cancelled");
+                if (evt.message_id === lastAgentMsgId) {
+                  lastAgentMsgId = null;
+                  setStreaming(false);
+                }
+              }
+              break;
+            default:
+              break;
+          }
+        }
+
+        function send(obj) {
+          const raw = JSON.stringify(obj);
+          ws.send(raw);
+          appendLog("tx", raw);
+        }
+
+        btnConnect.onclick = () => {
+          if (ws) return;
+          ws = new WebSocket(wsUrl);
+          ws.onopen = () => {
+            setConnected(true);
+            appendLog("rx", "(socket open)");
+            if (currentConv) send({ type: "join", conversation_id: currentConv, limit: 100 });
+          };
+          ws.onclose = (e) => {
+            setConnected(false); ws = null; lastAgentMsgId = null;
+            appendLog("err", "(socket close code=" + e.code + ")");
+          };
+          ws.onerror = () => appendLog("err", "(socket error)");
+          ws.onmessage = (e) => {
+            appendLog("rx", e.data);
+            try { onServerEvent(JSON.parse(e.data)); } catch (_) {}
+          };
+        };
+        btnDisconnect.onclick = () => ws && ws.close();
+        btnSend.onclick = () => {
+          const text = inputText.value.trim();
+          if (!text || !currentConv) return;
+          send({
+            type: "send_message",
+            conversation_id: currentConv,
+            content: { type: "text", text },
+          });
+        };
+        btnCancel.onclick = () => {
+          if (!lastAgentMsgId) return;
+          send({ type: "cancel", message_id: lastAgentMsgId });
+        };
+        btnPing.onclick = () => send({ type: "ping" });
+        btnEcho.onclick = () => send({ type: "echo", payload: inputText.value });
+        btnBad.onclick = () => { ws.send("this is not json"); appendLog("tx", "(非 JSON)"); };
+        btnClear.onclick = () => { clearChat(); log.innerHTML = ""; };
+        btnRefresh.onclick = refreshConversations;
+
+        inputText.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey && !btnSend.disabled) {
+            e.preventDefault();
+            btnSend.click();
+          }
+        });
+
+        // 启动时拉一次会话列表
+        refreshConversations();
+      })();
+    </script>
+  </body>
+</html>

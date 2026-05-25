@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "session": "sess-123",
+  "epoch": 2,
+  "seq": 104,
+  "id": "sess-123-2-104",
+  "agent_instance": "MAIN-01",
+  "from": "MAIN",
+  "to": ["A"],
+  "type": "ask",
+  "action": "verify",
+  "task_id": "FEAT-001-A",
+  "owner": "MAIN",
+  "ts": 1690000400,
+  "body_encoding": "json",
+  "body": "{\"doc_path\":\"docs/design.md\",\"changes_summary\":\"updated message validation rules\",\"question\":\"Does this match the workflow?\"}"
+}
