@@ -14,13 +14,15 @@ import {
   fetchMessages,
   type CreateConversationInput,
 } from "../api/client";
-import type { ConnectionStatus, Conversation, Message } from "../types";
+import type { Conversation, Message, Agent } from "../types";
 import { WSClient } from "../ws/client";
 import { reduceEvent, type ChatSlice } from "./reducer";
 
+export type WSStatus = "disconnected" | "connecting" | "connected";
+export type ServerInfo = string;
+
 export interface ChatState extends ChatSlice {
   status: WSStatus;
-  serverInfo: ServerInfo | null;
   conversations: Conversation[];
   currentConvId: string | null;
   messages: Message[];
@@ -49,6 +51,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   streamingMessageIds: [],
   agentTyping: false,
   agents: [],
+  tasks: {},
 
   init() {
     ws.onStatus((s) => set({ status: s }));
@@ -134,5 +137,6 @@ function sliceFromState(s: ChatState): ChatSlice {
     streamingMessageIds: s.streamingMessageIds,
     agentTyping: s.agentTyping,
     agents: s.agents,
+    tasks: s.tasks,
   };
 }

@@ -1,4 +1,4 @@
-import type { Agent, Message } from "../types";
+import type { Message } from "../types";
 
 interface Props {
   msg: Message;

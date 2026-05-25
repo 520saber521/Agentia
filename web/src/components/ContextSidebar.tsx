@@ -1,22 +1,22 @@
 import { useMemo } from "react";
 import { useChatStore } from "../stores/useChatStore";
-import type { Agent, Member, Message } from "../types";
+import type { Agent, Member, Message, TextContent } from "../types";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function textOf(msg: Message): string {
-  if (msg.content.type === "text") return msg.content.text;
+  if ((msg.content as TextContent).type === "text") return (msg.content as TextContent).text;
   if ("title" in msg.content && typeof msg.content.title === "string") return msg.content.title;
-  return msg.content.type;
+  return String((msg.content as { type: unknown }).type);
 }
 
 export function ContextSidebar() {
   const messages = useChatStore((s) => s.messages);
   const conversations = useChatStore((s) => s.conversations);
   const agents = useChatStore((s) => s.agents);
-  const contextStats = useChatStore((s) => s.contextStats);
+  const contextStats = useChatStore((s) => (s as unknown as { contextStats?: { total: number; pinned: number; historyCount?: number; estimatedTokens?: number; strategy?: string } }).contextStats);
   const currentConvId = useChatStore((s) => s.currentConvId);
 
   const currentConv = conversations.find((c) => c.id === currentConvId);

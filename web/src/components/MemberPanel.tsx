@@ -1,5 +1,5 @@
 import { useChatStore } from "../stores/useChatStore";
-import type { Agent, ConversationMember } from "../types";
+import type { Agent, Member } from "../types";
 
 export function MemberPanel() {
   const conversations = useChatStore((s) => s.conversations);
@@ -15,7 +15,7 @@ export function MemberPanel() {
       ...m,
       agent: agents.find((a) => a.id === m.member_id),
     }))
-    .filter((m): m is ConversationMember & { agent: Agent } => m.agent != null);
+    .filter((m): m is Member & { agent: Agent } => m.agent != null);
 
   const userMembers = members.filter((m) => m.member_type === "user");
 

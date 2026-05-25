@@ -38,14 +38,16 @@ def conv_to_dict(
     }
 
 
-async def list_conversations(s: AsyncSession) -> list[dict[str, Any]]:
-    convs = (
-        await s.scalars(
-            select(Conversation)
-            .where(Conversation.archived == 0)
-            .order_by(desc(Conversation.pinned), desc(Conversation.updated_at))
-        )
-    ).all()
+async def list_conversations(
+    s: AsyncSession,
+    *,
+    include_archived: bool = False,
+    query: str | None = None,
+) -> list[dict[str, Any]]:
+    stmt = select(Conversation).order_by(desc(Conversation.pinned), desc(Conversation.updated_at))
+    if not include_archived:
+        stmt = stmt.where(Conversation.archived == 0)
+    convs = (await s.scalars(stmt)).all()
     out: list[dict[str, Any]] = []
     for c in convs:
         members = (
@@ -186,6 +188,39 @@ async def create_conversation(
     members = (
         await s.scalars(
             select(ConversationMember).where(ConversationMember.conversation_id == cid)
+        )
+    ).all()
+    return conv_to_dict(c, list(members))
+
+
+async def update_conversation(
+    s: AsyncSession,
+    conversation_id: str,
+    *,
+    title: str | None = None,
+    pinned: bool | None = None,
+    archived: bool | None = None,
+) -> Optional[dict[str, Any]]:
+    """更新会话信息。"""
+    c = await s.get(Conversation, conversation_id)
+    if c is None:
+        return None
+
+    if title is not None:
+        c.title = title.strip()
+    if pinned is not None:
+        c.pinned = 1 if pinned else 0
+    if archived is not None:
+        c.archived = 1 if archived else 0
+        if c.archived == 0:
+            c.updated_at = now_ms()
+
+    await s.commit()
+    await s.refresh(c)
+
+    members = (
+        await s.scalars(
+            select(ConversationMember).where(ConversationMember.conversation_id == conversation_id)
         )
     ).all()
     return conv_to_dict(c, list(members))
