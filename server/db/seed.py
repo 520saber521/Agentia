@@ -23,7 +23,6 @@ from sqlalchemy import func, select
 from .engine import get_sessionmaker
 from .models import Agent, Conversation, ConversationMember
 from services.agent import ORCHESTRATOR_SYSTEM_PROMPT
-from services.secrets import encrypt_secret
 
 DEFAULT_USER_ID = "user_demo"
 DEFAULT_AGENT_ID = "agent_mock"
@@ -81,7 +80,7 @@ _AGENT_DEFAULTS: list[tuple[str, dict[str, Any]]] = [
         name="OpenCodeAdapter",
         avatar="🔗",
         adapter_type="opencode",
-        config=json.dumps({"api_key": encrypt_secret("sk-980b1a1f9aa3019f34346eab42cc5a3a07f5e70913087d813e5b2189c33768d1"), "model": "gpt-5.4", "base_url": "https://api.apikey.fun/v1"}, ensure_ascii=False),
+        config=json.dumps({"api_key": "", "model": "gpt-5.4", "base_url": "https://api.apikey.fun/v1"}, ensure_ascii=False),
         capabilities=json.dumps(["text", "code", "tool_use", "backend", "frontend", "fullstack"], ensure_ascii=False),
         owner_user_id=None,
     )),
