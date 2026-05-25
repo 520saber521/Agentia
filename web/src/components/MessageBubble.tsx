@@ -1,12 +1,14 @@
 import { ContentRenderer } from "./ContentRenderer";
 import { useChatStore } from "../stores/useChatStore";
 import { pinMessage, unpinMessage } from "../api/client";
-import type { Message } from "../types";
+import type { Agent, Message } from "../types";
 
 interface Props {
   msg: Message;
   streaming?: boolean;
   onEditArtifact?: (artifactId: string) => void;
+  agentName?: string;
+  agentColor?: string;
 }
 
 const AGENT_COLORS: Array<{
@@ -41,6 +43,19 @@ function textOf(msg: Message): string {
 
 function isProblemText(text: string): boolean {
   return text.includes("[提示] 生成中断") || text.includes("[提示] 输出达到模型长度上限");
+}
+
+function hashColor(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = ((hash % 360) + 360) % 360;
+  return `hsl(${hue}, 42%, 48%)`;
+}
+
+function initials(name: string): string {
+  return name.slice(0, 2).toUpperCase();
 }
 
 function MessageActions({
@@ -86,7 +101,6 @@ function MessageActions({
         await pinMessage(msg.id);
       }
     } catch {
-      // pin toggle silently fails — state already broadcast via WS
     }
   }
 

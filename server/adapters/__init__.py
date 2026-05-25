@@ -45,7 +45,6 @@ def build_adapter(adapter_type: str, config: dict[str, Any] | None = None) -> Ag
         raise ValueError(f"unknown adapter_type: {adapter_type!r}; known: [{known}]")
     return cls(config or {})
 
-
 __all__ = [
     "ADAPTER_REGISTRY",
     "AgentAdapter",

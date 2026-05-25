@@ -1,12 +1,20 @@
-"""DeepSeekAdapter — DeepSeek API via OpenAI-compatible chat completions.
+"""DeepSeekAdapter — DeepSeek Chat Completions API via SSE streaming.
 
-Uses the OpenAI-compatible ``/chat/completions`` endpoint with SSE streaming.
+DeepSeek API is OpenAI-compatible, following the same SSE streaming pattern.
 
 Config keys:
 - ``api_key`` (required) — DeepSeek API key
 - ``model`` (optional, default ``deepseek-chat``)
 - ``base_url`` (optional, default ``https://api.deepseek.com/v1``)
 - ``max_tokens`` (optional, default 4096)
+- ``system_prompt`` (optional) — system message prepended to conversation
+
+Adapter contract compliance:
+1. Stateless — no instance state beyond ``config``
+2. Streaming — yields text tokens as they arrive via SSE
+3. Cancel = return — ``asyncio.CancelledError`` propagates to caller
+4. Errors yielded, never raised — 429 / 5xx / timeout yield ``error`` chunk
+5. Registered in ``ADAPTER_REGISTRY``
 """
 
 from __future__ import annotations
@@ -44,15 +52,7 @@ async def _parse_sse(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
 
 
 class DeepSeekAdapter(AgentAdapter):
-    """Adapter for DeepSeek via OpenAI-compatible Chat Completions API.
-
-    Config keys:
-    - ``api_key`` (required) — DeepSeek API key
-    - ``model`` (optional, default ``deepseek-chat``)
-    - ``base_url`` (optional, default ``https://api.deepseek.com/v1``)
-    - ``max_tokens`` (optional, default 4096)
-    - ``system_prompt`` (optional) — system message prepended to conversation
-    """
+    """Adapter for DeepSeek via OpenAI-compatible Chat Completions API."""
 
     name = "deepseek"
 
@@ -76,7 +76,6 @@ class DeepSeekAdapter(AgentAdapter):
             yield {"type": "error", "code": "missing_api_key", "message": "DeepSeek API key not configured"}
             return
 
-        # Build OpenAI-style messages
         openai_messages: list[dict[str, Any]] = []
         if self.system_prompt:
             openai_messages.append({"role": "system", "content": self.system_prompt})
@@ -119,6 +118,10 @@ class DeepSeekAdapter(AgentAdapter):
         if response.status_code == 429:
             yield {"type": "error", "code": "rate_limited", "message": "DeepSeek API rate limited (429)"}
             return
+        if response.status_code == 400:
+            body_text = await response.aread()
+            yield {"type": "error", "code": "bad_request", "message": body_text.decode(errors="replace")}
+            return
         if response.status_code == 401:
             yield {"type": "error", "code": "auth_error", "message": "DeepSeek API authentication failed (401)"}
             return
@@ -126,8 +129,8 @@ class DeepSeekAdapter(AgentAdapter):
             yield {"type": "error", "code": "upstream_error", "message": f"DeepSeek API {response.status_code}"}
             return
         if response.status_code != 200:
-            body_text = response.text
-            yield {"type": "error", "code": "upstream_error", "message": f"DeepSeek API {response.status_code}: {body_text}"}
+            body_text = await response.aread()
+            yield {"type": "error", "code": "upstream_error", "message": f"DeepSeek API {response.status_code}: {body_text.decode(errors='replace')}"}
             return
 
         # Non-streaming response
@@ -209,7 +212,6 @@ class DeepSeekAdapter(AgentAdapter):
             return
         except httpx.TransportError as exc:
             yield {"type": "error", "code": "upstream_error", "message": f"Stream transport error: {exc}"}
-            return
 
         yield {
             "type": "usage",
@@ -219,4 +221,4 @@ class DeepSeekAdapter(AgentAdapter):
         yield {"type": "done"}
 
     def capabilities(self) -> List[str]:
-        return ["text", "code"]
+        return ["text", "code", "tool_use"]

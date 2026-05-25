@@ -244,7 +244,17 @@ export function NewConversationDialog({ open, onClose }: Props) {
           </p>
         )}
 
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex items-center justify-end gap-2">
+          {!canSubmit && !submitting && !loadingAgents && title.trim().length === 0 && (
+            <span className="text-[10px] text-muted mr-auto">
+              请先输入会话标题
+            </span>
+          )}
+          {!canSubmit && !submitting && !loadingAgents && title.trim().length > 0 && selected.size === 0 && (
+            <span className="text-[10px] text-muted mr-auto">
+              {type === "group" ? "群聊需要至少 1 个 Agent" : "请选择一个 Agent"}
+            </span>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -258,8 +268,12 @@ export function NewConversationDialog({ open, onClose }: Props) {
             className="px-3 py-1.5 rounded-md text-xs bg-accent text-white hover:bg-accent/90 transition disabled:opacity-60 disabled:cursor-not-allowed"
             disabled={!canSubmit}
             title={
-              type === "group" && selected.size === 0
-                ? "群聊需要至少 1 个 Agent"
+              !canSubmit && !submitting && !loadingAgents
+                ? title.trim().length === 0
+                  ? "请先输入会话标题"
+                  : type === "group" && selected.size === 0
+                    ? "群聊需要至少 1 个 Agent"
+                    : "请选择一个 Agent"
                 : undefined
             }
           >

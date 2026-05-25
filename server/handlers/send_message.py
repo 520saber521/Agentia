@@ -499,6 +499,21 @@ async def load_adapter_for(agent_id: str) -> tuple[Any, str] | None:
     return adapter, name
 
 
+async def _iterate_with_timeout(agen, timeout_s: float):
+    """Wrap an async generator so total iteration time is bounded by ``timeout_s``."""
+    it = agen.__aiter__()
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            raise asyncio.TimeoutError()
+        try:
+            chunk = await asyncio.wait_for(it.__anext__(), remaining)
+            yield chunk
+        except StopAsyncIteration:
+            return
+
+
 async def run_agent_reply(
     conn: Connection,
     agent_id: str,
@@ -563,6 +578,11 @@ async def run_agent_reply(
     final_parts: list[str] = []
     artifact_messages: list[dict[str, Any]] = []
     seq = 0
+
+    async with Session() as s:
+        history = await list_messages(s, conversation_id, limit=50)
+
+    messages_context = _build_messages_context(history, user_text)
 
     try:
         async for chunk in adapter.send(messages=messages):

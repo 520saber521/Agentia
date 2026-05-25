@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { useChatStore } from "../stores/useChatStore";
+import type { Agent } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { CollaborationProgressCard } from "./CollaborationProgressCard";
 
@@ -30,6 +31,14 @@ export function MessagePanel({ onEditArtifact }: Props) {
     .filter((m) => m.member_type === "agent")
     .map((m) => agents.find((a) => a.id === m.member_id))
     .filter((a): a is NonNullable<typeof a> => a != null);
+
+  const agentsById = useMemo(() => {
+    const map = new Map<string, Agent>();
+    for (const a of agents) {
+      map.set(a.id, a);
+    }
+    return map;
+  }, [agents]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -87,6 +96,8 @@ export function MessagePanel({ onEditArtifact }: Props) {
               ))}
             </div>
           </div>
+        </div>
+      )}
         </div>
       )}
 
