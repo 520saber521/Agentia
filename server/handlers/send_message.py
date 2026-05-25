@@ -39,6 +39,30 @@ from ws import Connection, event
 
 logger = logging.getLogger("agenthub.handlers.send_message")
 
+_NO_API_KEY_ADAPTERS = {"mock", "claude_code", "opencode"}
+
+
+async def _filter_available_agents(agent_ids: list[str]) -> list[str]:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        rows = (
+            await s.scalars(select(Agent).where(Agent.id.in_(agent_ids)))
+        ).all()
+    available: list[str] = []
+    for a in rows:
+        if a.id == ORCHESTRATOR_AGENT_ID:
+            available.append(a.id)
+            continue
+        adapter_type = (a.adapter_type or "").strip().lower()
+        config = adapter_config_for_runtime(a)
+        if adapter_type in _NO_API_KEY_ADAPTERS:
+            available.append(a.id)
+        elif config.get("api_key"):
+            available.append(a.id)
+        else:
+            logger.debug("skipping agent %s (%s): no api_key", a.id, a.name)
+    return available
+
 
 async def _conversation_agent_members(conversation_id: str) -> set[str]:
     Session = get_sessionmaker()
@@ -140,6 +164,14 @@ async def resolve_targets(
         )
     if ORCHESTRATOR_AGENT_ID in agent_member_ids and _looks_complex_task(user_text):
         return [ORCHESTRATOR_AGENT_ID], None
+    if conv_type == "group" and len(agent_member_ids) > 1:
+        available = await _filter_available_agents(list(agent_member_ids))
+        if not available:
+            return [ORCHESTRATOR_AGENT_ID] if ORCHESTRATOR_AGENT_ID in agent_member_ids else [], None
+        if ORCHESTRATOR_AGENT_ID in agent_member_ids:
+            if ORCHESTRATOR_AGENT_ID not in available:
+                available.insert(0, ORCHESTRATOR_AGENT_ID)
+        return available, None
     return [], event(
         "error",
         code="no_target",

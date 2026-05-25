@@ -125,6 +125,15 @@ async def seed_defaults() -> None:
                     owner_user_id=DEFAULT_USER_ID,
                 )
             )
+
+        existing_members = await s.scalars(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == DEFAULT_CONV_ID
+            )
+        )
+        existing_member_ids = {m.member_id for m in existing_members}
+
+        if DEFAULT_USER_ID not in existing_member_ids:
             s.add(
                 ConversationMember(
                     conversation_id=DEFAULT_CONV_ID,
@@ -133,6 +142,7 @@ async def seed_defaults() -> None:
                     role="owner",
                 )
             )
+        if DEFAULT_AGENT_ID not in existing_member_ids:
             s.add(
                 ConversationMember(
                     conversation_id=DEFAULT_CONV_ID,

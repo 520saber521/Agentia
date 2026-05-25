@@ -217,6 +217,10 @@ export async function updateConversation(
   return body.conversation;
 }
 
+export async function deleteConversation(conversationId: string): Promise<void> {
+  await deleteJson(`/api/conversations/${encodeURIComponent(conversationId)}`);
+}
+
 // ---------------------------------------------------------------------------
 // Artifact API (F-W4-2 / F-W4-4)
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { fetchArtifact } from "./api/client";
-import { ArtifactEditor } from "./components/ArtifactEditor";
+import { AgentCreateDialog } from "./components/AgentCreateDialog";
 import { Composer } from "./components/Composer";
 import { ConversationListPanel } from "./components/ConversationListPanel";
 import { Header } from "./components/Header";
@@ -12,10 +12,12 @@ import type { Artifact } from "./types";
 
 export default function App() {
   const init = useChatStore((s) => s.init);
+  const conversations = useChatStore((s) => s.conversations);
   const currentConvId = useChatStore((s) => s.currentConvId);
 
   const [editingArtifact, setEditingArtifact] = useState<Artifact | null>(null);
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
 
   useEffect(() => {
     init();
@@ -60,13 +62,22 @@ export default function App() {
     <div className="h-full flex flex-col bg-bg text-fg">
       <Header />
       <main className="flex-1 grid grid-cols-[18rem_minmax(0,1fr)_16rem] min-h-0 overflow-hidden">
-        <ConversationListPanel />
+        <ConversationListPanel
+          conversations={conversations}
+          currentId={currentConvId}
+          onNewAgent={() => setAgentDialogOpen(true)}
+        />
         <section className="min-w-0 flex flex-col min-h-0 bg-panel border-l border-border overflow-hidden">
           <MessagePanel onEditArtifact={handleEditArtifact} />
           <Composer />
         </section>
         <ContextSidebar />
       </main>
+
+      <AgentCreateDialog
+        open={agentDialogOpen}
+        onClose={() => setAgentDialogOpen(false)}
+      />
 
       {editingArtifact && editingConvId && (
         <ArtifactEditor

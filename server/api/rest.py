@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db import DEFAULT_USER_ID
@@ -37,6 +38,7 @@ from services.message import (
 )
 from services.conversation import (
     create_conversation,
+    delete_conversation,
     get_conversation,
     list_conversations,
     list_messages,
@@ -150,8 +152,8 @@ async def api_update_agent(agent_id: str, body: UpdateAgentBody) -> dict:
     return {"agent": agent}
 
 
-@router.delete("/agents/{agent_id}", status_code=204)
-async def api_delete_agent(agent_id: str) -> None:
+@router.delete("/agents/{agent_id}", status_code=204, response_class=Response)
+async def api_delete_agent(agent_id: str) -> Response:
     Session = get_sessionmaker()
     async with Session() as s:
         result = await delete_agent(s, agent_id)
@@ -159,6 +161,7 @@ async def api_delete_agent(agent_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
     if result == "protected":
         raise HTTPException(status_code=409, detail="orchestrator_protected")
+    return Response(status_code=204)
 
 
 @router.get("/agents/{agent_id}/executions")
@@ -256,6 +259,16 @@ async def api_update_conversation(
     if conv is None:
         raise HTTPException(status_code=404, detail=f"conversation not found: {conversation_id}")
     return {"conversation": conv}
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204, response_class=Response)
+async def api_delete_conversation(conversation_id: str) -> Response:
+    Session = get_sessionmaker()
+    async with Session() as s:
+        ok = await delete_conversation(s, conversation_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"conversation not found: {conversation_id}")
+    return Response(status_code=204)
 
 
 @router.get("/conversations/{conversation_id}/messages")

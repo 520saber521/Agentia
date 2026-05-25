@@ -12,6 +12,7 @@ import {
   createAgent,
   createConversation,
   deleteAgent,
+  deleteConversation,
   fetchAgents,
   fetchConversations,
   fetchMessages,
@@ -41,6 +42,7 @@ export interface ChatState extends ChatSlice {
   createAgentContact: (input: SaveAgentInput) => Promise<Agent>;
   updateAgentContact: (agentId: string, input: Partial<SaveAgentInput>) => Promise<Agent>;
   deleteAgentContact: (agentId: string) => Promise<void>;
+  removeConversation: (conversationId: string) => Promise<void>;
   startAgentChat: (agentId: string) => Promise<Conversation>;
   sendText: (text: string, mentions?: string[]) => void;
   /** 取消当前所有流式（群聊场景下一次取消所有正在流的 agent）。 */
@@ -122,6 +124,29 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     set((s) => ({
       agents: s.agents.filter((x) => x.id !== agentId),
     }));
+  },
+
+  async removeConversation(conversationId) {
+    try {
+      await deleteConversation(conversationId);
+    } catch (err) {
+      console.warn("deleteConversation failed", err);
+    }
+    set((s) => {
+      const next = {
+        conversations: s.conversations.filter((c) => c.id !== conversationId),
+      };
+      if (s.currentConvId === conversationId) {
+        const remaining = next.conversations;
+        Object.assign(next, {
+          currentConvId: remaining.length > 0 ? remaining[0].id : null,
+          messages: [],
+          streamingMessageIds: [],
+          agentTyping: false,
+        });
+      }
+      return next;
+    });
   },
 
   async startAgentChat(agentId) {

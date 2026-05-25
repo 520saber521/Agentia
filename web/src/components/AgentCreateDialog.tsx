@@ -15,6 +15,7 @@ const MODEL_PROVIDERS = [
   { value: "codex", label: "OpenAI / Codex" },
   { value: "claude_code", label: "Claude Code" },
   { value: "opencode", label: "OpenCode" },
+  { value: "deepseek", label: "DeepSeek" },
   { value: "mock", label: "Mock" },
 ];
 
