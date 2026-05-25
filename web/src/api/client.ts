@@ -106,9 +106,20 @@ async function deleteJson(path: string): Promise<void> {
   if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
 }
 
-export async function fetchConversations(): Promise<Conversation[]> {
+export interface FetchConversationOptions {
+  includeArchived?: boolean;
+  q?: string;
+}
+
+export async function fetchConversations(
+  options: FetchConversationOptions = {},
+): Promise<Conversation[]> {
+  const params = new URLSearchParams();
+  if (options.includeArchived) params.set("include_archived", "true");
+  if (options.q?.trim()) params.set("q", options.q.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
   const body = await getJson<{ conversations: Conversation[] }>(
-    "/api/conversations",
+    `/api/conversations${suffix}`,
   );
   return body.conversations;
 }
@@ -180,6 +191,29 @@ export async function createConversation(
       agent_ids: input.agent_ids ?? [],
     },
   );
+  return body.conversation;
+}
+
+export interface UpdateConversationInput {
+  title?: string;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
+export async function updateConversation(
+  conversationId: string,
+  input: UpdateConversationInput,
+): Promise<Conversation> {
+  const r = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "PATCH",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
+  const body = (await r.json()) as { conversation: Conversation };
   return body.conversation;
 }
 
@@ -321,4 +355,38 @@ export function describeApiError(err: unknown): string {
   }
   if (err instanceof Error) return err.message;
   return "请求失败，请稍后再试";
+}
+
+// ---------------------------------------------------------------------------
+// Pin / Unpin API
+// ---------------------------------------------------------------------------
+
+export async function pinMessage(messageId: string): Promise<Message> {
+  const body = await postJson<{ message: Message }>(
+    `/api/messages/${encodeURIComponent(messageId)}/pin`,
+    {},
+  );
+  return body.message;
+}
+
+export async function unpinMessage(messageId: string): Promise<Message> {
+  const body = await postJson<{ message: Message }>(
+    `/api/messages/${encodeURIComponent(messageId)}/unpin`,
+    {},
+  );
+  return body.message;
+}
+
+export interface ContextStats {
+  conversation_id: string;
+  total_messages: number;
+  pinned_messages: number;
+}
+
+export async function fetchContextStats(
+  conversationId: string,
+): Promise<ContextStats> {
+  return getJson<ContextStats>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/context-stats`,
+  );
 }

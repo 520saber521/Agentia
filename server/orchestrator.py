@@ -21,6 +21,8 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
+from urllib import request
 from typing import Any, Optional
 
 from sqlalchemy import desc, select
@@ -51,6 +53,8 @@ if _SRC_DIR not in sys.path:
 from scheduler.complexity import ComplexityJudge, TaskInput
 from scheduler.enhanced_decomposer import EnhancedTaskDecomposer
 
+from dag_engine import DAG, DAGNode, DAGExecutor
+
 logger = logging.getLogger("agenthub.orchestrator")
 
 ORCHESTRATOR_AGENT_ID = "agent_orchestrator"
@@ -64,6 +68,66 @@ AGENT_CODE_MAP: dict[str, str] = {
 
 RETRY_LIMIT = 1
 HTML_BLOCK_RE = re.compile(r"```(?:html|HTML)?\s*\n([\s\S]*?)```", re.MULTILINE)
+DEBUG_ENV_PATH = Path(__file__).resolve().parent.parent / ".dbg" / "html-preview-truncation.env"
+FRONTEND_PREVIEW_MAX_TOKENS = 24000
+
+
+def _debug_event(hypothesis_id: str, point: str, payload: dict[str, Any]) -> None:
+    #region debug-point html-preview-truncation
+    try:
+        if not DEBUG_ENV_PATH.exists():
+            return
+        env = dict(
+            line.split("=", 1)
+            for line in DEBUG_ENV_PATH.read_text(encoding="utf-8").splitlines()
+            if "=" in line
+        )
+        url = env.get("DEBUG_SERVER_URL")
+        if not url:
+            return
+        body = json.dumps({
+            "sessionId": env.get("DEBUG_SESSION_ID", "html-preview-truncation"),
+            "runId": "pre",
+            "hypothesisId": hypothesis_id,
+            "point": point,
+            "payload": payload,
+            "ts": int(time.time() * 1000),
+        }, ensure_ascii=False).encode("utf-8")
+        req = request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        request.urlopen(req, timeout=0.2).close()
+    except Exception:
+        pass
+    #endregion debug-point html-preview-truncation
+
+
+def _html_probe(text: str | None) -> dict[str, Any]:
+    #region debug-point html-preview-truncation
+    value = text or ""
+    lower = value.lower()
+    return {
+        "length": len(value),
+        "starts_with_doctype": lower.lstrip().startswith("<!doctype html"),
+        "doctype_pos": lower.find("<!doctype html"),
+        "html_pos": lower.find("<html"),
+        "closing_html_pos": lower.rfind("</html>"),
+        "has_fence": "```" in value,
+        "complete_html": _is_complete_html_document(value),
+        "looks_like_html": _looks_like_html(value),
+        "head": value[:180],
+        "tail": value[-180:],
+    }
+    #endregion debug-point html-preview-truncation
+
+
+def _visible_generation_error(code: str, message: str) -> str:
+    if code == "output_truncated":
+        return (
+            "\n\n---\n"
+            "[提示] 输出达到模型长度上限，当前内容可能不完整。"
+            "请发送“继续生成”，或提高该 Agent 的 max_tokens 后重新生成。"
+        )
+    clean = message.strip() or code
+    return f"\n\n---\n[提示] 生成中断：{clean}"
 
 
 def _agent_code_to_display_name(code: str) -> str:
@@ -81,27 +145,54 @@ def _agent_code_to_agent_id(code: str) -> str:
 
 
 def _agent_capability_score(agent: Agent, domain: str) -> int:
-    try:
-        caps = json.loads(agent.capabilities) if agent.capabilities else []
-    except (TypeError, ValueError):
-        caps = []
-    cap_text = " ".join(str(c).lower() for c in caps)
     name_text = (agent.name or "").lower()
     adapter_text = (agent.adapter_type or "").lower()
-    haystack = f"{cap_text} {name_text} {adapter_text}"
+
+    # Primary signal: Role prompt (system_prompt)
+    try:
+        cfg = json.loads(agent.config) if agent.config else {}
+    except (TypeError, ValueError):
+        cfg = {}
+    prompt_text = str(cfg.get("system_prompt", "") or "").lower()
 
     score = 0
-    if domain.lower() in haystack:
-        score += 10
+
+    # Mock adapters should never be chosen for real work when LLM agents exist
+    if adapter_text == "mock":
+        score -= 999
+
     domain_aliases = {
-        "frontend": ["ui", "html", "css", "react", "preview"],
-        "backend": ["api", "server", "service", "python"],
-        "database": ["db", "sql", "data", "model", "orm"],
-        "test": ["test", "qa", "verify", "quality"],
-        "docs": ["doc", "readme", "writer"],
-        "devops": ["ci", "deploy", "ops", "docker"],
+        "frontend": ["ui", "html", "css", "react", "preview", "前端", "界面", "页面", "component", "vue"],
+        "backend": ["api", "server", "service", "python", "后端", "接口", "路由"],
+        "database": ["db", "sql", "orm", "数据库", "schema", "query"],
+        "test": ["test", "qa", "verify", "quality", "测试", "验证"],
+        "docs": ["doc", "readme", "writer", "文档", "写作"],
+        "devops": ["ci", "deploy", "ops", "docker", "部署"],
     }
-    score += sum(2 for alias in domain_aliases.get(domain, []) if alias in haystack)
+
+    # Role prompt is the primary signal
+    if domain.lower() in prompt_text:
+        score += 30
+    score += sum(5 for alias in domain_aliases.get(domain, []) if alias in prompt_text)
+
+    # Agent name is a secondary signal
+    if domain.lower() in name_text:
+        score += 8
+    score += sum(1 for alias in domain_aliases.get(domain, []) if alias in name_text)
+
+    # Adapter type gives a small generalist baseline
+    if adapter_text in ("claude_code", "anthropic", "codex", "openai", "deepseek", "opencode"):
+        score += 1
+
+    # API key: agent must be functional, but does NOT bias domain selection
+    try:
+        cfg = json.loads(agent.config) if agent.config else {}
+    except (TypeError, ValueError):
+        cfg = {}
+    has_api_key = bool(cfg.get("api_key")) or (adapter_text == "codex" and os.environ.get("OPENAI_API_KEY"))
+    if has_api_key:
+        score += 5  # Small tiebreaker, not a dominating factor
+
     return score
 
 
@@ -196,23 +287,54 @@ def _is_complete_html_document(text: str) -> bool:
     return True
 
 
+def _looks_like_html(text: str) -> bool:
+    """Check if text contains HTML markup (tags, even without full document structure)."""
+    lower = (text or "").lower()
+    # Has at least one HTML element with content between matching tags
+    if re.search(r"<([a-zA-Z][\w-]*)[^>]*>[\s\S]*?</\1>", text or ""):
+        return True
+    # Has <!doctype html header
+    if "<!doctype html" in lower:
+        return True
+    # Has a style or script block
+    if "<style" in lower or "<script" in lower:
+        return True
+    return False
+
+
 def _extract_html_from_text(text: str) -> str | None:
+    _debug_event("H2", "extract_input", _html_probe(text))
     for match in HTML_BLOCK_RE.finditer(text or ""):
         candidate = match.group(1).strip()
+        _debug_event("H2", "extract_fence_candidate", _html_probe(candidate))
         if _is_complete_html_document(candidate):
-            return _normalize_html_document(candidate)
+            normalized = _normalize_html_document(candidate)
+            _debug_event("H2", "extract_fence_complete", _html_probe(normalized))
+            return normalized
+        _debug_event("H2", "extract_fence_rejected_incomplete", _html_probe(candidate))
+
     lower = (text or "").lower()
     start_positions = [pos for pos in (lower.find("<!doctype html"), lower.find("<html")) if pos >= 0]
-    if not start_positions:
+    if start_positions:
+        start = min(start_positions)
+        end = lower.rfind("</html>")
+        _debug_event("H2", "extract_raw_bounds", {"start": start, "end": end, **_html_probe(text)})
+        if end > start:
+            candidate = text[start : end + len("</html>")]
+            if _is_complete_html_document(candidate):
+                normalized = _normalize_html_document(candidate.strip())
+                _debug_event("H2", "extract_raw_complete", _html_probe(normalized))
+                return normalized
+        _debug_event("H2", "extract_raw_rejected_incomplete", _html_probe(text))
         return None
-    start = min(start_positions)
-    end = lower.rfind("</html>")
-    if end < start:
-        return None
-    candidate = text[start : end + len("</html>")]
-    if not _is_complete_html_document(candidate):
-        return None
-    return _normalize_html_document(candidate.strip())
+
+    if "```" not in (text or "") and _looks_like_html(text or ""):
+        normalized = _normalize_html_document(text.strip())
+        _debug_event("H2", "extract_fragment_wrapped", _html_probe(normalized))
+        return normalized
+
+    _debug_event("H2", "extract_none", _html_probe(text))
+    return None
 
 
 def _normalize_html_document(candidate: str) -> str:
@@ -224,6 +346,60 @@ def _normalize_html_document(candidate: str) -> str:
     return text
 
 
+def _is_frontend_preview_subtask(st: Any, user_text: str) -> bool:
+    domain = str(getattr(st, "domain", "") or "").lower()
+    title = str(getattr(st, "title", "") or "")
+    description = str(getattr(st, "description", "") or "")
+    haystack = f"{user_text}\n{title}\n{description}".lower()
+    return domain == "frontend" and _should_create_w4_preview(haystack)
+
+
+def _compact_frontend_prompt(agent_prompt: str) -> str:
+    return (
+        f"{agent_prompt}\n\n"
+        "[Frontend output contract]\n"
+        "Return exactly one complete single-file HTML document.\n"
+        "Start with <!doctype html> and end with </html>.\n"
+        "Do not include markdown fences, explanation, install steps, or backend code.\n"
+        "Keep it concise: one screen-focused demo, compact CSS, inline JS only if necessary.\n"
+        "Use placeholder gradients/blocks instead of long asset URLs. Target under 450 lines.\n"
+    )
+
+
+def _close_partial_html(text: str, user_text: str, reason: str) -> str:
+    raw = text or ""
+    lower = raw.lower()
+    starts = [pos for pos in (lower.find("<!doctype html"), lower.find("<html")) if pos >= 0]
+    if not starts:
+        return _fallback_preview_html(user_text, reason)
+
+    candidate = raw[min(starts):].strip()
+    candidate = re.sub(r"```+\s*$", "", candidate).strip()
+    lower = candidate.lower()
+
+    if "<style" in lower and "</style>" not in lower:
+        candidate += "\n</style>"
+        lower = candidate.lower()
+    if "<script" in lower and "</script>" not in lower:
+        candidate += "\n</script>"
+        lower = candidate.lower()
+    if "<body" not in lower:
+        candidate += (
+            "\n</head><body><main style=\"min-height:100vh;display:grid;place-items:center;"
+            "background:#050505;color:white;font-family:Arial,sans-serif;padding:24px;text-align:center\">"
+            f"<section><h1>{html.escape(_clean_requirement(user_text))}</h1>"
+            f"<p>模型输出被截断，系统已保留可恢复的页面骨架。原因：{html.escape(reason)}</p>"
+            "</section></main>"
+        )
+        lower = candidate.lower()
+    if "</body>" not in lower:
+        candidate += "\n</body>"
+        lower = candidate.lower()
+    if "</html>" not in lower:
+        candidate += "\n</html>"
+    return _normalize_html_document(candidate)
+
+
 def _html_title(html_text: str, fallback: str) -> str:
     match = re.search(r"<title[^>]*>(.*?)</title>", html_text, flags=re.IGNORECASE | re.DOTALL)
     if match:
@@ -233,8 +409,8 @@ def _html_title(html_text: str, fallback: str) -> str:
     return fallback[:80] or "模型生成网页预览"
 
 
-def _preview_message_content(artifact: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _preview_message_content(artifact: dict[str, Any], original_text: str = "") -> dict[str, Any]:
+    base: dict[str, Any] = {
         "type": "preview",
         "artifact_id": artifact["id"],
         "title": artifact["title"],
@@ -244,6 +420,11 @@ def _preview_message_content(artifact: dict[str, Any]) -> dict[str, Any]:
         "previewUrl": artifact.get("preview_url"),
         "version": artifact.get("version", 1),
     }
+    # Preserve original text so downstream _collect_subtask_outputs
+    # can extract HTML without needing to read the artifact file.
+    if original_text:
+        base["text"] = original_text
+    return base
 
 
 def _im_chat_preview_html(user_text: str) -> str:
@@ -307,11 +488,22 @@ def _should_create_w4_preview(user_text: str) -> bool:
 
 
 def _ensure_preview_collaboration_domains(user_text: str, domains: set[str]) -> set[str]:
-    if not _should_create_w4_preview(user_text):
-        return domains
     expanded = set(domains)
-    expanded.update({"frontend", "docs", "test"})
-    if any(k in user_text.lower() for k in ["登录", "注册", "订单", "商品", "api", "接口", "应用", "app"]):
+    lower = user_text.lower()
+
+    # 简单 HTML / 页面请求 → 只保留 frontend
+    simple_html_keywords = ["生成.*html", "写.*html", "创建.*页面", "做个.*页面", "html页面", "一个页面"]
+    is_simple_html = any(re.search(k, lower) for k in simple_html_keywords)
+    if is_simple_html:
+        expanded.add("frontend")
+        return expanded
+
+    if not _should_create_w4_preview(user_text):
+        return domains or {"frontend"}
+
+    # 复杂多领域需求才展开
+    expanded.add("frontend")
+    if any(k in lower for k in ["登录", "注册", "订单", "商品", "api", "接口", "应用", "app"]):
         expanded.update({"backend", "database"})
     return expanded
 
@@ -326,14 +518,6 @@ def _agent_config(agent: Agent) -> dict[str, Any]:
         return json.loads(agent.config) if agent.config else {}
     except (TypeError, ValueError):
         return {}
-
-
-def _agent_capabilities(agent: Agent) -> list[str]:
-    try:
-        caps = json.loads(agent.capabilities) if agent.capabilities else []
-    except (TypeError, ValueError):
-        caps = []
-    return [str(cap).lower() for cap in caps]
 
 
 def _agent_can_call_model(agent: Agent) -> bool:
@@ -369,9 +553,35 @@ async def _pick_preview_generator_agent(
 
     subtask_agent_ids = {agent_id for st, _name, agent_id, _input, _deps in subtask_records if st.domain == "frontend"}
 
+    # Filter out agents that cannot actually call a real LLM
+    # (mock adapter has no API key and returns canned text, not real HTML)
+    def _can_generate(agent: Agent) -> bool:
+        try:
+            cfg = json.loads(agent.config) if agent.config else {}
+        except (TypeError, ValueError):
+            cfg = {}
+        # Codex adapter uses OPENAI_API_KEY env var
+        if agent.adapter_type == "codex" and os.environ.get("OPENAI_API_KEY"):
+            return True
+        # Must have api_key configured
+        if bool(cfg.get("api_key")):
+            return True
+        # Non-mock adapters with a model set are worth trying
+        if agent.adapter_type not in ("mock", "") and bool(cfg.get("model")):
+            return True
+        return False
+
+    candidates = [a for a in agents if _can_generate(a)]
+    if not candidates:
+        return None
+
     def score(agent: Agent) -> tuple[int, int]:
-        caps = _agent_capabilities(agent)
-        searchable = " ".join([agent.name or "", agent.adapter_type or "", *caps]).lower()
+        try:
+            cfg = json.loads(agent.config) if agent.config else {}
+        except (TypeError, ValueError):
+            cfg = {}
+        prompt_text = str(cfg.get("system_prompt", "") or "").lower()
+        searchable = " ".join([agent.name or "", agent.adapter_type or "", prompt_text]).lower()
         value = 0
         if agent.id in subtask_agent_ids:
             value += 35
@@ -381,7 +591,7 @@ async def _pick_preview_generator_agent(
             value += 10
         return value, int(agent.created_at or 0)
 
-    best = max(agents, key=score)
+    best = max(candidates, key=score)
     if score(best)[0] <= 0:
         return None
     reason = f"capability_score:{score(best)[0]}"
@@ -520,6 +730,11 @@ async def _generate_preview_html_with_model(
         return html_doc, _html_title(html_doc, "预览生成需要模型输出"), "fallback"
 
     adapter, _display_name = loaded
+    if hasattr(adapter, "max_tokens"):
+        try:
+            adapter.max_tokens = max(int(getattr(adapter, "max_tokens", 0)), 12000)
+        except (TypeError, ValueError):
+            adapter.max_tokens = 12000
     messages = _build_preview_prompt(
         user_text=user_text,
         conversation_history=conversation_history,
@@ -548,6 +763,71 @@ async def _generate_preview_html_with_model(
         fallback_reason = f"model_returned_no_complete_html:{agent_name}"
     html_doc = _fallback_preview_html(user_text, fallback_reason)
     return html_doc, _html_title(html_doc, "预览生成需要模型输出"), "fallback"
+
+
+async def _llm_classify_task(user_text: str) -> str | None:
+    """Use a configured LLM agent to classify whether the task is software development or not.
+
+    Returns ``"software"``, ``"non_software"``, or ``None`` (LLM unavailable/error).
+    """
+    Session = get_sessionmaker()
+    async with Session() as s:
+        agents = (
+            await s.scalars(
+                select(Agent).where(
+                    Agent.id != ORCHESTRATOR_AGENT_ID,
+                    Agent.adapter_type != "mock",
+                )
+            )
+        ).all()
+        llm_agents = []
+        for a in agents:
+            try:
+                cfg = json.loads(a.config) if a.config else {}
+            except (TypeError, ValueError):
+                cfg = {}
+            if cfg.get("api_key"):
+                llm_agents.append(a)
+    if not llm_agents:
+        return None
+
+    from handlers.send_message import load_adapter_for
+    loaded = await load_adapter_for(llm_agents[0].id)
+    if loaded is None:
+        return None
+    adapter, _ = loaded
+
+    prompt = (
+        "你是一个任务分类器。判断以下用户请求属于哪一类。\n\n"
+        "A-软件开发类：涉及创建/修改网页、前端界面、后端API、数据库、UI组件、App开发、部署等。\n"
+        "B-非软件开发类：数学建模、数据分析、论文写作、研究报告、学术问题、物理/化学/生物等科学问题。\n\n"
+        "只回复单个词：\"software\" 或 \"non_software\"\n\n"
+        "用户请求：\n"
+        f"{user_text[:3000]}"
+    )
+    try:
+        async with asyncio.timeout(20):
+            result = ""
+            async for chunk in adapter.send(
+                messages=[{"role": "user", "content": prompt}]
+            ):
+                if chunk.get("type") == "text":
+                    result += chunk.get("delta", "")
+                elif chunk.get("type") == "error":
+                    logger.warning("LLM classify error: %s", chunk.get("message"))
+                    return None
+                elif chunk.get("type") == "done":
+                    break
+            result = result.strip().lower()
+            if "non_software" in result:
+                return "non_software"
+            return "software"
+    except asyncio.TimeoutError:
+        logger.warning("LLM task classification timed out after 20s")
+        return None
+    except Exception as exc:
+        logger.warning("LLM task classification failed: %s", exc)
+        return None
 
 
 async def handle_orchestrator_mention(
@@ -604,6 +884,13 @@ async def handle_orchestrator_mention(
         await update_message_content(s, originating_message_id, {"type": "text", "text": process_text})
 
     await conn.send(event(
+        "context_info",
+        conversation_id=conversation_id,
+        total_messages=len(conversation_history),
+        pinned_messages=len(pinned_context),
+    ))
+
+    await conn.send(event(
         "task_update",
         conversation_id=conversation_id,
         task={
@@ -624,55 +911,59 @@ async def handle_orchestrator_mention(
         action="created",
     ))
 
-    # 2. Inject context into complexity judge
+    # 2. LLM-based task classification (replace keyword ComplexityJudge)
+    #    Uses the configured API key model to understand intent, not hardcoded keywords
+    llm_type = await _llm_classify_task(user_text)
+
+    if llm_type == "non_software":
+        # Non-software task (math modeling, paper, analysis, etc.)
+        # → single subtask, no decomposition into SW domains
+        complexity_domains = {"code"}
+    else:
+        # Software task or LLM unavailable → use keyword analysis (no conversation context)
+        judge = ComplexityJudge()
+        task_input = TaskInput(description=user_text, context=None)
+        complexity = judge.judge(task_input)
+        complexity_domains = set(complexity.domains)
+        complexity_domains = _ensure_preview_collaboration_domains(user_text, complexity_domains)
+        if not complexity_domains:
+            complexity_domains = {"code"}
+
+    # 3. Build prompt context for subtask description
     context_str = ""
     if pinned_context:
-        context_str = "Pinned context:\n" + "\n---\n".join(pinned_context[:5])
-    if conversation_history:
-        recent = conversation_history[-6:-1]
-        context_str += "\n\nRecent conversation:\n" + "\n".join(
-            f"{m['role']}: {m['content'][:200]}" for m in recent
-        )
+        context_str = "Pinned context:\n" + "\n---\n".join(pinned_context[:5]) + "\n"
 
-    # 3. Run complexity analysis
-    judge = ComplexityJudge()
-    task_input = TaskInput(description=user_text, context=context_str or None)
-    complexity = judge.judge(task_input)
-    complexity.domains = _ensure_preview_collaboration_domains(user_text, set(complexity.domains))
-    complexity.parallelizable = complexity.parallelizable or len(complexity.domains) >= 2
-
-    if not complexity.domains:
-        async with Session() as s:
-            agents = (
-                await s.scalars(select(Agent).where(Agent.id != ORCHESTRATOR_AGENT_ID))
-            ).all()
-            inferred_domains = set[str]()
-            for agent in agents:
-                caps = _agent_capabilities(agent)
-                inferred_domains.update(cap for cap in caps if cap in {"frontend", "backend", "database", "test", "docs", "devops", "code"})
-        complexity.domains = inferred_domains or {"code"}
-        complexity.parallelizable = len(complexity.domains) >= 2
-
-    # 4. Decompose the task
-    decomposer = EnhancedTaskDecomposer()
-    decompose_result = decomposer.decompose_with_contract(
-        task=task_input,
-        domains=complexity.domains,
-    )
-
-    if not decompose_result.subtasks:
-        decompose_result.subtasks = [
-            type("FallbackSubtask", (), {
-                "id": "fallback_1",
+    # 4. Create subtasks
+    if llm_type == "non_software":
+        # Single subtask — let one agent handle everything
+        decompose_subtasks = [
+            type("_", (), {
+                "id": "task_code",
                 "description": _clean_requirement(user_text),
-                "domain": next(iter(complexity.domains)),
+                "domain": "code",
                 "dependencies": [],
-                "contract_section": "",
-                "shared_models": [],
-                "provided_interfaces": [],
-                "required_interfaces": [],
             })()
         ]
+        decompose_result = None
+    else:
+        decomposer = EnhancedTaskDecomposer()
+        # Only pass pinned context, NOT conversation history (avoids domain pollution)
+        task_input = TaskInput(description=user_text, context=context_str or None)
+        decompose_result = decomposer.decompose_with_contract(
+            task=task_input,
+            domains=complexity_domains,
+        )
+        decompose_subtasks = decompose_result.subtasks
+        if not decompose_subtasks:
+            decompose_subtasks = [
+                type("_", (), {
+                    "id": "fallback_1",
+                    "description": _clean_requirement(user_text),
+                    "domain": next(iter(complexity_domains)),
+                    "dependencies": [],
+                })()
+            ]
 
     # 5. Create parent & subtask records in DB
     async with Session() as s:
@@ -681,14 +972,14 @@ async def handle_orchestrator_mention(
             conversation_id=conversation_id,
             title=user_text[:80],
             description=user_text,
-            domain=",".join(sorted(complexity.domains)),
+            domain=",".join(sorted(complexity_domains)),
             originating_message_id=originating_message_id,
         )
         parent_id = parent.id
 
         subtask_records = []
         subtask_id_map = {}
-        for i, subtask in enumerate(decompose_result.subtasks):
+        for i, subtask in enumerate(decompose_subtasks):
             agent_id, agent_name = await _pick_agent_for_domain(
                 s,
                 domain=subtask.domain,
@@ -754,74 +1045,63 @@ async def handle_orchestrator_mention(
     ))
 
     for st, _agent_name, _aid, _is, _dep in subtask_records:
+        task_dict = task_to_dict(st)
+        task_dict["depends_on"] = _dep
         await conn.send(event(
             "task_update",
             conversation_id=conversation_id,
-            task=task_to_dict(st),
+            task=task_dict,
             action="created",
         ))
 
-    # 7. Fan-out subtasks respecting dependency order
-    dispatched_ids: set[str] = set()
-    completed_ids: set[str] = set()
-    failed_ids: dict[str, int] = {}
-    subtask_messages: dict[str, str] = {}
+    # 7. Build DAG and execute via event-driven DAG engine
+    #     (no barrier — nodes dispatch as soon as dependencies are met)
+    dag = DAG()
+    for st, _agent_name, _agent_id, _input_summary, deps in subtask_records:
+        dag.add_node(DAGNode(
+            id=st.id,
+            domain=st.domain or "",
+            description=st.description or "",
+            title=st.title or "",
+            dependencies=list(deps),
+            assigned_agent_id=_agent_id,
+            assigned_agent_name=_agent_name,
+            input_summary=_input_summary,
+            metadata={"task_record": st},
+        ))
 
-    # Helper: determine which subtasks are ready
-    def _ready_subtasks():
-        ready = []
-        for st, agent_name, aid, is_, deps in subtask_records:
-            sid = st.id
-            if sid in dispatched_ids or sid in completed_ids:
-                continue
-            if all(d in completed_ids for d in deps):
-                ready.append((st, agent_name, aid, is_, deps))
-        return ready
-
-    while len(completed_ids) + len(failed_ids) < len(subtask_records):
-        ready = _ready_subtasks()
-        if not ready:
-            break
-
-        # Dispatch all ready subtasks concurrently
-        tasks = []
-        for st, agent_name, aid, is_, deps in ready:
-            dispatched_ids.add(st.id)
-            async with Session() as s:
-                updated = await update_task_status(s, st.id, "running")
-            if updated is not None:
-                st = updated
+    async def _dispatch_node(node: DAGNode) -> str:
+        st = node.metadata["task_record"]
+        async with Session() as s:
+            updated = await update_task_status(s, st.id, "running")
+        if updated is not None:
             await conn.send(event(
                 "task_update",
                 conversation_id=conversation_id,
-                task=task_to_dict(st),
-                task_id=st.parent_task_id or st.id,
-                subtask_id=st.id if st.parent_task_id else None,
-                status=st.status,
-                progress=st.progress_pct,
+                task=task_to_dict(updated),
+                task_id=updated.parent_task_id or updated.id,
+                subtask_id=updated.id if updated.parent_task_id else None,
+                status=updated.status,
+                progress=updated.progress_pct,
                 message_id=None,
                 action="status_changed",
             ))
-            tasks.append(
-                _dispatch_subtask_with_retry(
-                    conn, st, agent_id=aid, conversation_id=conversation_id,
-                    user_text=f"[Orchestrator] Subtask: {st.title}\nInput: {is_}",
-                )
-            )
+        return await _dispatch_subtask_with_retry(
+            conn, st,
+            agent_id=node.assigned_agent_id,
+            conversation_id=conversation_id,
+            user_text=(
+                f"[Orchestrator] Subtask: {node.title}\nInput: {node.input_summary}"
+            ),
+            pinned_context=pinned_context,
+        )
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    executor = DAGExecutor(dag, _dispatch_node, max_concurrency=len(subtask_records))
+    dag_result = await executor.execute()
 
-        # Process results
-        for (st, agent_name, aid, is_, deps), result in zip(ready, results):
-            if isinstance(result, Exception):
-                if st.id in failed_ids:
-                    continue
-                failed_ids[st.id] = 1
-                logger.warning("Subtask %s failed: %s", st.id, result)
-            else:
-                completed_ids.add(st.id)
-                msg_id = result
-                subtask_messages[st.id] = msg_id
+    completed_ids: set[str] = dag_result["completed"]
+    failed_ids: set[str] = dag_result["failed"]
+    subtask_messages: dict[str, str] = dag_result["subtask_messages"]
 
     # 8. Mark parent as done or failed
     all_done = len(completed_ids) == len(subtask_records)
@@ -1015,6 +1295,7 @@ async def _dispatch_subtask_with_result(
     agent_id: str,
     conversation_id: str,
     user_text: str,
+    pinned_context: list[str] | None = None,
 ) -> str:
     """Dispatch a subtask to an agent and create a message bubble for it.
 
@@ -1037,13 +1318,22 @@ async def _dispatch_subtask_with_result(
     await conn.send(event("message_created", message=msg_dict))
     await conn.send(event("agent_typing", agent_id=agent_id, conversation_id=conversation_id))
 
-    # Build a concise subtask message
+    # Build a concise subtask message with pinned context
+    pinned_block = ""
+    if pinned_context:
+        pinned_block = (
+            "\n**Pinned Context (长期上下文):**\n"
+            + "\n---\n".join(pc[:500] for pc in pinned_context[:5])
+            + "\n"
+        )
+
     agent_prompt = (
         f"[Orchestrator Subtask Assignment]\n\n"
         f"**Original Input**: {user_text}\n"
         f"**Task**: {st.title}\n"
         f"**Domain**: {st.domain}\n"
         f"**Description**: {st.description}\n"
+        f"{pinned_block}"
     )
 
     from handlers.send_message import load_adapter_for, persist_final
@@ -1080,6 +1370,14 @@ async def _dispatch_subtask_with_result(
         raise RuntimeError(f"Agent {agent_id} not available")
 
     adapter, _agent_name = loaded
+    is_frontend_preview = _is_frontend_preview_subtask(st, user_text)
+    if is_frontend_preview:
+        agent_prompt = _compact_frontend_prompt(agent_prompt)
+        if hasattr(adapter, "max_tokens"):
+            try:
+                adapter.max_tokens = max(int(getattr(adapter, "max_tokens", 0)), FRONTEND_PREVIEW_MAX_TOKENS)
+            except (TypeError, ValueError):
+                adapter.max_tokens = FRONTEND_PREVIEW_MAX_TOKENS
     final_parts: list[str] = []
     error_parts: list[str] = []
     seq = 0
@@ -1106,8 +1404,79 @@ async def _dispatch_subtask_with_result(
                 message = chunk.get("message") or "Agent adapter error"
                 error_parts.append(f"{code}: {message}")
 
+        if error_parts and is_frontend_preview:
+            error_text = "; ".join(error_parts)
+            final_text = "".join(final_parts)
+            html_doc = _extract_html_from_text(final_text) or _close_partial_html(
+                final_text,
+                user_text,
+                error_text,
+            )
+            async with Session() as s:
+                artifact_payload = await create_service_artifact(
+                    s,
+                    conversation_id=conversation_id,
+                    kind="preview",
+                    title=_html_title(html_doc, st.title),
+                    mime_type="text/html",
+                    file_name="subtask-preview.html",
+                    content=html_doc,
+                    source_message_id=msg_id,
+                    created_by=agent_id,
+                    meta={
+                        "source": "frontend_recovered_html",
+                        "language": "html",
+                        "task_id": st.id,
+                        "recovery_reason": error_text,
+                    },
+                )
+                content_payload = _preview_message_content(artifact_payload, html_doc)
+                await update_message_content(s, msg_id, content_payload)
+                row = await s.get(MessageModel, msg_id)
+                if row is not None:
+                    row.artifact_id = artifact_payload["id"]
+                    await s.commit()
+            await conn.send(event(
+                "artifact_ready",
+                conversation_id=conversation_id,
+                artifact=artifact_payload,
+                message_id=msg_id,
+            ))
+            await conn.send(event(
+                "message_done",
+                message_id=msg_id,
+                sender_id=agent_id,
+                conversation_id=conversation_id,
+                final_content=content_payload,
+            ))
+            display_text = f"已生成可预览 HTML（截断后恢复）：{artifact_payload['title']}"
+            async with Session() as s:
+                updated = await update_task_status(
+                    s,
+                    st.id,
+                    "done",
+                    result_summary=f"{display_text}; recovery_reason={error_text}"[:200],
+                    progress_pct=100,
+                )
+            if updated is not None:
+                await conn.send(event(
+                    "task_update",
+                    conversation_id=conversation_id,
+                    task=task_to_dict(updated),
+                    task_id=updated.parent_task_id or updated.id,
+                    subtask_id=updated.id if updated.parent_task_id else None,
+                    status=updated.status,
+                    progress=updated.progress_pct,
+                    message_id=msg_id,
+                    action="status_changed",
+                ))
+            return msg_id
+
         if error_parts:
-            final_text = "❌ Subtask failed: " + "; ".join(error_parts)
+            final_text = "".join(final_parts) + _visible_generation_error(
+                str(code),
+                str(message),
+            )
             async with Session() as s:
                 await update_message_content(s, msg_id, {"type": "text", "text": final_text})
             await conn.send(event(
@@ -1147,8 +1516,10 @@ async def _dispatch_subtask_with_result(
 
         display_text = final_text
         artifact_payload = None
-        if agent_id.startswith("agent_mock"):
+        if agent_id.startswith("agent_mock") or is_frontend_preview:
             html_doc = _extract_html_from_text(final_text)
+            if html_doc is None and is_frontend_preview and _looks_like_html(final_text):
+                html_doc = _close_partial_html(final_text, user_text, "frontend_html_incomplete")
             if html_doc:
                 async with Session() as s:
                     artifact_payload = await create_service_artifact(
@@ -1163,7 +1534,7 @@ async def _dispatch_subtask_with_result(
                         created_by=agent_id,
                         meta={"source": "subtask_html", "language": "html", "task_id": st.id},
                     )
-                    await update_message_content(s, msg_id, _preview_message_content(artifact_payload))
+                    await update_message_content(s, msg_id, _preview_message_content(artifact_payload, html_doc))
                     row = await s.get(MessageModel, msg_id)
                     if row is not None:
                         row.artifact_id = artifact_payload["id"]
@@ -1208,6 +1579,7 @@ async def _dispatch_subtask_with_retry(
     agent_id: str,
     conversation_id: str,
     user_text: str,
+    pinned_context: list[str] | None = None,
 ) -> str:
     last_exc: Exception | None = None
     for attempt in range(RETRY_LIMIT + 1):
@@ -1218,6 +1590,7 @@ async def _dispatch_subtask_with_retry(
                 agent_id=agent_id,
                 conversation_id=conversation_id,
                 user_text=user_text,
+                pinned_context=pinned_context,
             )
         except Exception as exc:
             last_exc = exc

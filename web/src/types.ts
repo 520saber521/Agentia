@@ -105,6 +105,8 @@ export interface Message {
   artifact_id: string | null;
   agenthub_msg_id: string | null;
   created_at: number;
+  /** 前端本地状态：该消息相关的工具调用记录（由 tool_call WS 事件填充） */
+  toolCalls?: ToolCallInfo[];
 }
 
 export interface Member {
@@ -235,7 +237,51 @@ export type ServerEvent =
       conversation_id: string;
       artifact: Artifact;
       message_id: string | null;
-    };
+    }
+  | {
+      type: "message_pinned";
+      ts: number;
+      conversation_id: string;
+      message: Message;
+    }
+  | {
+      type: "message_unpinned";
+      ts: number;
+      conversation_id: string;
+      message: Message;
+    }
+  | {
+      type: "context_info";
+      ts: number;
+      conversation_id: string;
+      total_messages: number;
+      pinned_messages: number;
+      history_count?: number;
+      estimated_tokens?: number;
+      strategy?: string;
+    }
+  | {
+      type: "tool_call";
+      ts: number;
+      message_id: string;
+      sender_id?: string;
+      conversation_id: string;
+      tool_name: string;
+      tool_arguments?: Record<string, unknown>;
+      status: "running" | "done" | "error";
+      result_summary?: string;
+    }
+  | {
+      type: "tool_confirm_request";
+      ts: number;
+      message_id: string;
+      sender_id?: string;
+      conversation_id: string;
+      confirm_id: string;
+      tool_name: string;
+      arguments: Record<string, unknown>;
+    }
+  ;
 
 export interface Attachment {
   artifact_id: string;
@@ -256,7 +302,9 @@ export type ClientEvent =
       /** W4 F-W4-6：消息附件（已上传的 artifact_id 列表）。 */
       attachments?: Attachment[];
     }
-  | { type: "cancel"; message_id: string };
+  | { type: "cancel"; message_id: string }
+  | { type: "tool_confirm_response"; confirm_id: string; approved: boolean }
+;
 
 /**
  * W3 F-W3-3: Task entity matching server/services/task.py task_to_dict().
@@ -274,6 +322,7 @@ export interface Task {
   originating_message_id: string | null;
   result_summary: string | null;
   progress_pct: number;
+  depends_on?: string[];
   created_at: number;
   updated_at: number;
 }
@@ -318,4 +367,19 @@ export interface ArtifactReadyEvent {
   conversation_id: string;
   artifact: Artifact;
   message_id: string | null;
+}
+
+/** 工具调用记录 — 由 tool_call WS 事件填充到 Message.toolCalls */
+export interface ToolCallInfo {
+  toolName: string;
+  status: "running" | "done" | "error" | "skipped";
+  resultSummary?: string;
+  step?: number;
+}
+
+/** 文件浏览器条目 */
+export interface FileEntry {
+  name: string;
+  type: "file" | "directory";
+  size: number;
 }

@@ -106,6 +106,19 @@ async def _touch_conversation(
         conv.updated_at = ts
 
 
+async def pin_message(
+    s: AsyncSession,
+    message_id: str,
+    pinned: bool = True,
+) -> Optional[Message]:
+    m = await s.get(Message, message_id)
+    if m is None:
+        return None
+    m.pinned = 1 if pinned else 0
+    await s.commit()
+    return m
+
+
 def _safe_loads(raw: Optional[str]) -> Any:
     if not raw:
         return None
