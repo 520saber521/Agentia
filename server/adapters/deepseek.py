@@ -2,7 +2,14 @@
 
 DeepSeek API is OpenAI-compatible, following the same SSE streaming pattern.
 
-Adapter contract compliance (``ai-collab/rules/adapter.mdc``):
+Config keys:
+- ``api_key`` (required) — DeepSeek API key
+- ``model`` (optional, default ``deepseek-chat``)
+- ``base_url`` (optional, default ``https://api.deepseek.com/v1``)
+- ``max_tokens`` (optional, default 4096)
+- ``system_prompt`` (optional) — system message prepended to conversation
+
+Adapter contract compliance:
 1. Stateless — no instance state beyond ``config``
 2. Streaming — yields text tokens as they arrive via SSE
 3. Cancel = return — ``asyncio.CancelledError`` propagates to caller
@@ -12,6 +19,7 @@ Adapter contract compliance (``ai-collab/rules/adapter.mdc``):
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, AsyncIterator, List, Optional
 
@@ -22,19 +30,29 @@ from .base import AgentAdapter, Chunk
 DEEPSEEK_API_BASE = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_MAX_TOKENS = 4096
-REQUEST_TIMEOUT_S = 60.0
+REQUEST_TIMEOUT_S = 120.0
+
+
+async def _parse_sse(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
+    """Parse OpenAI-style SSE stream, yielding parsed JSON chunks."""
+    buf = ""
+    async for raw in response.aiter_lines():
+        if not raw:
+            if buf:
+                yield {"data": buf}
+            buf = ""
+            continue
+        if raw.startswith("data: "):
+            line = raw[6:]
+            if line.strip() == "[DONE]":
+                return
+            buf = line
+    if buf:
+        yield {"data": buf}
 
 
 class DeepSeekAdapter(AgentAdapter):
-    """Adapter for DeepSeek Chat Completions API (OpenAI-compatible).
-
-    Config keys:
-    - ``api_key`` (required) — DeepSeek API key
-    - ``model`` (optional, default ``deepseek-chat``)
-    - ``base_url`` (optional, default ``https://api.deepseek.com/v1``)
-    - ``max_tokens`` (optional, default 4096)
-    - ``system_prompt`` (optional, default None)
-    """
+    """Adapter for DeepSeek via OpenAI-compatible Chat Completions API."""
 
     name = "deepseek"
 
@@ -58,22 +76,29 @@ class DeepSeekAdapter(AgentAdapter):
             yield {"type": "error", "code": "missing_api_key", "message": "DeepSeek API key not configured"}
             return
 
-        deepseek_messages: list[dict[str, Any]] = list(messages)
+        openai_messages: list[dict[str, Any]] = []
         if self.system_prompt:
-            deepseek_messages.insert(0, {"role": "system", "content": self.system_prompt})
+            openai_messages.append({"role": "system", "content": self.system_prompt})
+
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role == "system" and not self.system_prompt:
+                openai_messages.append({"role": "system", "content": content})
+            elif role in ("user", "assistant"):
+                openai_messages.append({"role": role, "content": content})
 
         body: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "messages": deepseek_messages,
-            "stream": stream,
+            "messages": openai_messages,
         }
-        if tools:
-            body["tools"] = tools
+        if stream:
+            body["stream"] = True
 
         headers = {
-            "authorization": f"Bearer {self.api_key}",
-            "content-type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
         }
 
         try:
@@ -97,6 +122,9 @@ class DeepSeekAdapter(AgentAdapter):
             body_text = await response.aread()
             yield {"type": "error", "code": "bad_request", "message": body_text.decode(errors="replace")}
             return
+        if response.status_code == 401:
+            yield {"type": "error", "code": "auth_error", "message": "DeepSeek API authentication failed (401)"}
+            return
         if response.status_code >= 500:
             yield {"type": "error", "code": "upstream_error", "message": f"DeepSeek API {response.status_code}"}
             return
@@ -105,13 +133,17 @@ class DeepSeekAdapter(AgentAdapter):
             yield {"type": "error", "code": "upstream_error", "message": f"DeepSeek API {response.status_code}: {body_text.decode(errors='replace')}"}
             return
 
+        # Non-streaming response
         if not stream:
-            body_data = response.json()
-            choice = (body_data.get("choices") or [{}])[0]
-            text = (choice.get("message") or {}).get("content", "") or ""
+            data = response.json()
+            choices = data.get("choices") or []
+            text = ""
+            if choices:
+                msg = choices[0].get("message") or {}
+                text = msg.get("content") or ""
             if text:
                 yield {"type": "text", "delta": text}
-            usage = body_data.get("usage") or {}
+            usage = data.get("usage") or {}
             yield {
                 "type": "usage",
                 "input_tokens": usage.get("prompt_tokens", 0),
@@ -120,53 +152,66 @@ class DeepSeekAdapter(AgentAdapter):
             yield {"type": "done"}
             return
 
+        # Streaming response
         input_tokens = 0
         output_tokens = 0
 
+        cancel_event = asyncio.Event()
+
+        def _on_cancel(_task=None):
+            cancel_event.set()
+
+        loop = asyncio.get_running_loop()
+        current_task = asyncio.current_task(loop=loop)
+        if current_task is not None:
+            current_task.add_done_callback(_on_cancel)
+
         try:
-            async for line in response.aiter_lines():
-                if not line.startswith("data: "):
-                    if line.startswith(":") or not line.strip():
-                        continue
-                    if line.startswith("{"):
+            async with httpx.AsyncClient(timeout=httpx.Timeout(REQUEST_TIMEOUT_S)) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    json=body,
+                    headers=headers,
+                ) as response:
+                    if response.status_code != 200:
+                        body_text = await response.aread()
+                        yield {"type": "error", "code": "upstream_error", "message": f"DeepSeek API {response.status_code}: {body_text.decode(errors='replace')}"}
+                        return
+
+                    async for parsed in _parse_sse(response):
+                        if cancel_event.is_set():
+                            return
+
+                        raw_data = parsed.get("data", "")
+                        if not raw_data:
+                            continue
+
                         try:
-                            err_data = json.loads(line)
-                            if err_data.get("error"):
-                                yield {"type": "error", "code": "upstream_error", "message": str(err_data["error"])}
-                                return
+                            chunk_data = json.loads(raw_data)
                         except (ValueError, TypeError):
-                            pass
-                    continue
+                            continue
 
-                payload_str = line[6:].strip()
-                if payload_str == "[DONE]":
-                    break
+                        choices = chunk_data.get("choices") or []
+                        if choices:
+                            delta = choices[0].get("delta") or {}
+                            content = delta.get("content") or ""
+                            if content:
+                                yield {"type": "text", "delta": content}
 
-                try:
-                    payload = json.loads(payload_str)
-                except (ValueError, TypeError):
-                    continue
+                        usage = chunk_data.get("usage")
+                        if usage:
+                            input_tokens = usage.get("prompt_tokens", 0)
+                            output_tokens = usage.get("completion_tokens", 0)
 
-                choices = payload.get("choices") or []
-                for choice in choices:
-                    delta = choice.get("delta") or {}
-                    finish_reason = choice.get("finish_reason")
-                    content = delta.get("content")
-
-                    if content:
-                        yield {"type": "text", "delta": content}
-
-                    if finish_reason == "stop":
-                        break
-
-                usage = payload.get("usage")
-                if usage:
-                    input_tokens = usage.get("prompt_tokens", input_tokens)
-                    output_tokens = usage.get("completion_tokens", output_tokens)
-
-        except httpx.StreamError as exc:
-            yield {"type": "error", "code": "stream_interrupted", "message": str(exc)}
+        except asyncio.CancelledError:
+            cancel_event.set()
             return
+        except httpx.TimeoutException:
+            yield {"type": "error", "code": "timeout", "message": "DeepSeek API stream timeout"}
+            return
+        except httpx.TransportError as exc:
+            yield {"type": "error", "code": "upstream_error", "message": f"Stream transport error: {exc}"}
 
         yield {
             "type": "usage",

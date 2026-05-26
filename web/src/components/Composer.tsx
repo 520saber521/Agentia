@@ -23,14 +23,22 @@ function findMentionAtCursor(
 function syncMentionsFromText(
   text: string,
   agentsByName: Map<string, Agent>,
-): Map<string, string> {
-  const result = new Map<string, string>();
-  for (const [name, agent] of agentsByName) {
-    const idx = text.indexOf(`@${name}`);
-    if (idx !== -1) {
-      const after = text.slice(idx + name.length + 1);
-      if (after.length === 0 || after[0] === " " || after[0] === "\n") {
-        result.set(agent.id, name);
+): Map<string, Agent> {
+  const result = new Map<string, Agent>();
+  const mentionRegex = /@([^\s，,。；;：:]+)/g;
+  let match;
+  while ((match = mentionRegex.exec(text)) !== null) {
+    const mentionedName = match[1];
+    for (const [agentName, agent] of agentsByName) {
+      const normalizedAgentName = agentName.toLowerCase();
+      const normalizedMention = mentionedName.toLowerCase();
+      if (
+        normalizedAgentName.startsWith(normalizedMention) ||
+        agent.id.toLowerCase().includes(normalizedMention) ||
+        normalizedMention.includes(normalizedAgentName)
+      ) {
+        result.set(agent.id, agent);
+        break;
       }
     }
   }
@@ -39,7 +47,7 @@ function syncMentionsFromText(
 
 export function Composer() {
   const [text, setText] = useState("");
-  const [mentions, setMentions] = useState<Map<string, string>>(new Map());
+  const [mentions, setMentions] = useState<Map<string, Agent>>(new Map());
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
   const [agentsByName, setAgentsByName] = useState<Map<string, Agent>>(new Map());
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -75,6 +83,8 @@ export function Composer() {
         for (const a of list) {
           byId.set(a.id, a);
           byName.set(a.name, a);
+          byName.set(a.id, a);
+          byName.set(a.name.replace(/\s+/g, ""), a);
         }
         setAgents(byId);
         setAgentsByName(byName);
@@ -113,7 +123,7 @@ export function Composer() {
 
     setText(newText);
     setMentionQuery(null);
-    setMentions(new Map(mentions).set(agent.id, agent.name));
+    setMentions(new Map(mentions).set(agent.id, agent));
 
     const ta = textRef.current;
     if (ta) {

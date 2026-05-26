@@ -186,18 +186,7 @@ class EnhancedTaskDecomposer(TaskDecomposer):
             if keyword in description:
                 entities.append(entity_info)
         
-        # 如果没有提取到，返回通用实体
-        if not entities:
-            entities.append({
-                "name": "Item",
-                "table": "items",
-                "fields": [
-                    ("id", "uuid", "ID"),
-                    ("name", "string", "名称"),
-                    ("created_at", "datetime", "创建时间"),
-                ],
-            })
-        
+        # 不兜底返回通用实体 — 如果没有匹配到关键词，返回空列表
         return entities
     
     def _extract_api_patterns(
@@ -480,7 +469,7 @@ class EnhancedTaskDecomposer(TaskDecomposer):
         contract_doc: str,
         contract_section: str,
     ) -> str:
-        """构建带契约信息的任务描述"""
+        """构建简明的子任务描述，不含模板化契约内容。"""
         domain_names = {
             "frontend": "前端",
             "backend": "后端",
@@ -489,28 +478,8 @@ class EnhancedTaskDecomposer(TaskDecomposer):
             "docs": "文档",
         }
         domain_name = domain_names.get(domain, domain)
-        
-        description = f"""
-## [{domain_name}] 任务描述
-
-原始需求：{task.description}
-
-## 你负责的契约部分
-
-{contract_section}
-
-## 完整接口契约（必须遵循）
-
-{contract_doc}
-
-## 重要提醒
-
-1. **严格遵循契约中定义的字段名和类型**
-2. **API 路径必须与契约一致**
-3. **数据模型字段名必须与契约一致**
-4. **完成后检查集成验证点**
-"""
-        return description.strip()
+        # 只保留领域标签 + 原始需求，不要样板文字
+        return f"[{domain_name}] {task.description}"
     
     def _generate_success_criteria_with_contract(
         self,

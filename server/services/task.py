@@ -18,14 +18,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Task, new_id, now_ms
 
-VALID_STATUSES = frozenset({"pending", "running", "done", "failed", "cancelled"})
+VALID_STATUSES = frozenset({"planning", "pending", "running", "done", "failed", "blocked", "conflict"})
 
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "pending": frozenset({"running", "cancelled"}),
-    "running": frozenset({"done", "failed", "cancelled"}),
+    "planning": frozenset({"pending", "running", "blocked", "failed"}),
+    "pending": frozenset({"running", "blocked", "failed", "conflict"}),
+    "running": frozenset({"done", "failed", "blocked", "conflict"}),
     "done": frozenset(),
     "failed": frozenset(),
-    "cancelled": frozenset(),
+    "blocked": frozenset({"running", "failed"}),
+    "conflict": frozenset({"running", "failed", "blocked"}),
 }
 
 
@@ -39,6 +41,7 @@ def task_to_dict(t: Task) -> dict[str, Any]:
         "status": t.status,
         "domain": t.domain,
         "assigned_agent_id": t.assigned_agent_id,
+        "agent_name": t.agent_name,
         "originating_message_id": t.originating_message_id,
         "result_summary": t.result_summary,
         "progress_pct": t.progress_pct,
@@ -64,6 +67,7 @@ async def create_task(
     description: str,
     domain: Optional[str] = None,
     assigned_agent_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
     originating_message_id: Optional[str] = None,
     parent_task_id: Optional[str] = None,
     task_id: Optional[str] = None,
@@ -77,6 +81,7 @@ async def create_task(
         description=description,
         domain=domain,
         assigned_agent_id=assigned_agent_id,
+        agent_name=agent_name,
         originating_message_id=originating_message_id,
         status="pending",
         created_at=ts,

@@ -6,7 +6,7 @@
  * - `ApiError.code` 让 UI 能展示具体文案（如"群聊需要至少 1 个 Agent"）。
  */
 
-import type { Agent, Conversation, Message } from "../types";
+import type { Agent, Artifact, Attachment, Conversation, Message } from "../types";
 
 /**
  * 后端业务错误的稳定枚举码（与 `server/api/rest.py` 的 detail 一致）。
@@ -17,6 +17,8 @@ export type ApiErrorCode =
   | "invalid_type"
   | "group_requires_agents"
   | "unknown_agent"
+  | "artifact_conflict"
+  | "invalid_content"
   | "unknown";
 
 export class ApiError extends Error {
@@ -33,6 +35,8 @@ export class ApiError extends Error {
       "invalid_type",
       "group_requires_agents",
       "unknown_agent",
+      "artifact_conflict",
+      "invalid_content",
     ];
     this.code = (KNOWN as string[]).includes(detail)
       ? (detail as ApiErrorCode)
@@ -84,9 +88,38 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await r.json()) as T;
 }
 
-export async function fetchConversations(): Promise<Conversation[]> {
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(path, {
+    method: "PUT",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
+  return (await r.json()) as T;
+}
+
+async function deleteJson(path: string): Promise<void> {
+  const r = await fetch(path, { method: "DELETE", headers: { Accept: "application/json" } });
+  if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
+}
+
+export interface FetchConversationOptions {
+  includeArchived?: boolean;
+  q?: string;
+}
+
+export async function fetchConversations(
+  options: FetchConversationOptions = {},
+): Promise<Conversation[]> {
+  const params = new URLSearchParams();
+  if (options.includeArchived) params.set("include_archived", "true");
+  if (options.q?.trim()) params.set("q", options.q.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
   const body = await getJson<{ conversations: Conversation[] }>(
-    "/api/conversations",
+    `/api/conversations${suffix}`,
   );
   return body.conversations;
 }
@@ -110,6 +143,37 @@ export async function fetchAgents(): Promise<Agent[]> {
   return body.agents;
 }
 
+export interface SaveAgentInput {
+  name: string;
+  adapter_type?: string;
+  api_key?: string;
+  model?: string;
+  base_url?: string;
+  system_prompt?: string;
+  capabilities?: string[];
+  avatar?: string | null;
+}
+
+export async function createAgent(input: SaveAgentInput): Promise<Agent> {
+  const body = await postJson<{ agent: Agent }>("/api/agents", input);
+  return body.agent;
+}
+
+export async function updateAgent(
+  agentId: string,
+  input: Partial<SaveAgentInput>,
+): Promise<Agent> {
+  const body = await putJson<{ agent: Agent }>(
+    `/api/agents/${encodeURIComponent(agentId)}`,
+    input,
+  );
+  return body.agent;
+}
+
+export async function deleteAgent(agentId: string): Promise<void> {
+  await deleteJson(`/api/agents/${encodeURIComponent(agentId)}`);
+}
+
 export interface CreateConversationInput {
   title: string;
   type?: "single" | "group";
@@ -130,6 +194,146 @@ export async function createConversation(
   return body.conversation;
 }
 
+export interface UpdateConversationInput {
+  title?: string;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
+export async function updateConversation(
+  conversationId: string,
+  input: UpdateConversationInput,
+): Promise<Conversation> {
+  const r = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "PATCH",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
+  const body = (await r.json()) as { conversation: Conversation };
+  return body.conversation;
+}
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  await deleteJson(`/api/conversations/${encodeURIComponent(conversationId)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Artifact API (F-W4-2 / F-W4-4)
+// ---------------------------------------------------------------------------
+
+export interface FetchArtifactContentResult {
+  content: string;
+}
+
+export interface SaveArtifactVersionInput {
+  conversation_id: string;
+  kind: string;
+  title: string;
+  mime_type: string;
+  content: string;
+  parent_id?: string;
+  file_name?: string;
+  source_message_id?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface ApplyDiffInput {
+  base_artifact_id: string;
+  before: string;
+  after: string;
+  summary?: string;
+  file_name?: string;
+  source_message_id?: string;
+}
+
+export async function fetchArtifactContent(
+  artifactId: string,
+): Promise<string> {
+  const body = await getJson<FetchArtifactContentResult>(
+    `/api/artifacts/${encodeURIComponent(artifactId)}/content`,
+  );
+  return body.content;
+}
+
+export async function fetchArtifact(artifactId: string): Promise<Artifact> {
+  const body = await getJson<{ artifact: Artifact }>(
+    `/api/artifacts/${encodeURIComponent(artifactId)}`,
+  );
+  return body.artifact;
+}
+
+export async function uploadFile(
+  file: File,
+  conversationId: string,
+): Promise<Attachment> {
+  const form = new FormData();
+  form.append("file", file);
+  const url = `/api/upload?conversation_id=${encodeURIComponent(conversationId)}`;
+  const r = await fetch(url, { method: "POST", body: form });
+  if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
+  const body = (await r.json()) as { artifact: Artifact };
+  return {
+    artifact_id: body.artifact.id,
+    file_name: body.artifact.file_name ?? file.name,
+    mime_type: body.artifact.mime_type,
+    file_size: body.artifact.file_size,
+  };
+}
+
+export async function saveArtifactVersion(
+  input: SaveArtifactVersionInput,
+): Promise<Artifact> {
+  const body = await postJson<{ artifact: Artifact; message?: Message | null }>("/api/artifacts", input);
+  return body.artifact;
+}
+
+export async function createArtifactMessage(
+  input: SaveArtifactVersionInput,
+): Promise<{ artifact: Artifact; message: Message | null }> {
+  return postJson<{ artifact: Artifact; message: Message | null }>(
+    "/api/artifacts",
+    input,
+  );
+}
+
+export async function fetchArtifactHistory(
+  artifactId: string,
+): Promise<Artifact[]> {
+  const body = await getJson<{ artifact_id: string; history: Artifact[] }>(
+    `/api/artifacts/${encodeURIComponent(artifactId)}/history`,
+  );
+  return body.history;
+}
+
+export async function createInvalidContentProbe(): Promise<void> {
+  await postJson("/api/artifacts", {
+    conversation_id: "conv_demo",
+    kind: "invalid-kind",
+    title: "invalid",
+    mime_type: "text/plain",
+    content: "invalid",
+  });
+}
+
+export async function applyDiffArtifact(
+  input: ApplyDiffInput,
+): Promise<{ artifact: Artifact; message: Message }> {
+  return postJson<{ artifact: Artifact; message: Message }>(
+    `/api/artifacts/${encodeURIComponent(input.base_artifact_id)}/apply-diff`,
+    {
+      before: input.before,
+      after: input.after,
+      summary: input.summary,
+      file_name: input.file_name,
+      source_message_id: input.source_message_id,
+    },
+  );
+}
+
 /**
  * 把 `ApiError.code` 翻译成中文文案，用于模态错误提示。
  * 不属于 `ApiErrorCode` 白名单的 fallback 到通用文案。
@@ -145,10 +349,48 @@ export function describeApiError(err: unknown): string {
         return "群聊需要至少 1 个 Agent";
       case "unknown_agent":
         return "选择的 Agent 中存在无效项，请刷新成员列表";
+      case "artifact_conflict":
+        return "目标产物已有新版本，请先打开最新版本或重新生成 Diff";
+      case "invalid_content":
+        return "消息内容格式不合法，请检查类型和必填字段";
       case "unknown":
         return err.detail || "请求失败，请稍后再试";
     }
   }
   if (err instanceof Error) return err.message;
   return "请求失败，请稍后再试";
+}
+
+// ---------------------------------------------------------------------------
+// Pin / Unpin API
+// ---------------------------------------------------------------------------
+
+export async function pinMessage(messageId: string): Promise<Message> {
+  const body = await postJson<{ message: Message }>(
+    `/api/messages/${encodeURIComponent(messageId)}/pin`,
+    {},
+  );
+  return body.message;
+}
+
+export async function unpinMessage(messageId: string): Promise<Message> {
+  const body = await postJson<{ message: Message }>(
+    `/api/messages/${encodeURIComponent(messageId)}/unpin`,
+    {},
+  );
+  return body.message;
+}
+
+export interface ContextStats {
+  conversation_id: string;
+  total_messages: number;
+  pinned_messages: number;
+}
+
+export async function fetchContextStats(
+  conversationId: string,
+): Promise<ContextStats> {
+  return getJson<ContextStats>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/context-stats`,
+  );
 }

@@ -35,6 +35,14 @@ export interface ChatSlice {
   agents: Agent[];
   /** W3 F-W3-3: task_id → Task map for the current conversation. */
   tasks: Record<string, Task>;
+  /** Context stats for current conversation. */
+  contextStats: {
+    total: number;
+    pinned: number;
+    historyCount?: number;
+    estimatedTokens?: number;
+    strategy?: string;
+  } | null;
 }
 
 function addStreaming(arr: string[], id: string): string[] {
@@ -67,6 +75,28 @@ function getText(content: MessageContent | undefined | null): string {
     return (content as { text: string }).text;
   }
   return "";
+}
+
+function appendStreamDelta(currentText: string, delta: string): string {
+  if (!delta) return currentText;
+  if (!currentText) return delta;
+  if (currentText.endsWith(delta)) return currentText;
+
+  const maxOverlap = Math.min(currentText.length, delta.length);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    if (currentText.endsWith(delta.slice(0, size))) {
+      return currentText + delta.slice(size);
+    }
+  }
+
+  return currentText + delta;
+}
+
+function visibleErrorText(code: string, message: string): string {
+  if (code === "output_truncated") {
+    return "\n\n---\n[提示] 输出达到模型长度上限，当前内容可能不完整。请发送“继续生成”，或提高该 Agent 的 max_tokens 后重新生成。";
+  }
+  return `\n\n---\n[提示] 生成中断：${message || code}`;
 }
 
 /** 主入口。永远返回新的 slice 对象（即使内容相同），便于调用方一律走相等性判断。 */
@@ -110,7 +140,11 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
 
     case "task_update": {
       if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
-      const tasks = { ...state.tasks, [evt.task.id]: evt.task };
+      const existing = state.tasks[evt.task.id];
+      const merged = existing?.depends_on != null && evt.task.depends_on == null
+        ? { ...evt.task, depends_on: existing.depends_on }
+        : evt.task;
+      const tasks = { ...state.tasks, [evt.task.id]: merged };
       return {
         next: { ...state, tasks },
         effects: evt.action === "completed" ? ["refresh_conversations"] : effects,
@@ -130,7 +164,10 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       const prev = messages[idx];
       messages[idx] = {
         ...prev,
-        content: { type: "text", text: getText(prev.content) + evt.delta },
+        content: {
+          type: "text",
+          text: appendStreamDelta(getText(prev.content), evt.delta),
+        },
       };
       return { next: { ...state, messages }, effects };
     }
@@ -166,6 +203,21 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
         typeof evt.message_id === "string" &&
         state.streamingMessageIds.includes(evt.message_id)
       ) {
+        const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+        let messages = state.messages;
+        if (idx >= 0) {
+          const current = state.messages[idx];
+          const text = getText(current.content);
+          const note = visibleErrorText(evt.code, evt.message);
+          messages = state.messages.slice();
+          messages[idx] = {
+            ...current,
+            content: {
+              type: "text",
+              text: text.includes(note) ? text : `${text}${note}`,
+            },
+          };
+        }
         const nextStreaming = removeStreaming(
           state.streamingMessageIds,
           evt.message_id,
@@ -173,6 +225,7 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
         return {
           next: {
             ...state,
+            messages,
             streamingMessageIds: nextStreaming,
             agentTyping: nextStreaming.length > 0 ? state.agentTyping : false,
           },
@@ -180,6 +233,60 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
         };
       }
       return { next: state, effects };
+    }
+
+    case "artifact_ready": {
+      if (
+        evt.conversation_id !== state.currentConvId ||
+        !evt.message_id
+      ) {
+        return { next: state, effects };
+      }
+      const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+      if (idx < 0) return { next: state, effects };
+      const messages = state.messages.slice();
+      const current = messages[idx];
+      const content = current.content.type === "preview"
+        ? {
+            ...current.content,
+            artifact_id: evt.artifact.id,
+            title: current.content.title || evt.artifact.title,
+            mimeType: current.content.mimeType || evt.artifact.mime_type,
+            fileSize: current.content.fileSize || evt.artifact.file_size,
+            url: current.content.url || evt.artifact.url,
+            previewUrl: current.content.previewUrl || evt.artifact.preview_url,
+            version: current.content.version || evt.artifact.version,
+          }
+        : current.content;
+      messages[idx] = { ...current, artifact_id: evt.artifact.id, content };
+      return { next: { ...state, messages }, effects };
+    }
+
+    case "message_pinned":
+    case "message_unpinned": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const pinned = evt.type === "message_pinned";
+      const messages = state.messages.map((m) =>
+        m.id === evt.message.id ? { ...m, pinned } : m
+      );
+      return { next: { ...state, messages }, effects };
+    }
+
+    case "context_info": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      return {
+        next: {
+          ...state,
+          contextStats: {
+            total: evt.total_messages,
+            pinned: evt.pinned_messages,
+            historyCount: evt.history_count,
+            estimatedTokens: evt.estimated_tokens,
+            strategy: evt.strategy,
+          },
+        },
+        effects,
+      };
     }
 
     default:
@@ -199,5 +306,6 @@ export function emptySlice(): ChatSlice {
     agentTyping: false,
     agents: [],
     tasks: {},
+    contextStats: null,
   };
 }

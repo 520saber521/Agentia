@@ -24,7 +24,7 @@ from .base import (
     ChunkUsage,
 )
 from .claude_code import ClaudeCodeAdapter
-from .codex import CodexAdapter
+from .codex import CodexAdapter, OpenCodeAdapter
 from .deepseek import DeepSeekAdapter
 from .mock import MockAdapter
 
@@ -32,6 +32,7 @@ ADAPTER_REGISTRY: dict[str, Type[AgentAdapter]] = {
     "mock": MockAdapter,
     "claude_code": ClaudeCodeAdapter,
     "codex": CodexAdapter,
+    "opencode": OpenCodeAdapter,
     "deepseek": DeepSeekAdapter,
 }
 
@@ -43,7 +44,6 @@ def build_adapter(adapter_type: str, config: dict[str, Any] | None = None) -> Ag
         known = ", ".join(sorted(ADAPTER_REGISTRY))
         raise ValueError(f"unknown adapter_type: {adapter_type!r}; known: [{known}]")
     return cls(config or {})
-
 
 __all__ = [
     "ADAPTER_REGISTRY",
@@ -58,6 +58,7 @@ __all__ = [
     "ClaudeCodeAdapter",
     "CodexAdapter",
     "DeepSeekAdapter",
+    "OpenCodeAdapter",
     "MockAdapter",
     "build_adapter",
 ]

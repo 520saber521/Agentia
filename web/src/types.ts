@@ -12,8 +12,85 @@ export interface TextContent {
   text: string;
 }
 
-/** 富媒体卡片的占位（Day5+ 起逐步填充） */
-export type MessageContent = TextContent | { type: string; [key: string]: unknown };
+export interface CodeContent {
+  type: "code";
+  artifact_id?: string;
+  code?: string;
+  language?: string;
+  title?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
+  url?: string;
+  previewUrl?: string;
+  version?: number;
+}
+
+export interface DiffContent {
+  type: "diff";
+  artifact_id?: string;
+  before?: string;
+  after?: string;
+  diff?: string;
+  base_artifact_id?: string;
+  baseArtifactId?: string;
+  summary?: string;
+  fileName?: string;
+  file_name?: string;
+  mimeType?: string;
+  fileSize?: number;
+  applied_artifact_id?: string;
+  version?: number;
+}
+
+export interface PreviewContent {
+  type: "preview";
+  artifact_id?: string;
+  title: string;
+  mimeType: string;
+  fileSize?: number;
+  url?: string;
+  previewUrl?: string;
+  version?: number;
+}
+
+export interface FileContent {
+  type: "file";
+  artifact_id?: string;
+  fileName: string;
+  mimeType: string;
+  fileSize?: number;
+  url?: string;
+  previewUrl?: string;
+  version?: number;
+}
+
+export interface TaskStatusContent {
+  type: "task_status";
+  task_id: string;
+  status: "planning" | "pending" | "running" | "done" | "failed" | "blocked" | "conflict";
+  title?: string;
+  progress?: number;
+  summary?: string;
+}
+
+export interface DeployStatusContent {
+  type: "deploy_status";
+  deploy_id: string;
+  status: string;
+  title?: string;
+  url?: string;
+  summary?: string;
+}
+
+export type MessageContent =
+  | TextContent
+  | CodeContent
+  | DiffContent
+  | PreviewContent
+  | FileContent
+  | TaskStatusContent
+  | DeployStatusContent;
 
 export interface Message {
   id: string;
@@ -28,6 +105,8 @@ export interface Message {
   artifact_id: string | null;
   agenthub_msg_id: string | null;
   created_at: number;
+  /** 前端本地状态：该消息相关的工具调用记录（由 tool_call WS 事件填充） */
+  toolCalls?: ToolCallInfo[];
 }
 
 export interface Member {
@@ -61,9 +140,18 @@ export interface Agent {
   name: string;
   avatar: string | null;
   adapter_type: string;
+  model: string;
+  base_url: string;
+  system_prompt: string;
   capabilities: string[];
+  api_key_configured: boolean;
+  api_key_mask: string;
+  is_system: boolean;
+  locked_prompt: boolean;
+  can_delete: boolean;
   owner_user_id: string | null;
   created_at: number;
+  updated_at: number;
 }
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
@@ -142,7 +230,65 @@ export type ServerEvent =
       conversation_id: string;
       task: Task;
       action: TaskUpdateAction;
-    };
+    }
+  | {
+      type: "artifact_ready";
+      ts: number;
+      conversation_id: string;
+      artifact: Artifact;
+      message_id: string | null;
+    }
+  | {
+      type: "message_pinned";
+      ts: number;
+      conversation_id: string;
+      message: Message;
+    }
+  | {
+      type: "message_unpinned";
+      ts: number;
+      conversation_id: string;
+      message: Message;
+    }
+  | {
+      type: "context_info";
+      ts: number;
+      conversation_id: string;
+      total_messages: number;
+      pinned_messages: number;
+      history_count?: number;
+      estimated_tokens?: number;
+      strategy?: string;
+    }
+  | {
+      type: "tool_call";
+      ts: number;
+      message_id: string;
+      sender_id?: string;
+      conversation_id: string;
+      tool_name: string;
+      tool_arguments?: Record<string, unknown>;
+      status: "running" | "done" | "error";
+      result_summary?: string;
+    }
+  | {
+      type: "tool_confirm_request";
+      ts: number;
+      message_id: string;
+      sender_id?: string;
+      conversation_id: string;
+      confirm_id: string;
+      tool_name: string;
+      arguments: Record<string, unknown>;
+    }
+  ;
+
+export interface Attachment {
+  artifact_id: string;
+  file_name: string;
+  mime_type: string;
+  file_size: number;
+}
 
 export type ClientEvent =
   | { type: "ping" }
@@ -153,8 +299,12 @@ export type ClientEvent =
       content: MessageContent;
       /** W2 F-W2-1：群聊 @mention 列表（agent_id 数组）。 */
       mentions?: string[];
+      /** W4 F-W4-6：消息附件（已上传的 artifact_id 列表）。 */
+      attachments?: Attachment[];
     }
-  | { type: "cancel"; message_id: string };
+  | { type: "cancel"; message_id: string }
+  | { type: "tool_confirm_response"; confirm_id: string; approved: boolean }
+;
 
 /**
  * W3 F-W3-3: Task entity matching server/services/task.py task_to_dict().
@@ -165,12 +315,14 @@ export interface Task {
   parent_task_id: string | null;
   title: string;
   description: string;
-  status: "pending" | "running" | "done" | "failed" | "cancelled";
+  status: "planning" | "pending" | "running" | "done" | "failed" | "blocked" | "conflict";
   domain: string | null;
   assigned_agent_id: string | null;
+  agent_name: string | null;
   originating_message_id: string | null;
   result_summary: string | null;
   progress_pct: number;
+  depends_on?: string[];
   created_at: number;
   updated_at: number;
 }
@@ -184,4 +336,50 @@ export interface TaskUpdateEvent {
   conversation_id: string;
   task: Task;
   action: TaskUpdateAction;
+}
+
+/**
+ * W4 F-W4-2: Artifact entity matching server/services/artifact.py artifact_to_dict().
+ */
+export interface Artifact {
+  id: string;
+  conversation_id: string;
+  parent_id: string | null;
+  kind: "code" | "preview" | "file" | "diff";
+  title: string;
+  mime_type: string;
+  file_name: string | null;
+  file_size: number;
+  storage_path: string;
+  url: string;
+  preview_url: string;
+  source_message_id: string | null;
+  created_by: string;
+  meta: Record<string, unknown>;
+  version: number;
+  created_at: number;
+}
+
+/** W4 F-W4-2: artifact_ready WS event. */
+export interface ArtifactReadyEvent {
+  type: "artifact_ready";
+  ts: number;
+  conversation_id: string;
+  artifact: Artifact;
+  message_id: string | null;
+}
+
+/** 工具调用记录 — 由 tool_call WS 事件填充到 Message.toolCalls */
+export interface ToolCallInfo {
+  toolName: string;
+  status: "running" | "done" | "error" | "skipped";
+  resultSummary?: string;
+  step?: number;
+}
+
+/** 文件浏览器条目 */
+export interface FileEntry {
+  name: string;
+  type: "file" | "directory";
+  size: number;
 }

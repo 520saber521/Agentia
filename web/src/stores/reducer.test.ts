@@ -80,6 +80,25 @@ describe("reduceEvent — history", () => {
 });
 
 describe("reduceEvent — message_created", () => {
+  it.each([
+    ["text", { type: "text", text: "hello" }],
+    ["code", { type: "code", code: "print(1)", language: "python" }],
+    ["diff", { type: "diff", before: "a", after: "b", summary: "change" }],
+    ["preview", { type: "preview", artifact_id: "art_1", title: "index.html", mimeType: "text/html" }],
+    ["file", { type: "file", artifact_id: "art_2", fileName: "a.txt", mimeType: "text/plain" }],
+    ["task_status", { type: "task_status", task_id: "task_1", status: "running", progress: 50 }],
+    ["deploy_status", { type: "deploy_status", deploy_id: "dep_1", status: "done", url: "https://example.test" }],
+  ] as const)("当前会话：追加 %s 内容消息", (_type, content) => {
+    const state = withConv("conv_demo");
+    const msg = makeMessage({ content, content_type: content.type });
+    const { next } = reduceEvent(state, {
+      type: "message_created",
+      ts: 0,
+      message: msg,
+    });
+    expect(next.messages[0].content).toEqual(content);
+  });
+
   it("当前会话：追加用户消息，不改 streaming 标志", () => {
     const state = withConv("conv_demo");
     const msg = makeMessage();
@@ -235,6 +254,77 @@ describe("reduceEvent — agent_typing & stream_chunk", () => {
     expect(next.streamingMessageIds).toEqual(["msg_a", "msg_b"]);
   });
 
+  it("stream_chunk 保留已有占位文本并追加首包内容", () => {
+    const placeholder = makeMessage({
+      id: "msg_agent",
+      sender_type: "agent",
+      sender_id: "agent_mock",
+      content: { type: "text", text: "旧占位" },
+    });
+    const state: ChatSlice = {
+      ...withConv("conv_demo"),
+      messages: [placeholder],
+      streamingMessageIds: ["msg_agent"],
+    };
+    const { next } = reduceEvent(state, {
+      type: "stream_chunk",
+      ts: 0,
+      message_id: "msg_agent",
+      conversation_id: "conv_demo",
+      seq: 1,
+      delta: "你好",
+    });
+    expect((next.messages[0].content as { text: string }).text).toBe("旧占位你好");
+  });
+
+  it("stream_chunk 兼容重叠片段，避免相邻片段导致文字重复", () => {
+    const placeholder = makeMessage({
+      id: "msg_agent",
+      sender_type: "agent",
+      sender_id: "agent_mock",
+      content: { type: "text", text: "产品/交互 Agent" },
+    });
+    const state: ChatSlice = {
+      ...withConv("conv_demo"),
+      messages: [placeholder],
+      streamingMessageIds: ["msg_agent"],
+    };
+    const { next } = reduceEvent(state, {
+      type: "stream_chunk",
+      ts: 0,
+      message_id: "msg_agent",
+      conversation_id: "conv_demo",
+      seq: 2,
+      delta: "Agent：明确页面",
+    });
+    expect((next.messages[0].content as { text: string }).text).toBe(
+      "产品/交互 Agent：明确页面",
+    );
+  });
+
+  it("stream_chunk 完全重复片段时不重复追加", () => {
+    const placeholder = makeMessage({
+      id: "msg_agent",
+      sender_type: "agent",
+      sender_id: "agent_mock",
+      content: { type: "text", text: "明明确确" },
+    });
+    const state: ChatSlice = {
+      ...withConv("conv_demo"),
+      messages: [placeholder],
+      streamingMessageIds: ["msg_agent"],
+    };
+    const { next } = reduceEvent(state, {
+      type: "stream_chunk",
+      ts: 0,
+      message_id: "msg_agent",
+      conversation_id: "conv_demo",
+      seq: 2,
+      delta: "明明确确",
+    });
+    expect((next.messages[0].content as { text: string }).text).toBe("明明确确");
+  });
+
   it("stream_chunk 找不到对应 message 时静默忽略", () => {
     const state = withConv("conv_demo");
     const { next } = reduceEvent(state, {
@@ -250,6 +340,37 @@ describe("reduceEvent — agent_typing & stream_chunk", () => {
 });
 
 describe("reduceEvent — message_done / cancelled / error", () => {
+  it.each([
+    ["text", { type: "text", text: "final reply" }],
+    ["code", { type: "code", code: "print(1)", language: "python" }],
+    ["diff", { type: "diff", before: "a", after: "b" }],
+    ["preview", { type: "preview", artifact_id: "art_1", title: "index.html", mimeType: "text/html" }],
+    ["file", { type: "file", artifact_id: "art_2", fileName: "a.txt", mimeType: "text/plain" }],
+    ["task_status", { type: "task_status", task_id: "task_1", status: "done", progress: 100 }],
+    ["deploy_status", { type: "deploy_status", deploy_id: "dep_1", status: "done" }],
+  ] as const)("message_done 覆盖为 %s content", (_type, final_content) => {
+    const placeholder = makeMessage({
+      id: "msg_agent",
+      sender_type: "agent",
+      content: { type: "text", text: "partial" },
+    });
+    const state: ChatSlice = {
+      ...withConv("conv_demo"),
+      messages: [placeholder],
+      streamingMessageIds: ["msg_agent"],
+      agentTyping: true,
+    };
+    const { next } = reduceEvent(state, {
+      type: "message_done",
+      ts: 0,
+      message_id: "msg_agent",
+      conversation_id: "conv_demo",
+      final_content,
+    });
+    expect(next.messages[0].content).toEqual(final_content);
+    expect(next.streamingMessageIds).toEqual([]);
+  });
+
   it("message_done 用 final_content 覆盖，并从 streamingMessageIds 移除、触发 refresh", () => {
     const placeholder = makeMessage({
       id: "msg_agent",

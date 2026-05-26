@@ -11,6 +11,7 @@ Adapter contract compliance (``ai-collab/rules/adapter.mdc``):
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, AsyncIterator, List, Optional
 
 import httpx
@@ -38,7 +39,11 @@ class CodexAdapter(AgentAdapter):
 
     def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
         super().__init__(config)
-        self.api_key: str = str(self.config.get("api_key") or "")
+        self.api_key: str = str(
+            self.config.get("api_key")
+            or os.environ.get("OPENAI_API_KEY")
+            or ""
+        )
         self.model: str = str(self.config.get("model", DEFAULT_MODEL))
         self.base_url: str = str(self.config.get("base_url", OPENAI_API_BASE)).rstrip("/")
         self.max_tokens: int = int(self.config.get("max_tokens", DEFAULT_MAX_TOKENS))
@@ -175,3 +180,15 @@ class CodexAdapter(AgentAdapter):
 
     def capabilities(self) -> List[str]:
         return ["text", "code", "tool_use", "web_search"]
+
+
+class OpenCodeAdapter(CodexAdapter):
+    """OpenCode-compatible adapter.
+
+    OpenCode-compatible gateways generally expose an OpenAI-style chat
+    completions API, so this adapter intentionally reuses the Codex adapter
+    transport while allowing agents to be configured with ``adapter_type`` set
+    to ``opencode``.
+    """
+
+    name = "opencode"

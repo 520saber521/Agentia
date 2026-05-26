@@ -87,6 +87,16 @@ class WSHub:
         async with self._lock:
             self._conns.discard(c)
 
+    async def broadcast_conversation(
+        self, conversation_id: str, evt: dict[str, Any]
+    ) -> None:
+        """Send an event to every open socket that joined the conversation."""
+        async with self._lock:
+            conns = list(self._conns)
+        for conn in conns:
+            if conversation_id in conn.joined_conversations:
+                await conn.send(evt)
+
     @property
     def size(self) -> int:
         return len(self._conns)

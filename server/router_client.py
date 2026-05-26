@@ -97,6 +97,27 @@ class RouterClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def register_node(self, node_id: str, role: str = "bff", capabilities: Optional[list[str]] = None) -> bool:
+        """POST /nodes/register — register this BFF node with the Router.
+
+        Returns ``True`` if registration succeeded, ``False`` if Router is unavailable.
+        """
+        payload: dict[str, Any] = {
+            "node_id": node_id,
+            "role": role,
+            "capabilities": capabilities or ["chat", "stream"],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.post(
+                    f"{self.base_url}/nodes/register",
+                    json=payload,
+                )
+                return resp.status_code == 200
+        except httpx.TransportError:
+            logger.warning("Router not available at %s — skipping node registration", self.base_url)
+            return False
+
     async def register_presence(self, agent: str, meta: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """POST /presence/register — register an agent's presence."""
         payload: dict[str, Any] = {"agent": agent}
