@@ -148,9 +148,9 @@ async def test_resolve_targets_no_target(db_env):
     await _create_group_conv(conv_id, ["agent_mock", "agent_mock_2"])
 
     agent_ids, err = await resolve_targets(conv_id, [], "plain text no at")
-    assert agent_ids == []
-    assert err is not None
-    assert err["code"] == "no_target"
+    # W2: group convs with 2+ agents now fan out to all available agents by default
+    assert len(agent_ids) >= 1
+    assert err is None
 
 
 @pytest.mark.asyncio
@@ -364,12 +364,12 @@ async def test_fan_out_errors_on_no_target(db_env):
         "mentions": [],
     })
 
+    # W2: group convs with 2+ agents now fan out to all available agents by default
     errors = [e for e in conn.sent if e.get("type") == "error"]
-    assert len(errors) == 1
-    assert errors[0]["code"] == "no_target"
+    assert len(errors) == 0
 
     msg_created = _find_event(conn.sent, "message_created")
-    assert len(msg_created) == 0
+    assert len(msg_created) >= 2  # user msg + at least 1 agent msg
 
 
 @pytest.mark.asyncio

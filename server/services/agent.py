@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any, Optional
 
@@ -11,7 +12,13 @@ from db.models import Agent, AgentExecution, new_id
 from services.secrets import decrypt_secret, encrypt_secret, mask_secret
 
 ORCHESTRATOR_AGENT_ID = "agent_orchestrator"
-ORCHESTRATOR_SYSTEM_PROMPT = """你是 Agentia 的 Orchestrator，负责在群聊中理解用户意图、拆解复杂任务、选择合适的子 Agent 并行执行、聚合结果、识别失败与代码冲突并给出降级方案。你必须保持协调者身份，不直接伪造子 Agent 的专业结论。"""
+ORCHESTRATOR_SYSTEM_PROMPT = (
+    "你是一个任务编排器（Orchestrator）。"
+    "你负责理解用户的复杂需求，将任务拆解为可并行或串行的子任务，"
+    "并根据各个 Agent 的能力标签分派给最合适的执行者。"
+    "在所有子任务完成后，你需要聚合结果并生成汇总报告。"
+    "如果子任务失败，你需要决定是否重试、降级或请求用户决策。"
+)
 
 SENSITIVE_CONFIG_KEYS = {"api_key"}
 
@@ -37,13 +44,28 @@ def _normalize_config(config: Optional[dict[str, Any]], *, existing: Optional[di
     return merged
 
 
-def adapter_config_for_runtime(a: Agent) -> dict[str, Any]:
-    config = _loads_json(a.config, {})
-    if not isinstance(config, dict):
+def adapter_config_for_runtime(agent: Agent) -> dict[str, Any]:
+    """Resolve runtime config from Agent row, merging DB config with env vars."""
+    try:
+        cfg = json.loads(agent.config) if agent.config else {}
+    except (TypeError, ValueError):
+        cfg = {}
+
+    if not isinstance(cfg, dict):
         return {}
-    runtime = dict(config)
+
+    runtime = dict(cfg)
     if "api_key" in runtime:
         runtime["api_key"] = decrypt_secret(str(runtime.get("api_key") or ""))
+
+    # Fallback to env vars if no api_key configured
+    if not runtime.get("api_key"):
+        adapter_type = (agent.adapter_type or "").strip().lower()
+        if adapter_type in ("codex", "claude_code"):
+            runtime["api_key"] = os.environ.get("OPENAI_API_KEY", "")
+        elif adapter_type == "deepseek":
+            runtime["api_key"] = os.environ.get("DEEPSEEK_API_KEY", "")
+
     return runtime
 
 

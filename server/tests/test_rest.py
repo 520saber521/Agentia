@@ -163,9 +163,9 @@ async def test_create_conversation_dedupes_agent_ids_endpoint(client) -> None:
     assert r.status_code == 201
     conv = r.json()["conversation"]
     member_ids = [m["member_id"] for m in conv["members"]]
-    # owner + 2 agents（去重后），共 3
-    assert len(member_ids) == 3
-    assert set(member_ids) == {"user_demo", "agent_mock", "agent_mock_2"}
+    # owner + 2 agents + auto-added orchestrator（去重后），共 4
+    assert len(member_ids) == 4
+    assert set(member_ids) == {"user_demo", "agent_mock", "agent_mock_2", "agent_orchestrator"}
 
 
 async def test_create_conversation_single_with_agent_ok(client) -> None:

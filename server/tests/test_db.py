@@ -29,7 +29,7 @@ from db.seed import (
 from services.agent import list_agents
 from services.conversation import list_conversations, list_messages
 from services.message import create_message, update_message_content
-from handlers.send_message import persist_artifact_chunk
+from handlers.artifact_utils import persist_artifact_chunk
 
 
 async def test_init_db_is_idempotent(db_env) -> None:
@@ -253,7 +253,7 @@ async def test_create_conversation_with_members(db_env) -> None:
     assert conv["type"] == "group"
     assert conv["owner_user_id"] == DEFAULT_USER_ID
     member_ids = {m["member_id"] for m in conv["members"]}
-    assert member_ids == {DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_AGENT_ID_2}
+    assert member_ids == {DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_AGENT_ID_2, "agent_orchestrator"}
 
     Session = get_sessionmaker()
     async with Session() as s:
@@ -359,6 +359,6 @@ async def test_create_conversation_dedupes_agent_ids(db_env) -> None:
             ],
         )
     member_ids = [m["member_id"] for m in conv["members"]]
-    # owner + 2 agents（去重后），共 3 条
-    assert len(member_ids) == 3
-    assert set(member_ids) == {DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_AGENT_ID_2}
+    # owner + 2 agents + auto-added orchestrator（去重后），共 4 条
+    assert len(member_ids) == 4
+    assert set(member_ids) == {DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_AGENT_ID_2, "agent_orchestrator"}
