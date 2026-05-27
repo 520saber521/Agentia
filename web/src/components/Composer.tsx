@@ -62,6 +62,10 @@ export function Composer() {
   const cancel = useChatStore((s) => s.cancelAll);
   const currentConvId = useChatStore((s) => s.currentConvId);
   const conversations = useChatStore((s) => s.conversations);
+  const editContext = useChatStore((s) => s.editContext);
+  const clearEditContext = useChatStore((s) => s.clearEditContext);
+  const sendError = useChatStore((s) => s.sendError);
+  const clearSendError = useChatStore((s) => s.clearSendError);
 
   const currentConv: Conversation | undefined = conversations.find(
     (c) => c.id === currentConvId,
@@ -172,8 +176,27 @@ export function Composer() {
     }
   }
 
+  function statusDot() {
+    if (status === "connected") return <span className="h-2 w-2 rounded-full bg-emerald-400" title="已连接" />;
+    if (status === "connecting") return <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" title="连接中..." />;
+    return <span className="h-2 w-2 rounded-full bg-rose-400" title="已断开" />;
+  }
+
   return (
     <div className="border-t border-border bg-panel p-3 shrink-0 relative">
+      {/* 发送错误提示 */}
+      {sendError && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs">
+          <span className="text-rose-300">{sendError}</span>
+          <button
+            type="button"
+            onClick={clearSendError}
+            className="ml-auto text-rose-400 hover:text-rose-200"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {isGroup && (
         <MentionPopover
           open={mentionQuery !== null}
@@ -182,6 +205,32 @@ export function Composer() {
           onSelect={handleMentionSelect}
           onClose={closeMention}
         />
+      )}
+      {editContext && (
+        <div className="mb-2 flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-1.5 text-xs">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent shrink-0">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+            <span className="text-fg">
+              正在修改 <span className="text-accent font-medium">{editContext.title || "代码"}</span>
+            </span>
+            {editContext.language && (
+              <span className="text-muted uppercase tracking-wider">{editContext.language}</span>
+            )}
+            <button
+              type="button"
+              onClick={clearEditContext}
+              className="ml-1 text-muted hover:text-fg transition-colors"
+              title="取消"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
       )}
       <div className="flex gap-2 items-end">
         <textarea
@@ -203,6 +252,10 @@ export function Composer() {
           rows={1}
           disabled={!currentConvId}
         />
+        {/* 连接状态指示器 */}
+        <div className="flex items-center shrink-0" title={`WebSocket: ${status}`}>
+          {statusDot()}
+        </div>
         {streaming ? (
           <button
             type="button"

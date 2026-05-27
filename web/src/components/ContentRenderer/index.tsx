@@ -10,6 +10,7 @@ interface Props {
   content: MessageContent;
   artifactId?: string | null;
   onEditArtifact?: (artifactId: string) => void;
+  onFullscreen?: (type: "code" | "preview", artifactId: string) => void;
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -20,7 +21,7 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
-export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) {
+export function ContentRenderer({ content, artifactId, onEditArtifact, onFullscreen }: Props) {
   switch (content.type) {
     case "text":
       return <TextBubble text={stringValue(content.text) ?? ""} />;
@@ -33,6 +34,7 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
           title={stringValue(content.title)}
           artifactId={artifactId ?? stringValue(content.artifact_id)}
           onEdit={onEditArtifact}
+          onFullscreen={onFullscreen}
         />
       );
 
@@ -72,6 +74,7 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
           mimeType={stringValue(content.mimeType) ?? "application/octet-stream"}
           fileSize={numberValue(content.fileSize) ?? 0}
           downloadUrl={`/api/artifacts/${artifactId ?? stringValue(content.artifact_id)}/content`}
+          artifactId={artifactId ?? stringValue(content.artifact_id)}
         />
       );
 

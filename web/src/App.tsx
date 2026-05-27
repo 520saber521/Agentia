@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { fetchArtifact } from "./api/client";
 import { AgentCreateDialog } from "./components/AgentCreateDialog";
+import { ArtifactEditor } from "./components/ArtifactEditor";
 import { Composer } from "./components/Composer";
 import { ConversationListPanel } from "./components/ConversationListPanel";
 import { Header } from "./components/Header";
@@ -14,6 +15,8 @@ export default function App() {
   const init = useChatStore((s) => s.init);
   const conversations = useChatStore((s) => s.conversations);
   const currentConvId = useChatStore((s) => s.currentConvId);
+  const errorToast = useChatStore((s) => s.errorToast);
+  const clearErrorToast = useChatStore((s) => s.clearErrorToast);
 
   const [editingArtifact, setEditingArtifact] = useState<Artifact | null>(null);
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
@@ -32,6 +35,24 @@ export default function App() {
         setEditingArtifact(artifact);
       } catch {
         console.error("Failed to fetch artifact for editing");
+      }
+    },
+    [currentConvId],
+  );
+
+  const handleFullscreen = useCallback(
+    async (type: "code" | "preview", artifactId: string) => {
+      if (type === "code") {
+        setEditingArtifact(null);
+        setEditingConvId(currentConvId);
+        try {
+          const artifact = await fetchArtifact(artifactId);
+          setEditingArtifact(artifact);
+        } catch {
+          console.error("Failed to fetch artifact for fullscreen");
+        }
+      } else {
+        window.open(`/preview/${encodeURIComponent(artifactId)}/viewer`, "_blank", "noopener noreferrer");
       }
     },
     [currentConvId],
@@ -61,6 +82,19 @@ export default function App() {
   return (
     <div className="h-full flex flex-col bg-bg text-fg">
       <Header />
+      {/* 全局错误提示 */}
+      {errorToast && (
+        <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm">
+          <span className="text-rose-300 flex-1">{errorToast}</span>
+          <button
+            type="button"
+            onClick={clearErrorToast}
+            className="text-rose-400 hover:text-rose-200 shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <main className="flex-1 grid grid-cols-[18rem_minmax(0,1fr)_16rem] min-h-0 overflow-hidden">
         <ConversationListPanel
           conversations={conversations}
@@ -68,7 +102,7 @@ export default function App() {
           onNewAgent={() => setAgentDialogOpen(true)}
         />
         <section className="min-w-0 flex flex-col min-h-0 bg-panel border-l border-border overflow-hidden">
-          <MessagePanel onEditArtifact={handleEditArtifact} />
+          <MessagePanel onEditArtifact={handleEditArtifact} onFullscreen={handleFullscreen} />
           <Composer />
         </section>
         <ContextSidebar />

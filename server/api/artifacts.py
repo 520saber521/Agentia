@@ -408,3 +408,75 @@ async def api_preview(artifact_id: str) -> Any:
                 "Cache-Control": "no-store",
             },
         )
+
+
+@router.get("/preview/{artifact_id}/viewer")
+async def api_viewer(artifact_id: str) -> Any:
+    """Serve artifact content converted to HTML for rich preview (PPT, Markdown, etc.)."""
+    from fastapi.responses import HTMLResponse
+
+    Session = get_sessionmaker()
+    async with Session() as s:
+        a = await get_artifact(s, artifact_id)
+        if a is None:
+            raise HTTPException(404, "artifact not found")
+
+        content = await read_artifact_content_with_session(s, artifact_id)
+        if content is None:
+            raise HTTPException(404, "content not found")
+
+        mime_type = a.get("mime_type", "text/plain")
+        if mime_type == "text/html":
+            # HTML is already previewable directly
+            return HTMLResponse(
+                content=content,
+                headers={
+                    "X-Artifact-Id": a["id"],
+                    "Cache-Control": "no-store",
+                },
+            )
+
+        from services.viewer import can_preview, render_preview_html
+
+        # For non-HTML: write temp file for viewer
+        import tempfile
+
+        ext = (a.get("file_name") or "").rsplit(".", 1)[-1] if a.get("file_name") else "txt"
+        # Walk the artifact version directory to find the actual file
+        from services.artifact import ARTIFACTS_DIR
+
+        file_path = None
+        for version_dir in sorted(
+            (ARTIFACTS_DIR / a["conversation_id"] / artifact_id).glob("v*"),
+            reverse=True,
+        ):
+            for f in version_dir.iterdir():
+                if f.is_file():
+                    file_path = f
+                    break
+            if file_path:
+                break
+
+        if file_path and can_preview(file_path.suffix, mime_type):
+            html = render_preview_html(file_path, mime_type)
+            if html:
+                return HTMLResponse(
+                    content=html,
+                    headers={
+                        "X-Artifact-Id": a["id"],
+                        "Cache-Control": "no-store",
+                    },
+                )
+
+        # Fallback: plain text viewer
+        escaped = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        fallback = (
+            f"<!doctype html><html><head><meta charset=utf-8>"
+            f"<title>{a.get('title', 'Preview')}</title></head>"
+            f"<body style=\"background:#1e1e2e;color:#cdd6f4;font-family:monospace;"
+            f"padding:24px;white-space:pre-wrap;line-height:1.7\">{escaped}</body></html>"
+        )
+        return HTMLResponse(
+            content=fallback,
+            headers={"X-Artifact-Id": a["id"], "Cache-Control": "no-store"},
+        )

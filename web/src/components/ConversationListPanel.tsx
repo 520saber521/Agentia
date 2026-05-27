@@ -218,10 +218,12 @@ export function ConversationListPanel({ conversations = [], currentId, onNewAgen
         <ul className="flex-1 overflow-y-auto p-2 space-y-1">
           {conversations.map((conv) => (
             <li key={conv.id}>
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => selectConversation(conv.id)}
-                className={`group relative w-full text-left p-3 rounded-md border transition ${
+                onKeyDown={(e) => { if (e.key === "Enter") selectConversation(conv.id); }}
+                className={`group relative w-full text-left p-3 rounded-md border transition cursor-pointer ${
                   currentId === conv.id
                     ? "border-accent bg-accent/10"
                     : "border-border hover:border-accent/60"
@@ -230,15 +232,15 @@ export function ConversationListPanel({ conversations = [], currentId, onNewAgen
                 <div className="font-medium text-sm text-fg truncate pr-8">
                   {conv.title}
                 </div>
-                {conv.last_message && (
+                {conv.last_msg_preview && (
                   <div className="text-xs text-muted truncate mt-1">
-                    {conv.last_message}
+                    {conv.last_msg_preview}
                   </div>
                 )}
                 <div className="text-[10.5px] text-muted mt-1 truncate">
                   {conv.type}
                   {" · "}
-                  {conv.member_count} 成员
+                  {conv.members.length} 成员
                   {" · "}
                   {conv.id.slice(0, 16)}
                 </div>
@@ -256,7 +258,7 @@ export function ConversationListPanel({ conversations = [], currentId, onNewAgen
                 >
                   {confirmDelete === conv.id ? "✓ 确认" : "✕"}
                 </button>
-              </button>
+              </div>
             </li>
           ))}
         </ul>

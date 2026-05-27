@@ -7,6 +7,7 @@ interface Props {
   msg: Message;
   streaming?: boolean;
   onEditArtifact?: (artifactId: string) => void;
+  onFullscreen?: (type: "code" | "preview", artifactId: string) => void;
   agentName?: string;
   agentColor?: string;
 }
@@ -163,7 +164,7 @@ function StatusBadge({
   return <span className="rounded border border-emerald-500/25 px-1.5 py-0.5 text-[10px] text-emerald-300">完成</span>;
 }
 
-export function MessageBubble({ msg, streaming, onEditArtifact }: Props) {
+export function MessageBubble({ msg, streaming, onEditArtifact, onFullscreen }: Props) {
   const isUser = msg.sender_type === "user";
   const time = new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const agents = useChatStore((s) => s.agents);
@@ -172,6 +173,8 @@ export function MessageBubble({ msg, streaming, onEditArtifact }: Props) {
   const currentConv = conversations.find((c) => c.id === currentConvId);
   const isGroup = currentConv?.type === "group";
   const text = textOf(msg);
+  const streamingIds = useChatStore((s) => s.streamingMessageIds);
+  const canCancel = streaming || streamingIds.includes(msg.id);
 
   const agent = agents.find((a) => a.id === msg.sender_id);
   const agentName = agent?.name ?? "agent";
@@ -186,6 +189,7 @@ export function MessageBubble({ msg, streaming, onEditArtifact }: Props) {
               content={msg.content}
               artifactId={msg.artifact_id}
               onEditArtifact={onEditArtifact}
+              onFullscreen={onFullscreen}
             />
           </div>
           <div className="mt-1 flex items-center gap-2 px-1 text-[10.5px] text-muted">
@@ -232,6 +236,7 @@ export function MessageBubble({ msg, streaming, onEditArtifact }: Props) {
             content={msg.content}
             artifactId={msg.artifact_id}
             onEditArtifact={onEditArtifact}
+            onFullscreen={onFullscreen}
           />
           {streaming && msg.content.type === "text" && (
             <span className="ml-1 inline-block animate-blink text-fg/70">▌</span>

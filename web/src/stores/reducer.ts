@@ -13,6 +13,7 @@
 import type {
   Agent,
   Conversation,
+  EditContext,
   Message,
   MessageContent,
   ServerEvent,
@@ -43,6 +44,7 @@ export interface ChatSlice {
     estimatedTokens?: number;
     strategy?: string;
   } | null;
+  editContext: EditContext | null;
 }
 
 function addStreaming(arr: string[], id: string): string[] {
@@ -121,7 +123,9 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       if (state.messages.some((x) => x.id === m.id)) {
         return { next: state, effects };
       }
-      const messages = [...state.messages, m];
+      // 清理乐观 pending 消息（替换为服务端真实消息）
+      const filtered = state.messages.filter((x) => !x.id.startsWith("pending_"));
+      const messages = [...filtered, m];
       const next: ChatSlice =
         m.sender_type === "agent"
           ? {
@@ -178,7 +182,13 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       let messages = state.messages;
       if (idx >= 0) {
         messages = state.messages.slice();
-        messages[idx] = { ...messages[idx], content: evt.final_content };
+        const finalContent = evt.final_content;
+        // 空响应兜底
+        const text = getText(finalContent);
+        const patched = (!text || !text.trim())
+          ? { ...finalContent, type: "text" as const, text: "（Agent 未返回任何内容）" }
+          : finalContent;
+        messages[idx] = { ...messages[idx], content: patched };
       }
       const nextStreaming = removeStreaming(
         state.streamingMessageIds,
@@ -289,6 +299,10 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       };
     }
 
+    case "fan_out_done":
+      // 群聊 fan-out 全部完成，无需更新 UI
+      return { next: state, effects };
+
     default:
       // pong / echo / usage 等不更新 UI 状态。
       return { next: state, effects };
@@ -307,5 +321,6 @@ export function emptySlice(): ChatSlice {
     agents: [],
     tasks: {},
     contextStats: null,
+    editContext: null,
   };
 }

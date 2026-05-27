@@ -14,10 +14,12 @@ from services.artifact import create_artifact as create_service_artifact
 from ws import Connection, event
 
 CODE_BLOCK_RE = re.compile(r"```(\w+)?\n([\s\S]*?)```", re.MULTILINE)
+DIFF_HUNK_RE = re.compile(r"^@@\s+[-+]\d+(?:,\d+)?\s+[-+]\d+(?:,\d+)?\s+@@", re.MULTILINE)
 
 
 async def try_create_artifact(
-    Session, conn: Connection, message_id: str, conversation_id: str, agent_id: str, text: str
+    Session, conn: Connection, message_id: str, conversation_id: str, agent_id: str, text: str,
+    base_artifact_id: str | None = None,
 ) -> dict[str, Any] | None:
     matches = list(CODE_BLOCK_RE.finditer(text))
     if not matches:
@@ -32,13 +34,21 @@ async def try_create_artifact(
         if not code:
             continue
 
-        title = f"{lang.capitalize()} Block"
-        if idx == 0:
-            title = f"Code ({lang})"
-        elif idx > 0:
-            title = f"Code Block {idx + 1} ({lang})"
+        is_diff = lang == "diff" or bool(DIFF_HUNK_RE.search(code))
 
-        kind = "preview" if lang == "html" else "code"
+        if is_diff:
+            title = f"Diff Patch"
+            if idx > 0:
+                title = f"Diff Patch {idx + 1}"
+            kind = "diff"
+        else:
+            title = f"{lang.capitalize()} Block"
+            if idx == 0:
+                title = f"Code ({lang})"
+            elif idx > 0:
+                title = f"Code Block {idx + 1} ({lang})"
+            kind = "preview" if lang == "html" else "code"
+
         mime_type = "text/plain"
         ext_map = {
             "python": ("text/x-python", ".py"),
@@ -71,6 +81,7 @@ async def try_create_artifact(
                 content=code,
                 source_message_id=message_id,
                 created_by=agent_id,
+                parent_id=base_artifact_id if is_diff and base_artifact_id else None,
                 meta={"language": lang},
             )
 
@@ -125,6 +136,7 @@ def artifact_message_content(artifact: dict[str, Any]) -> dict[str, Any]:
             "fileName": artifact["file_name"] or artifact["title"],
             "summary": meta.get("diff_summary") or "产物版本变更",
             "applied_artifact_id": artifact["id"],
+            "base_artifact_id": artifact.get("parent_id") or "",
         }
     return {
         "type": "code",

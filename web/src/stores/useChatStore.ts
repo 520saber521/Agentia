@@ -20,7 +20,7 @@ import {
   type CreateConversationInput,
   type SaveAgentInput,
 } from "../api/client";
-import type { Agent, ConnectionStatus, Conversation, Message } from "../types";
+import type { Agent, ConnectionStatus, Conversation, EditContext, Message } from "../types";
 import { WSClient } from "../ws/client";
 import { reduceEvent, type ChatSlice } from "./reducer";
 
@@ -34,6 +34,9 @@ export interface ChatState extends ChatSlice {
   streamingMessageIds: string[];
   agentTyping: boolean;
   agents: Agent[];
+  editContext: EditContext | null;
+  sendError: string | null;
+  errorToast: string | null;
 
   init: () => void;
   refreshConversations: () => Promise<void>;
@@ -45,6 +48,12 @@ export interface ChatState extends ChatSlice {
   removeConversation: (conversationId: string) => Promise<void>;
   startAgentChat: (agentId: string) => Promise<Conversation>;
   sendText: (text: string, mentions?: string[]) => void;
+  setEditContext: (ctx: EditContext | null) => void;
+  clearEditContext: () => void;
+  clearSendError: () => void;
+  clearErrorToast: () => void;
+  /** 取消单条流式消息。 */
+  cancelMessage: (messageId: string) => void;
   /** 取消当前所有流式（群聊场景下一次取消所有正在流的 agent）。 */
   cancelAll: () => void;
 }
@@ -61,6 +70,9 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   agentTyping: false,
   agents: [],
   tasks: {},
+  editContext: null,
+  sendError: null,
+  errorToast: null,
 
   init() {
     ws.onStatus((s) => set({ status: s }));
@@ -68,7 +80,13 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       const cur = sliceFromState(get());
       const { next, effects } = reduceEvent(cur, evt);
       if (next !== cur) set(next);
-      if (evt.type === "error") console.error("[server error]", evt);
+      if (evt.type === "error") {
+        console.error("[server error]", evt);
+        // 非流式错误（无 message_id）→ Toast 提示
+        if (!evt.message_id) {
+          set({ errorToast: `[${evt.code}] ${evt.message}` });
+        }
+      }
       for (const ef of effects) {
         if (ef === "refresh_conversations") void get().refreshConversations();
       }
@@ -177,12 +195,69 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   sendText(text, mentions) {
     const cid = get().currentConvId;
     if (!cid) return;
-    ws.send({
+    const editCtx = get().editContext;
+
+    // 乐观插入用户消息
+    const optimisticId = `pending_${Date.now()}`;
+    const optimisticMsg: Message = {
+      id: optimisticId,
+      conversation_id: cid,
+      sender_id: "user",
+      sender_type: "user",
+      content_type: "text",
+      content: { type: "text", text },
+      reply_to: null,
+      mentions: mentions ?? [],
+      pinned: false,
+      artifact_id: null,
+      agenthub_msg_id: null,
+      created_at: Date.now(),
+    };
+    set((s) => ({
+      messages: [...s.messages, optimisticMsg],
+    }));
+
+    const ok = ws.send({
       type: "send_message",
       conversation_id: cid,
       content: { type: "text", text },
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
+      ...(editCtx ? { edit_context: editCtx } : {}),
     });
+    if (!ok) {
+      // 发送失败：移除乐观消息，设置错误
+      set((s) => ({
+        messages: s.messages.filter((m) => m.id !== optimisticId),
+        sendError: "消息发送失败，请检查连接后重试",
+      }));
+      return;
+    }
+    if (editCtx) set({ editContext: null });
+  },
+
+  setEditContext(ctx) {
+    set({ editContext: ctx });
+  },
+
+  clearEditContext() {
+    set({ editContext: null });
+  },
+
+  clearSendError() {
+    set({ sendError: null });
+  },
+
+  clearErrorToast() {
+    set({ errorToast: null });
+  },
+
+  cancelMessage(messageId) {
+    const ids = get().streamingMessageIds;
+    if (!ids.includes(messageId)) return;
+    ws.send({ type: "cancel", message_id: messageId });
+    set((s) => ({
+      streamingMessageIds: s.streamingMessageIds.filter((id) => id !== messageId),
+    }));
   },
 
   cancelAll() {

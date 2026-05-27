@@ -31,6 +31,7 @@ async def run_agent_reply(
     ai_msg_id: str,
     conversation_id: str,
     user_text: str,
+    edit_context: dict[str, Any] | None = None,
 ) -> None:
     loaded = await load_adapter_for(agent_id)
     if loaded is None:
@@ -73,11 +74,52 @@ async def run_agent_reply(
         for m in reversed(rows):
             role = "assistant" if m.sender_type == "agent" else "user"
             raw = json.loads(m.content) if m.content else {}
-            text = raw.get("text", "") if isinstance(raw, dict) else ""
+            if isinstance(raw, dict):
+                text = raw.get("text", "")
+                if not text and raw.get("type") == "code":
+                    text = f"[已生成代码: {raw.get('title', 'Code')}]"
+                elif not text and raw.get("type") == "preview":
+                    text = f"[已生成预览: {raw.get('title', 'Preview')}]"
+                elif not text and raw.get("type") == "file":
+                    text = f"[已生成文件: {raw.get('fileName', raw.get('title', 'File'))}]"
+                elif not text and raw.get("type") == "diff":
+                    text = f"[已生成差异: {raw.get('fileName', raw.get('title', 'Diff'))}]"
+            else:
+                text = ""
             if text.strip():
                 messages.append({"role": role, "content": text})
 
-    if not any(msg["content"] == user_text for msg in messages):
+    if edit_context and isinstance(edit_context, dict):
+        ctx_code = edit_context.get("code", "")
+        ctx_lang = edit_context.get("language", "")
+        ctx_title = edit_context.get("title", "")
+        ctx_aid = edit_context.get("artifact_id", "")
+
+        edit_prompt_parts = [
+            "【代码修改请求】",
+            "",
+            f"当前文件：{ctx_title or '未命名'}",
+        ]
+        if ctx_lang:
+            edit_prompt_parts.append(f"语言：{ctx_lang}")
+        if ctx_aid:
+            edit_prompt_parts.append(f"Artifact ID：{ctx_aid}")
+        edit_prompt_parts.extend([
+            "",
+            "```" + (ctx_lang or ""),
+            ctx_code,
+            "```",
+            "",
+            f"用户修改描述：{user_text}",
+            "",
+            "请根据以上描述修改代码，并以下列格式之一输出变更：",
+            "1. 完整的新代码（用 ``` 代码块包裹）",
+            "2. Unified diff 格式（用 ```diff 代码块包裹）",
+            "",
+            "如果是 diff 格式，请确保 before 和 after 内容完整，以便前端自动应用。",
+        ])
+        messages.append({"role": "user", "content": "\n".join(edit_prompt_parts)})
+    elif not any(msg["content"] == user_text for msg in messages):
         messages.append({"role": "user", "content": user_text})
 
     final_parts: list[str] = []
@@ -155,11 +197,14 @@ async def run_agent_reply(
                 break
 
         final_text = "".join(final_parts)
+        if not final_text.strip() and not artifact_messages:
+            final_text = "（Agent 未返回任何内容）"
         if artifact_messages:
             final_content = artifact_messages[-1]["content"]
         else:
+            base_aid = edit_context.get("artifact_id") if edit_context else None
             artifact_content = await try_create_artifact(
-                Session, conn, ai_msg_id, conversation_id, agent_id, final_text
+                Session, conn, ai_msg_id, conversation_id, agent_id, final_text, base_aid
             )
             final_content = artifact_content or {"type": "text", "text": final_text}
         await persist_message_content(Session, ai_msg_id, final_content)
@@ -193,7 +238,7 @@ async def run_agent_reply(
                 seq=0,
             )
     except asyncio.CancelledError:
-        final_text = "".join(final_parts)
+        final_text = "".join(final_parts) or "（已取消）"
         await persist_final(Session, ai_msg_id, final_text)
         async with Session() as s:
             await record_agent_execution_finish(

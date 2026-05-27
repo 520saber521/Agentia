@@ -5,6 +5,13 @@
  * `task_status` / `presence` / `usage` 等更多事件时，再在这里追加。
  */
 
+export interface EditContext {
+  artifact_id: string;
+  code: string;
+  language?: string;
+  title?: string;
+}
+
 export type SenderType = "user" | "agent";
 
 export interface TextContent {
@@ -272,6 +279,12 @@ export type ServerEvent =
       result_summary?: string;
     }
   | {
+      type: "fan_out_done";
+      ts: number;
+      conversation_id: string;
+      total_agents: number;
+    }
+  | {
       type: "tool_confirm_request";
       ts: number;
       message_id: string;
@@ -301,6 +314,8 @@ export type ClientEvent =
       mentions?: string[];
       /** W4 F-W4-6：消息附件（已上传的 artifact_id 列表）。 */
       attachments?: Attachment[];
+      /** 对话式代码修改上下文。 */
+      edit_context?: EditContext;
     }
   | { type: "cancel"; message_id: string }
   | { type: "tool_confirm_response"; confirm_id: string; approved: boolean }

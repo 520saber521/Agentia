@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useChatStore } from "../../stores/useChatStore";
 
 interface Props {
   code?: string;
@@ -6,13 +7,15 @@ interface Props {
   title?: string;
   artifactId?: string | null;
   onEdit?: (artifactId: string) => void;
+  onFullscreen?: (type: "code" | "preview", artifactId: string) => void;
 }
 
-export function CodeBlock({ code, language, title, artifactId, onEdit }: Props) {
+export function CodeBlock({ code, language, title, artifactId, onEdit, onFullscreen }: Props) {
   const [copied, setCopied] = useState(false);
   const [loadedCode, setLoadedCode] = useState(code ?? "");
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const setEditContext = useChatStore((s) => s.setEditContext);
 
   useEffect(() => {
     if (code !== undefined) {
@@ -73,6 +76,31 @@ export function CodeBlock({ code, language, title, artifactId, onEdit }: Props) 
               className="text-xs text-muted hover:text-accent transition-colors"
             >
               编辑
+            </button>
+          )}
+          {loadedCode && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditContext({
+                  artifact_id: artifactId ?? "",
+                  code: loadedCode,
+                  language,
+                  title,
+                });
+              }}
+              className="text-xs text-muted hover:text-accent transition-colors"
+            >
+              描述修改
+            </button>
+          )}
+          {artifactId && onFullscreen && (
+            <button
+              type="button"
+              onClick={() => onFullscreen("code", artifactId)}
+              className="text-xs text-muted hover:text-fg transition-colors"
+            >
+              全屏
             </button>
           )}
           <button

@@ -3,6 +3,7 @@ interface Props {
   mimeType: string;
   fileSize: number;
   downloadUrl: string;
+  artifactId?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -19,7 +20,20 @@ function shortMime(mimeType: string): string {
   return `${family}/${subtype.split(";")[0]}`;
 }
 
-export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
+function canPreviewFile(fileName: string, mimeType: string): boolean {
+  const ext = fileName.toLowerCase().split(".").pop() || "";
+  const previewableExts = ["pptx", "ppt", "md", "markdown", "txt", "csv", "log"];
+  if (previewableExts.includes(ext)) return true;
+  const t = mimeType.toLowerCase();
+  if (t.includes("presentation") || t.includes("powerpoint")) return true;
+  if (t.includes("markdown") || t === "text/plain" || t === "text/csv") return true;
+  return false;
+}
+
+export function FileCard({ fileName, mimeType, fileSize, downloadUrl, artifactId }: Props) {
+  const previewable = canPreviewFile(fileName, mimeType);
+  const viewerUrl = artifactId ? `/preview/${encodeURIComponent(artifactId)}/viewer` : "";
+
   return (
     <div className="rounded-xl border border-border bg-panel p-3 my-2 shadow-[0_8px_24px_rgba(0,0,0,0.14)]">
       <div className="flex items-center gap-3">
@@ -38,15 +52,28 @@ export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
             <span className="truncate">{shortMime(mimeType)}</span>
             <span aria-hidden="true">•</span>
             <span className="shrink-0">{formatSize(fileSize)}</span>
+            {previewable && <span className="text-accent shrink-0">可预览</span>}
           </div>
         </div>
-        <a
-          href={downloadUrl}
-          download={fileName}
-          className="shrink-0 rounded-full border border-accent/30 px-3 py-1.5 text-xs text-accent hover:bg-accent/10 transition-colors"
-        >
-          下载
-        </a>
+        <div className="flex items-center gap-2 shrink-0">
+          {previewable && viewerUrl && (
+            <a
+              href={viewerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-full border border-border px-3 py-1.5 text-xs text-muted hover:text-accent hover:bg-bg transition-colors"
+            >
+              预览
+            </a>
+          )}
+          <a
+            href={downloadUrl}
+            download={fileName}
+            className="rounded-full border border-accent/30 px-3 py-1.5 text-xs text-accent hover:bg-accent/10 transition-colors"
+          >
+            下载
+          </a>
+        </div>
       </div>
     </div>
   );

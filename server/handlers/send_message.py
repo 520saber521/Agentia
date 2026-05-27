@@ -270,6 +270,8 @@ async def handle(conn: Connection, evt: dict[str, Any]) -> None:
     for _aid, _mid, mdict in agent_msgs:
         await conn.send(event("message_created", message=mdict))
 
+    edit_context = evt.get("edit_context")
+
     has_orchestrator = ORCHESTRATOR_AGENT_ID in target_agent_ids
     non_orch_agents = [a for a in target_agent_ids if a != ORCHESTRATOR_AGENT_ID]
 
@@ -307,7 +309,7 @@ async def handle(conn: Connection, evt: dict[str, Any]) -> None:
                 name=f"orchestrator-{mid}",
             )
         else:
-            coro = run_agent_reply(conn, aid, mid, conversation_id, user_text)
+            coro = run_agent_reply(conn, aid, mid, conversation_id, user_text, edit_context)
             task = asyncio.create_task(
                 _wrap_agent_task(coro, mid),
                 name=f"agent-reply-{mid}",

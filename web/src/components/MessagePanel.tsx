@@ -7,9 +7,10 @@ import { CollaborationProgressCard } from "./CollaborationProgressCard";
 
 interface Props {
   onEditArtifact?: (artifactId: string) => void;
+  onFullscreen?: (type: "code" | "preview", artifactId: string) => void;
 }
 
-export function MessagePanel({ onEditArtifact }: Props) {
+export function MessagePanel({ onEditArtifact, onFullscreen }: Props) {
   const messages = useChatStore((s) => s.messages);
   const streamingIds = useChatStore((s) => s.streamingMessageIds);
   const agentTyping = useChatStore((s) => s.agentTyping);
@@ -98,8 +99,6 @@ export function MessagePanel({ onEditArtifact }: Props) {
           </div>
         </div>
       )}
-        </div>
-      )}
 
       <div
         ref={scrollRef}
@@ -117,6 +116,7 @@ export function MessagePanel({ onEditArtifact }: Props) {
             msg={m}
             streaming={streamingIds.includes(m.id)}
             onEditArtifact={onEditArtifact}
+            onFullscreen={onFullscreen}
           />
         ))}
         {currentTasks.length > 0 && (
