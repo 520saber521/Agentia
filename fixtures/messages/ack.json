@@ -1,0 +1,8 @@
+{
+  "v": "1",
+  "type": "ack",
+  "ack_stage": "accepted",
+  "corr": "sess-123-2-155",
+  "agent": "B",
+  "ts": 1690000300500
+}

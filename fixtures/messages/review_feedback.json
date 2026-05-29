@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "session": "sess-123",
+  "epoch": 2,
+  "seq": 102,
+  "id": "sess-123-2-102",
+  "agent_instance": "B-01",
+  "from": "B",
+  "to": ["MAIN"],
+  "type": "report",
+  "action": "review_feedback",
+  "task_id": "DOC-20240318-0001",
+  "corr": "sess-123-2-100",
+  "ts": 1690000200,
+  "body_encoding": "json",
+  "body": "{\"doc_path\":\"docs/design.md\",\"has_issues\":true,\"issue_count\":2,\"issues\":[{\"doc_path\":\"docs/design.md#L110\",\"code_path\":\"src/router.py#L50\",\"category\":\"func\",\"severity\":\"high\",\"summary\":\"seq/id generation conflicts with router\",\"suggestion\":\"router assigns seq/id\"},{\"doc_path\":\"docs/design.md#L140\",\"category\":\"docs\",\"severity\":\"medium\",\"summary\":\"ack timeout missing\",\"suggestion\":\"document ack_timeout\"}],\"summary\":\"2 issues found\",\"questions\":[\"Should corr be required for all replies?\"]}"
+}

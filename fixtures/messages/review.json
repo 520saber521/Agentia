@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "session": "sess-123",
+  "epoch": 2,
+  "seq": 100,
+  "id": "sess-123-2-100",
+  "agent_instance": "MAIN-01",
+  "from": "MAIN",
+  "to": ["A", "B"],
+  "type": "ask",
+  "action": "review",
+  "task_id": "DOC-20240318-0001",
+  "owner": "MAIN",
+  "ts": 1690000000,
+  "body_encoding": "json",
+  "body": "{\"doc_path\":\"docs/design.md\",\"focus\":[\"func\",\"perf\"],\"reviewers\":[\"A\",\"B\"],\"review_deadline\":1690003600}"
+}

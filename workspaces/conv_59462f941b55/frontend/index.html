@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QQ网页版</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 登录页面 -->
+    <div id="loginPage" class="page active">
+      <div class="login-container">
+        <div class="login-header">
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%2307c160'/%3E%3Ctext x='50' y='65' font-size='40' fill='white' text-anchor='middle' font-family='Arial'%3EQQ%3C/text%3E%3C/svg%3E" alt="QQ Logo" class="logo">
+          <h2>欢迎登录QQ网页版</h2>
+        </div>
+        <div class="login-form">
+          <div class="input-group">
+            <input type="text" id="loginUsername" placeholder="用户名" autocomplete="username">
+          </div>
+          <div class="input-group">
+            <input type="password" id="loginPassword" placeholder="密码" autocomplete="current-password">
+          </div>
+          <div id="loginError" class="error-message"></div>
+          <button id="loginBtn" class="btn-primary">登 录</button>
+          <p class="register-link">还没有账号？<a href="#" id="showRegister">立即注册</a></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 注册页面 -->
+    <div id="registerPage" class="page">
+      <div class="login-container">
+        <div class="login-header">
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%2307c160'/%3E%3Ctext x='50' y='65' font-size='40' fill='white' text-anchor='middle' font-family='Arial'%3EQQ%3C/text%3E%3C/svg%3E" alt="QQ Logo" class="logo">
+          <h2>注册新账号</h2>
+        </div>
+        <div class="login-form">
+          <div class="input-group">
+            <input type="text" id="regUsername" placeholder="用户名" autocomplete="off">
+          </div>
+          <div class="input-group">
+            <input type="password" id="regPassword" placeholder="密码" autocomplete="new-password">
+          </div>
+          <div class="input-group">
+            <input type="text" id="regNickname" placeholder="昵称（可选）" autocomplete="off">
+          </div>
+          <div id="regError" class="error-message"></div>
+          <button id="registerBtn" class="btn-primary">注 册</button>
+          <p class="register-link">已有账号？<a href="#" id="showLogin">返回登录</a></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主聊天页面 -->
+    <div id="chatPage" class="page">
+      <div class="chat-layout">
+        <!-- 左侧面板 -->
+        <div class="left-panel">
+          <div class="user-info">
+            <div class="user-avatar" id="myAvatar">
+              <span id="myAvatarLetter">U</span>
+            </div>
+            <div class="user-details">
+              <span class="user-nickname" id="myNickname">用户</span>
+              <span class="user-signature" id="mySignature">状态</span>
+            </div>
+            <button id="logoutBtn" class="logout-btn" title="退出登录">×</button>
+          </div>
+          <div class="search-bar">
+            <input type="text" id="searchInput" placeholder="搜索好友">
+          </div>
+          <div class="friend-list" id="friendList">
+            <!-- 动态渲染 -->
+          </div>
+          <div class="add-friend-section">
+            <input type="text" id="addFriendInput" placeholder="输入用户名添加好友">
+            <button id="addFriendBtn">添加</button>
+          </div>
+        </div>
+        <!-- 右侧聊天面板 -->
+        <div class="right-panel">
+          <div class="chat-header" id="chatHeader">
+            <span id="chatFriendName">选择一个好友开始聊天</span>
+          </div>
+          <div class="chat-messages" id="chatMessages">
+            <div class="empty-chat">请从左侧选择好友开始聊天</div>
+          </div>
+          <div class="chat-input-area">
+            <div class="emoji-bar">
+              <button id="emojiBtn" title="选择表情">😊</button>
+              <div class="emoji-picker" id="emojiPicker" style="display:none;">
+                <span>😀</span><span>😂</span><span>😍</span><span>😎</span><span>😭</span>
+                <span>🥰</span><span>🤔</span><span>😘</span><span>👍</span><span>❤️</span>
+                <span>🔥</span><span>🎉</span><span>💔</span><span>😜</span><span>😱</span>
+              </div>
+            </div>
+            <textarea id="messageInput" placeholder="输入消息..." rows="3"></textarea>
+            <button id="sendBtn" class="btn-send">发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

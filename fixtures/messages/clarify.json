@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "session": "sess-123",
+  "epoch": 2,
+  "seq": 101,
+  "id": "sess-123-2-101",
+  "agent_instance": "A-01",
+  "from": "A",
+  "to": ["MAIN"],
+  "type": "ask",
+  "action": "clarify",
+  "task_id": "DOC-20240318-0001",
+  "owner": "MAIN",
+  "ts": 1690000100,
+  "body_encoding": "json",
+  "body": "{\"code_path\":\"src/router.py#L145\",\"question\":\"retry backoff?\",\"context\":\"current retry is fixed 500ms\",\"expected\":\"is exponential required?\",\"doc_path\":\"docs/design.md#L120\"}"
+}

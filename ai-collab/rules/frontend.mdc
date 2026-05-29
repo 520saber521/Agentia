@@ -1,0 +1,51 @@
+---
+description: AgentHub v2 Web 前端代码硬约束
+globs: ["web/src/**/*.{ts,tsx}"]
+alwaysApply: true
+---
+
+# Frontend Rules (web/src/**/*.{ts,tsx})
+
+> 目标：让前端在"网络抖动 / 服务端事件乱序 / 用户狂点取消"下都能稳定。
+
+## R-F-1 ServerEvent 消费走 reducer 单一真源
+
+- **禁止** 在 `ws.onEvent(...)` 回调里直接 `set({...})`。
+- 所有事件 → 状态的映射必须经过 `web/src/stores/reducer.ts` 的 `reduceEvent(state, evt)`。
+- reducer 必须保持纯（不读时钟、不发请求、不 `console.error`）；副作用通过返回的 `effects` 列表让调用方执行。
+
+## R-F-2 reducer 任何修改必须先有失败用例
+
+- 修 reducer 之前：先在 `reducer.test.ts` 里加一个表现期望行为的失败用例。
+- 再让用例变绿。
+- 这是"TDD 半步走"，但对 reducer 这种纯函数性价比最高。
+
+## R-F-3 不要在组件里直接调 `fetch`
+
+- REST 调用统一走 `web/src/api/client.ts` 导出的函数。
+- 组件只 `useChatStore` 拿数据 / 触发 action。这样换 baseURL / 加错误中间件时不用满项目搜 `fetch(`。
+
+## R-F-4 WS 客户端只能有一个
+
+- `WSClient` 必须是模块级单例（当前在 `useChatStore.ts` 顶部 `const ws = new WSClient()`）。
+- 禁止在组件里 `new WSClient()`，否则会有多条连接抢消息。
+
+## R-F-5 异步取消优先于状态守卫
+
+- 凡是依赖 `currentConvId` 的 effect：在最新 `currentConvId` 已变时 **不要 set 旧数据**。
+- 当前 `selectConversation` 已经在 set 之前清空 messages 再赋值，新增 effect 时要保留这个语义。
+
+## R-F-6 Tailwind 颜色不要写死
+
+- 颜色一律用 `tailwind.config.js` 里声明的语义化色（`bg / panel / fg / muted / accent / border`）。
+- 禁止 `text-[#fff]` / `bg-[#1a1a1a]` 这种内联 hex。改主题时是单点修改。
+
+## R-F-7 错误不能静默
+
+- API 调用失败、WS error 事件、组件 try/catch：必须 ≥1 处反馈给用户（模态文案 / Header badge / Console error）。
+- 当前最低线：`refreshConversations` / `fetchMessages` 失败要 `console.error`；后续加 toast 时把它升级。
+
+## R-F-8 文件大小阈值
+
+- 单文件 ≤ 250 行；超了拆 component / 拆 hook。
+- 这条不是迷信，是给 AI 协作留缓冲：一个 file 太长，diff 出错率指数上升。

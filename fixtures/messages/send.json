@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "session": "sess-123",
+  "epoch": 2,
+  "seq": 107,
+  "id": "sess-123-2-107",
+  "agent_instance": "MAIN-01",
+  "from": "MAIN",
+  "to": ["A"],
+  "type": "send",
+  "action": "answer",
+  "task_id": "DOC-20240318-0001",
+  "corr": "sess-123-2-101",
+  "ts": 1690000700,
+  "body_encoding": "json",
+  "body": "{\"strategy\":\"exponential_backoff\",\"base_delay_ms\":100,\"max_delay_ms\":5000,\"max_retries\":3,\"doc_updated\":true}"
+}
