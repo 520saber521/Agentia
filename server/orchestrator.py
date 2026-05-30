@@ -1097,9 +1097,9 @@ async def _generate_preview_html_with_model(
     adapter, _display_name, _agent_meta = loaded
     if hasattr(adapter, "max_tokens"):
         try:
-            adapter.max_tokens = max(int(getattr(adapter, "max_tokens", 0)), 12000)
+            adapter.max_tokens = max(int(getattr(adapter, "max_tokens", 0)), 60000)
         except (TypeError, ValueError):
-            adapter.max_tokens = 12000
+            adapter.max_tokens = 60000
 
     # Enrich prompt with workspace file contents when available
     workspace_file_contents = await _read_workspace_files_for_preview(conversation_id)
@@ -1793,10 +1793,17 @@ async def handle_orchestrator_mention(
     w4_artifact: dict[str, Any] | None = None
 
     if all_done:
-        summary_text = (
-            "**协作完成**\n\n"
-            f"Orchestrator 已汇总 {len(subtask_records)} 个 Agent 子任务产出：\n"
-        )
+        summary_text = "**协作完成**\n\n"
+
+        if demo_mode:
+            summary_text += (
+                "所有子任务已执行完毕，各 Agent 已完成其领域的工作。\n"
+                "最终交付清单：\n"
+                "1. 前端页面：登录页代码与预览卡片\n"
+                "2. 后端接口：登录 API 设计、请求响应和错误处理\n"
+                "3. 数据库：用户表结构、约束和索引建议\n"
+                "4. 测试验收：核心测试用例和验收清单\n"
+            )
 
         if _should_create_w4_preview(user_text):
             try:
@@ -1826,19 +1833,13 @@ async def handle_orchestrator_mention(
                         },
                     )
                     w4_artifact = artifact
-                summary_text += f"\n已生成网页预览产物：`{artifact['id']}` ({preview_source})\n"
+                summary_text += f"\n已生成网页预览产物 (来源: {preview_source})\n"
             except Exception as exc:
                 logger.warning("Failed to create W4 preview artifact: %s", exc)
-        for st, agent_name, aid, is_, deps in subtask_records:
-            summary_text += f"- {agent_name}：{st.title[:80]}\n"
-        if demo_mode:
-            summary_text += (
-                "\n最终交付清单：\n"
-                "1. 前端页面：登录页代码与预览卡片\n"
-                "2. 鍚庣鎺ュ彛锛氱櫥褰?API 璁捐銆佽姹傚搷搴斿拰閿欒澶勭悊\n"
-                "3. 数据库：用户表结构、约束和索引建议\n"
-                "4. 娴嬭瘯楠屾敹锛氭牳蹇冩祴璇曠敤渚嬪拰楠屾敹娓呭崟\n"
-            )
+                summary_text += "\n⚠️ 网页预览生成失败，请检查各 Agent 输出。\n"
+        elif not demo_mode:
+            for st, agent_name, aid, is_, deps in subtask_records:
+                summary_text += f"- {agent_name} 已完成：{st.title[:80]}\n"
         summary_text += f"\n{_conflict_resolution_note(subtask_records)}\n"
 
         async with Session() as s:
@@ -1973,38 +1974,25 @@ async def handle_orchestrator_mention(
             parent = await update_task_status(s, parent_id, "failed",
                 result_summary="Some subtasks were blocked by unresolved dependencies")
 
-    # 9. Send summary as a message in chat
-    summary_msg_id = new_id("msg")
-    async with Session() as s:
-        msg_obj = await create_service_message(
-            s,
-            conversation_id=conversation_id,
-            sender_id=ORCHESTRATOR_AGENT_ID,
-            sender_type="agent",
-            content={"type": "text", "text": summary_text},
-            message_id=summary_msg_id,
-        )
-        summary_msg_dict = message_to_dict(msg_obj)
-
-    await conn.send(event("message_created", message=summary_msg_dict))
-
-    async with Session() as s:
-        await update_message_content(s, summary_msg_id, {"type": "text", "text": summary_text})
-
+    # 9. Append summary to the originating orchestrator message instead of creating a duplicate bubble
+    full_text = process_text + dispatch_intro + "\n\n" + summary_text
     await conn.send(event(
-        "message_done",
-        message_id=summary_msg_id,
+        "stream_chunk",
+        message_id=originating_message_id,
         sender_id=ORCHESTRATOR_AGENT_ID,
         conversation_id=conversation_id,
-        final_content={"type": "text", "text": summary_text},
+        seq=999,
+        delta="\n\n" + summary_text,
     ))
+    async with Session() as s:
+        await update_message_content(s, originating_message_id, {"type": "text", "text": full_text})
 
     await conn.send(event(
         "message_done",
         message_id=originating_message_id,
         sender_id=ORCHESTRATOR_AGENT_ID,
         conversation_id=conversation_id,
-        final_content={"type": "text", "text": process_text},
+        final_content={"type": "text", "text": full_text},
     ))
     animation_bus.agent_status(
         conversation_id=conversation_id,
@@ -2066,6 +2054,60 @@ async def handle_orchestrator_mention(
                 parent_id, len(subtask_records), len(completed_ids), len(failed_ids))
 
 
+_DOMAIN_GUARDS = {
+    "frontend": (
+        "IMPORTANT: You are the FRONTEND specialist ONLY.\n"
+        "Do: HTML structure, CSS styling, JavaScript interaction, UI layout, responsive design, component code.\n"
+        "Do NOT: API design, database schemas, SQL, test cases, deployment config, backend logic.\n"
+        "If the user request mentions backend/API/database/testing, IGNORE those parts completely.\n"
+        "Output ONLY frontend code or preview artifacts. Nothing else."
+    ),
+    "backend": (
+        "IMPORTANT: You are the BACKEND specialist ONLY.\n"
+        "Do: API design, route handlers, business logic, middleware, auth, service architecture.\n"
+        "Do NOT: HTML pages, CSS styling, frontend UI, database schema design, test writing.\n"
+        "If the user request mentions frontend/UI/database/testing, IGNORE those parts completely.\n"
+        "Output ONLY backend design and code. Nothing else."
+    ),
+    "database": (
+        "IMPORTANT: You are the DATABASE specialist ONLY.\n"
+        "Do: Table schemas, SQL queries, indexes, migrations, data modeling, ORM mapping.\n"
+        "Do NOT: HTML/CSS/JS, API route design, frontend code, test case generation.\n"
+        "If the user request mentions frontend/backend/testing, IGNORE those parts completely.\n"
+        "Output ONLY database design and SQL. Nothing else."
+    ),
+    "test": (
+        "IMPORTANT: You are the TESTING specialist ONLY.\n"
+        "Do: Test cases, test plans, QA checklists, acceptance criteria, testing strategy.\n"
+        "Do NOT: Write application code (HTML/CSS/JS/Python), design APIs, create database schemas.\n"
+        "Output ONLY testing artifacts. Nothing else."
+    ),
+    "docs": (
+        "IMPORTANT: You are the DOCUMENTATION specialist ONLY.\n"
+        "Do: README, technical docs, API documentation, architecture overviews.\n"
+        "Do NOT: Write implementation code, design databases, deploy infrastructure.\n"
+        "Output ONLY documentation. Nothing else."
+    ),
+    "devops": (
+        "IMPORTANT: You are the DEVOPS specialist ONLY.\n"
+        "Do: CI/CD pipelines, Docker configs, deployment scripts, build tooling.\n"
+        "Do NOT: Write application code (HTML/CSS/JS/Python), design UI, create test cases.\n"
+        "Output ONLY devops/deployment artifacts. Nothing else."
+    ),
+    "code": (
+        "You are a general coding assistant. Produce the best output for the given task."
+    ),
+}
+
+
+def _extract_domain_instructions(domain: str, description: str) -> str:
+    domain_lower = (domain or "").lower().strip()
+    guard = _DOMAIN_GUARDS.get(domain_lower, "")
+    if not guard:
+        return f"Focus exclusively on {domain_lower or 'the assigned'} domain. Description: {description[:200]}"
+    return guard
+
+
 async def _dispatch_subtask_with_result(
     conn: Connection,
     st: Any,
@@ -2106,10 +2148,11 @@ async def _dispatch_subtask_with_result(
 
     agent_prompt = (
         f"[Orchestrator Subtask Assignment]\n\n"
-        f"**Original Input**: {user_text}\n"
-        f"**Task**: {st.title}\n"
-        f"**Domain**: {st.domain}\n"
-        f"**Description**: {st.description}\n"
+        f"**Original Request**: {user_text}\n"
+        f"**Your Subtask**: {st.title}\n"
+        f"**Your Domain**: {st.domain}\n"
+        f"**What You Should Do**: {_extract_domain_instructions(st.domain, st.description)}\n"
+        f"**Full Description**: {st.description}\n"
         f"{pinned_block}"
     )
 

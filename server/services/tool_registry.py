@@ -527,13 +527,31 @@ def _normalize_generated_content(content: str, mime_type: str = "") -> str:
     text = content.strip()
     if text.startswith("_call"):
         text = text[5:].strip()
-    if text.startswith("{") and ('"name"' in text or '"arguments"' in text):
+    if text.startswith("```tool_call"):
+        text = re.sub(r"^```tool_call\s*", "", text).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+    if text.startswith("{") and ('"name"' in text or '"arguments"' in text or '"content"' in text):
         try:
             parsed = json.loads(text)
-            if isinstance(parsed, dict) and "content" in parsed:
-                text = parsed["content"]
-            elif isinstance(parsed, str):
-                text = parsed
+
+            def extract(value: Any) -> str | None:
+                if isinstance(value, str):
+                    return value if value.strip() else None
+                if not isinstance(value, dict):
+                    return None
+                for key in ("content", "text", "result"):
+                    item = value.get(key)
+                    if isinstance(item, str) and item.strip():
+                        return item
+                for key in ("arguments", "args", "parameters", "input", "data", "payload"):
+                    item = extract(value.get(key))
+                    if item:
+                        return item
+                return None
+
+            extracted = extract(parsed)
+            if extracted:
+                text = extracted
         except (json.JSONDecodeError, TypeError):
             pass
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
@@ -587,6 +605,8 @@ async def _create_artifact_tool(
         return "Error: conversation_id unavailable"
     if kind not in ("file", "code", "preview", "diff"):
         return "Error: kind must be one of: file, code, preview, diff"
+    if kind == "preview" and (not mime_type or mime_type.strip() == "text/plain"):
+        mime_type = "text/html"
     if not title or not title.strip():
         return "Error: title required"
     if not content or not content.strip():
@@ -768,7 +788,7 @@ _BUILTIN_TOOLS: list[dict[str, Any]] = [
                     "description": "Artifact kind: 'file' for generic files (reports, docs), 'code' for source code, 'preview' for HTML pages, 'diff' for code changes.",
                 },
                 "title": {"type": "string", "description": "Human-readable title for the artifact."},
-                "mime_type": {"type": "string", "description": "MIME type, e.g. 'text/markdown', 'application/json', 'text/x-python'.", "default": "text/plain"},
+                "mime_type": {"type": "string", "description": "MIME type. 'kind=preview' must use 'text/html'. Other examples: 'text/markdown', 'application/json', 'text/x-python'.", "default": "text/plain"},
                 "file_name": {"type": "string", "description": "File name with extension, e.g. 'test_report.md', 'config.yml'.", "default": ""},
                 "content": {"type": "string", "description": "The complete file content."},
             },

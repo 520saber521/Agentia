@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { fetchArtifactContent } from "../../api/client";
+import { formatHtml } from "../../formatHtml";
 
 interface Props {
   artifactId: string;
@@ -58,7 +59,10 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
     setLoading(true);
     setError(null);
     fetchArtifactContent(artifactId)
-      .then((value) => setContent(value.trim() || fallbackHtml(title)))
+      .then((value) => {
+        const formatted = formatHtml(value.trim());
+        setContent(formatted || fallbackHtml(title));
+      })
       .catch((err) => {
         setContent(fallbackHtml(title));
         setError(err instanceof Error ? err.message : "预览内容加载失败");

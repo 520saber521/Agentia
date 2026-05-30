@@ -4,6 +4,7 @@ import Editor from "@monaco-editor/react";
 import { fetchArtifactContent, saveArtifactVersion, describeApiError } from "../api/client";
 import type { Artifact } from "../types";
 import { VersionHistoryPanel } from "./VersionHistoryPanel";
+import { formatHtml } from "../formatHtml";
 
 interface Props {
   artifact: Artifact;
@@ -70,8 +71,9 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     fetchArtifactContent(currentArtifact.id)
       .then((c) => {
         if (!cancelled) {
-          setContent(c);
-          setOriginalContent(c);
+          const formatted = language === "html" ? formatHtml(c) : c;
+          setContent(formatted);
+          setOriginalContent(formatted);
           setLoading(false);
         }
       })
@@ -130,21 +132,22 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
+  const language = detectLanguage(currentArtifact);
+
   const handleSelectVersion = useCallback(async (versionArtifactId: string, _versionNumber: number) => {
     try {
       setLoading(true);
       setLoadError(null);
       const c = await fetchArtifactContent(versionArtifactId);
-      setContent(c);
-      setOriginalContent(c);
+      const formatted = language === "html" ? formatHtml(c) : c;
+      setContent(formatted);
+      setOriginalContent(formatted);
       setLoading(false);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "版本加载失败");
       setLoading(false);
     }
-  }, []);
-
-  const language = detectLanguage(currentArtifact);
+  }, [language]);
 
   return (
     <div
