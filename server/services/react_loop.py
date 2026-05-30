@@ -44,12 +44,106 @@ logger = logging.getLogger("agenthub.services.react_loop")
 # ---------------------------------------------------------------------------
 
 _TOOL_CALL_BLOCK_RE = re.compile(
-    r"```(?:tool_call|tool)\s*\n(.+?)```", re.DOTALL
+    r"```(?:tool_call|tool|tool_call_call)\s*\n(.+?)(?:```|$)", re.DOTALL
+)
+_TOOL_CALL_LEAK_RE = re.compile(
+    r"(?:^|\n)\s*(?:tool)?`{0,3}(?:tool_call|tool_call_call)\b[\s\S]*$",
+    re.MULTILINE,
 )
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 _TOOL_CALL_START = re.compile(r"```(?:tool_call|tool)\s*\n")
+
+# Raw XML tool-call fragments that leak from non-FC models (e.g. DeepSeek / SDK text)
+_RAW_TOOL_CALLS_BLOCK_RE = re.compile(
+    r"<\s*tool_calls\s*>[\s\S]*?<\s*/\s*tool_calls\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_RAW_INVOKE_BLOCK_RE = re.compile(
+    r"<\s*invoke\s+name\s*=\s*[\"'][^\"'>]+[\"'][^>]*>[\s\S]*?<\s*/\s*invoke\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_RAW_INVOKE_SELF_CLOSE_RE = re.compile(
+    r"<\s*invoke\s+name\s*=\s*[\"'][^\"'>]+[\"'][^>]*/\s*>",
+    re.IGNORECASE,
+)
+_BARE_TOOL_CALLS_TAG_RE = re.compile(
+    r"<\s*/?\s*tool_calls\s*>",
+    re.IGNORECASE,
+)
+_BARE_INVOKE_TAG_RE = re.compile(
+    r"<\s*/?\s*invoke\b[^>]*>",
+    re.IGNORECASE,
+)
+_PARAMETER_TAG_RE = re.compile(
+    r"<\s*/?\s*parameter\b[^>]*>",
+    re.IGNORECASE,
+)
+
+# Some models (DeepSeek) leak raw XML-style tool-call fragments in text
+_INVOKE_TAG_RE = re.compile(r"<invoke\s+name\s*=\s*\"[^\"]+\"[^>]*>[\s\S]*?</invoke>", re.DOTALL)
+_DSML_TOOL_CALL_RE = re.compile(
+    r"<[|｜]{2}DSML[|｜]{2}tool_calls>[\s\S]*?</[|｜]{2}DSML[|｜]{2}tool_calls>",
+    re.DOTALL,
+)
+_DSML_TOOL_CALL_START_RE = re.compile(
+    r"<[|｜]{2}DSML[|｜]{2}tool_calls>",
+    re.DOTALL,
+)
+_DSML_INVOKE_BLOCK_RE = re.compile(
+    r"<[|｜]{2}DSML[|｜]{2}invoke\s+name\s*=\s*[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</[|｜]{2}DSML[|｜]{2}invoke>",
+    re.DOTALL,
+)
+_DSML_INVOKE_RE = re.compile(
+    r"</?[|｜]{2}DSML[|｜]{2}invoke[^>]*>",
+    re.DOTALL,
+)
+_TOOL_CALL_LINE_RE = re.compile(
+    r"^\s*(create_artifact|write_file|read_file|list_files|web_search|run_shell|create_agent|send_message)\s*$",
+    re.MULTILINE,
+)
+# Repeated open invoke tags without closing tags (DeepSeek quirk)
+_INVOKE_OPEN_TAG_RE = re.compile(
+    r"<invoke\s+name\s*=\s*\"[^\"]+\"[^>]*>",
+    re.IGNORECASE,
+)
+
+# DSML tool-call format WITHOUT angle brackets (DeepSeek variant):
+#   ｜DSML｜tool_calls>
+#   ｜DSML｜invoke name="create_artifact">
+#   {...json...}
+#   </｜DSML｜invoke>
+#   </｜DSML｜tool_calls>
+_DSML_TOOL_CALL_NO_BRACKET_RE = re.compile(
+    r"\n?[|｜]{2}DSML[|｜]{2}tool_calls>[\s\S]*?</[|｜]{2}DSML[|｜]{2}tool_calls>",
+    re.DOTALL,
+)
+_DSML_TOOL_CALL_NO_BRACKET_START_RE = re.compile(
+    r"[|｜]{2}DSML[|｜]{2}tool_calls>",
+    re.DOTALL,
+)
+_DSML_INVOKE_NO_BRACKET_BLOCK_RE = re.compile(
+    r"[|｜]{2}DSML[|｜]{2}invoke\s+name\s*=\s*[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</[|｜]{2}DSML[|｜]{2}invoke>",
+    re.DOTALL,
+)
+_DSML_INVOKE_NO_BRACKET_TAG_RE = re.compile(
+    r"</?[|｜]{2}DSML[|｜]{2}invoke[^>]*>",
+    re.DOTALL,
+)
+
+# Leaked tool_call remnants after block stripping (_call = remnant of tool_call)
+_TOOL_CALL_REMNANT_RE = re.compile(
+    r"(?:^|\n)\s*_call\b[\s\S]*?(?=\n(?:[^\s{]|$)|\Z)",
+    re.MULTILINE,
+)
+
+# Leaked JSON-looking tool call content that survived all other filters
+_TOOL_CALL_JSON_LEAK_RE = re.compile(
+    r'(?:^|\n)\s*"name"\s*:\s*"(?:create_artifact|write_file|read_file|list_files|web_search|run_shell)"[\s\S]*?'
+    r'(?:}\s*\n```|\n```|$)',
+    re.MULTILINE,
+)
 
 
 def _json_dumps_tool_args(args: Any) -> str:
@@ -72,7 +166,9 @@ def _native_tool_history_mode(adapter: AgentAdapter) -> str:
     """
     name = str(getattr(adapter, "name", "") or "").lower()
     if name in {"codex", "opencode"}:
-        return "openai"
+        base_url = str(getattr(adapter, "base_url", "") or "").rstrip("/")
+        if not base_url or base_url == "https://api.openai.com/v1":
+            return "openai"
     return "text"
 
 
@@ -127,7 +223,29 @@ class _ToolCallFilter:
                     self._buf = ""
                     break
 
-        return "".join(clean)
+        result = "".join(clean)
+        # Strip leaked DeepSeek DSML tool-call markup.
+        result = _DSML_TOOL_CALL_RE.sub("", result)
+        result = _DSML_TOOL_CALL_NO_BRACKET_RE.sub("", result)
+        result = _DSML_INVOKE_RE.sub("", result)
+        result = _DSML_INVOKE_NO_BRACKET_TAG_RE.sub("", result)
+        # Strip leaked raw XML-style invoke tags (DeepSeek quirk)
+        result = _INVOKE_TAG_RE.sub("", result)
+        result = _INVOKE_OPEN_TAG_RE.sub("", result)
+        # Strip raw XML tool-call blocks (Anthropic SDK / Claude Code style)
+        result = _RAW_TOOL_CALLS_BLOCK_RE.sub("", result)
+        result = _RAW_INVOKE_BLOCK_RE.sub("", result)
+        result = _RAW_INVOKE_SELF_CLOSE_RE.sub("", result)
+        # Strip bare leftover tags after block removal
+        result = _BARE_TOOL_CALLS_TAG_RE.sub("", result)
+        result = _BARE_INVOKE_TAG_RE.sub("", result)
+        result = _PARAMETER_TAG_RE.sub("", result)
+        result = _TOOL_CALL_LEAK_RE.sub("", result)
+        result = _TOOL_CALL_REMNANT_RE.sub("", result)
+        result = _TOOL_CALL_JSON_LEAK_RE.sub("", result)
+        # Strip standalone tool-name lines
+        result = _TOOL_CALL_LINE_RE.sub("", result)
+        return result
 
     def flush(self) -> str:
         """Return any remaining clean text after the stream ends."""
@@ -138,6 +256,72 @@ class _ToolCallFilter:
         tail = self._buf
         self._buf = ""
         return tail
+
+
+def _repair_repeated_key_text(text: str) -> str:
+    repaired = text
+    for key in ("name", "arguments", "path", "content", "kind", "title", "file_name", "mime_type"):
+        repeated = f"{key}{key}"
+        repaired = repaired.replace(repeated, key)
+    tool_aliases = {
+        "writewrite_file_file": "write_file",
+        "createcreate_artifactartifact": "create_artifact",
+        "createcreate_artifact_artifact": "create_artifact",
+        "readread_file_file": "read_file",
+        "listlist_files_files": "list_files",
+        "webweb_search_search": "web_search",
+        "runrun_shell_shell": "run_shell",
+    }
+    for bad, good in tool_aliases.items():
+        repaired = repaired.replace(bad, good)
+    for tool_name in ("write_file", "create_artifact", "read_file", "list_files", "web_search", "run_shell"):
+        repeated = f"{tool_name}{tool_name}"
+        repaired = repaired.replace(repeated, tool_name)
+    repaired = re.sub(r"\b([A-Za-z0-9_-]+)/\1/", r"\1/", repaired)
+    repaired = re.sub(r"\b([A-Za-z0-9_-]+)\.\1\.", r"\1.", repaired)
+    repaired = re.sub(r"\b([A-Za-z_][A-Za-z0-9_]{2,32})\1\b", r"\1", repaired)
+    return repaired
+
+
+def _coerce_tool_arguments(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return {
+            _repair_repeated_key_text(str(k)): (
+                _repair_repeated_key_text(v) if isinstance(v, str) else v
+            )
+            for k, v in raw.items()
+        }
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        text = _repair_repeated_key_text(raw.strip())
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+            return {"value": parsed}
+        except (json.JSONDecodeError, TypeError):
+            return {"text": text}
+    return {"value": raw}
+
+
+def _parse_dsml_tool_calls(text: str) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    for kind, container_re, invoke_re in [
+        ("bracket", _DSML_TOOL_CALL_RE, _DSML_INVOKE_BLOCK_RE),
+        ("no_bracket", _DSML_TOOL_CALL_NO_BRACKET_RE, _DSML_INVOKE_NO_BRACKET_BLOCK_RE),
+    ]:
+        for container in container_re.finditer(text):
+            block = container.group(0)
+            for invoke in invoke_re.finditer(block):
+                name = invoke.group(1).strip()
+                body = invoke.group(2).strip()
+                args = _coerce_tool_arguments(body)
+                if name:
+                    calls.append({"name": name, "arguments": args, "call_id": ""})
+    return calls
 
 
 def parse_tool_call_blocks(text: str) -> list[dict[str, Any]]:
@@ -154,9 +338,9 @@ def parse_tool_call_blocks(text: str) -> list[dict[str, Any]]:
 
     返回 ``[{"name": ..., "arguments": {...}}, ...]`` 列表。
     """
-    calls = []
+    calls = _parse_dsml_tool_calls(text)
     for m in _TOOL_CALL_BLOCK_RE.finditer(text):
-        block = m.group(1).strip()
+        block = _repair_repeated_key_text(m.group(1).strip())
         try:
             parsed = json.loads(block)
         except json.JSONDecodeError:
@@ -171,18 +355,17 @@ def parse_tool_call_blocks(text: str) -> list[dict[str, Any]]:
                 continue
 
         if isinstance(parsed, dict):
-            name = parsed.get("name", "")
-            args = parsed.get("arguments") or parsed.get("args") or {}
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {"text": args}
+            name = _repair_repeated_key_text(parsed.get("name", ""))
+            args = _coerce_tool_arguments(parsed.get("arguments") or parsed.get("args") or {})
             calls.append({"name": name, "arguments": args, "call_id": parsed.get("call_id", "")})
         elif isinstance(parsed, list):
             for item in parsed:
                 if isinstance(item, dict) and item.get("name"):
-                    calls.append(item)
+                    calls.append({
+                        "name": _repair_repeated_key_text(str(item.get("name", ""))),
+                        "arguments": _coerce_tool_arguments(item.get("arguments") or item.get("args") or {}),
+                        "call_id": str(item.get("call_id", "")),
+                    })
     return calls
 
 
@@ -367,7 +550,11 @@ class ReActEngine:
                     step_tool_calls = parse_tool_call_blocks(step_text)
 
                 if buffer_structured_tool_text and not step_tool_calls:
-                    if _TOOL_CALL_START.search(step_text):
+                    if (
+                        _TOOL_CALL_START.search(step_text)
+                        or _DSML_TOOL_CALL_START_RE.search(step_text)
+                        or _DSML_TOOL_CALL_NO_BRACKET_START_RE.search(step_text)
+                    ):
                         messages.append({
                             "role": "system",
                             "content": (
@@ -486,6 +673,27 @@ class ReActEngine:
                             ),
                         })
 
+                output_tool_names = {"create_artifact"}
+                if valid_calls and all(str(tc.get("name")) in output_tool_names for tc in valid_calls):
+                    successful_outputs = 0
+                    for result in results:
+                        result_text = str(result)
+                        if result_text.startswith("OK:"):
+                            successful_outputs += 1
+                            continue
+                        try:
+                            result_json = json.loads(result_text)
+                            if isinstance(result_json, dict) and result_json.get("ok"):
+                                successful_outputs += 1
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    if successful_outputs == len(valid_calls):
+                        if usage_chunk:
+                            yield usage_chunk
+                        yield {"type": "text", "delta": "\n\n已生成内容并写入 workspace。"}
+                        yield {"type": "done"}
+                        return
+
                 # After tool results: inject continuation hint so the agent
                 # doesn't stop after the first tool call. Non-FC models often
                 # treat tool results as "task complete" without this nudge.
@@ -549,25 +757,6 @@ class ReActEngine:
             cap_list = caps or []
         has_tool_cap = "tool_use" in cap_list
         lower_text = user_stripped.lower()
-
-        # Pure writing/document requests should not enter ReAct just because the
-        # model has tools. Non-native tool prompts often wrap long Markdown in a
-        # tool_call JSON block, which is brittle when the document itself
-        # contains fenced code examples. Let the normal final-text artifact path
-        # persist these as full Markdown documents.
-        doc_terms = (
-            "文档", "文章", "介绍", "教程", "说明", "报告",
-            "document", "article", "guide", "explain", "write-up",
-        )
-        tool_or_workspace_terms = (
-            "文件", "保存", "写入", "修改", "代码", "网页", "搜索", "查找",
-            "html", "css", "javascript", "typescript", "workspace",
-            "file", "save", "write file", "modify", "code", "web", "search",
-        )
-        if any(term in lower_text for term in doc_terms) and not any(
-            term in lower_text for term in tool_or_workspace_terms
-        ):
-            return False
 
         # 操作意图关键词（中英文）
         intent_keywords = [

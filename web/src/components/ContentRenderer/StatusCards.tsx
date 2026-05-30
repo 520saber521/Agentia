@@ -8,6 +8,9 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "text-red-400 border-red-500/40 bg-red-500/5",
   blocked: "text-rose-400 border-rose-500/40 bg-rose-500/5",
   conflict: "text-orange-400 border-orange-500/40 bg-orange-500/5",
+  building: "text-blue-400 border-blue-500/40 bg-blue-500/5",
+  deploying: "text-amber-400 border-amber-500/40 bg-amber-500/5",
+  deployed: "text-emerald-400 border-emerald-500/40 bg-emerald-500/5",
 };
 
 interface TaskStatusProps {
@@ -55,6 +58,8 @@ export function TaskStatusInlineCard({ content }: TaskStatusProps) {
 }
 
 export function DeployStatusCard({ content }: DeployStatusProps) {
+  const progress = Math.max(0, Math.min(100, Number(content.progress ?? 0)));
+
   return (
     <div className="rounded-xl border border-border bg-panel p-3 my-2">
       <div className="flex items-start justify-between gap-3">
@@ -82,8 +87,16 @@ export function DeployStatusCard({ content }: DeployStatusProps) {
           {content.status}
         </span>
       </div>
+      {progress > 0 && (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-bg border border-border">
+          <div
+            className="h-full rounded-full bg-accent transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
       <div className="mt-2 text-[10px] text-muted truncate">
-        deploy · {content.deploy_id}
+        deploy · {content.deploy_id}{progress > 0 ? ` · ${progress}%` : ""}
       </div>
     </div>
   );

@@ -38,6 +38,11 @@ from services.artifact import (
     read_artifact_content_with_session as read_service_artifact_content,
 )
 from services.animation_bus import animation_bus
+from services.deploy import (
+    generate_preview_url,
+    get_build_output_dir,
+    is_deploy_request,
+)
 from services.react_loop import ReActEngine
 from services.task import (
     create_task,
@@ -60,7 +65,114 @@ from dag_engine import DAG, DAGNode, DAGExecutor
 
 logger = logging.getLogger("agenthub.orchestrator")
 
+DSML_TOOL_CALL_RE = re.compile(
+    r"<[|｜]{2}DSML[|｜]{2}tool_calls>[\s\S]*?</[|｜]{2}DSML[|｜]{2}tool_calls>",
+    re.DOTALL,
+)
+DSML_INVOKE_RE = re.compile(r"</?[|｜]{2}DSML[|｜]{2}invoke[^>]*>", re.DOTALL)
+TOOL_CALL_BLOCK_RE = re.compile(r"```(?:tool_call|tool|tool_call_call)[\s\S]*?(?:```|$)", re.MULTILINE)
+TOOL_CALL_LEAK_RE = re.compile(r"(?:^|\n)\s*(?:tool)?`{0,3}(?:tool_call|tool_call_call)\b[\s\S]*$", re.MULTILINE)
+
+# Raw XML tool-call tags that some models leak into visible text output.
+_RAW_TOOL_CALLS_BLOCK_RE = re.compile(
+    r"<\s*tool_calls\s*>[\s\S]*?<\s*/\s*tool_calls\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_RAW_INVOKE_BLOCK_RE = re.compile(
+    r"<\s*invoke\s+name\s*=\s*[\"'][^\"'>]+[\"'][^>]*>[\s\S]*?<\s*/\s*invoke\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_RAW_INVOKE_SELF_CLOSE_RE = re.compile(
+    r"<\s*invoke\s+name\s*=\s*[\"'][^\"'>]+[\"'][^>]*/\s*>",
+    re.IGNORECASE,
+)
+_BARE_TOOL_CALLS_TAG_RE = re.compile(
+    r"<\s*/?\s*tool_calls\s*>",
+    re.IGNORECASE,
+)
+_BARE_INVOKE_TAG_RE = re.compile(
+    r"<\s*/?\s*invoke\b[^>]*>",
+    re.IGNORECASE,
+)
+_PARAMETER_TAG_RE = re.compile(
+    r"<\s*/?\s*parameter\b[^>]*>",
+    re.IGNORECASE,
+)
+# Full invoke block with closing tag (non-greedy DOTALL)
+_INVOKE_TAG_RE = re.compile(
+    r"<invoke\s+name\s*=\s*\"[^\"]+\"[^>]*>[\s\S]*?</invoke>",
+    re.DOTALL,
+)
+# Standalone tool-name lines (model leaks tool names as text)
+_TOOL_CALL_LINE_RE = re.compile(
+    r"^\s*(create_artifact|write_file|read_file|list_files|web_search|run_shell|create_agent|send_message)\s*$",
+    re.MULTILINE,
+)
+# Repeated open invoke tags without closing tags (DeepSeek quirk)
+_INVOKE_OPEN_TAG_RE = re.compile(
+    r"<invoke\s+name\s*=\s*\"[^\"]+\"[^>]*>",
+    re.IGNORECASE,
+)
+_DUP_CJK_RE = re.compile(r"([\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af])\1+")
+
+_DSML_TOOL_CALL_NO_BRACKET_RE = re.compile(
+    r"\n?[|｜]{2}DSML[|｜]{2}tool_calls>[\s\S]*?</[|｜]{2}DSML[|｜]{2}tool_calls>",
+    re.DOTALL,
+)
+_DSML_INVOKE_NO_BRACKET_TAG_RE = re.compile(
+    r"</?[|｜]{2}DSML[|｜]{2}invoke[^>]*>",
+    re.DOTALL,
+)
+_TOOL_CALL_REMNANT_RE = re.compile(
+    r"(?:^|\n)\s*_call\b[\s\S]*?(?=\n(?:[^\s{]|$)|\Z)",
+    re.MULTILINE,
+)
+_TOOL_CALL_JSON_LEAK_RE = re.compile(
+    r'(?:^|\n)\s*"name"\s*:\s*"(?:create_artifact|write_file|read_file|list_files|web_search|run_shell)"[\s\S]*?'
+    r'(?:}\s*\n```|\n```|$)',
+    re.MULTILINE,
+)
+
+
+def _dedup_stream_delta(text: str) -> str:
+    if not text:
+        return text
+    return _DUP_CJK_RE.sub(r"\1", text)
+
+
+def _clean_visible_model_text(text: str) -> str:
+    if not text:
+        return text
+    # DSML pipe-delimited format (DeepSeek)
+    text = DSML_TOOL_CALL_RE.sub("", text)
+    text = DSML_INVOKE_RE.sub("", text)
+    # Markdown-fenced tool_call blocks
+    text = TOOL_CALL_BLOCK_RE.sub("", text)
+    text = TOOL_CALL_LEAK_RE.sub("", text)
+    # Raw XML tool-call tags (Anthropic SDK / Claude Code style)
+    text = _RAW_TOOL_CALLS_BLOCK_RE.sub("", text)
+    text = _RAW_INVOKE_BLOCK_RE.sub("", text)
+    text = _RAW_INVOKE_SELF_CLOSE_RE.sub("", text)
+    # Full invoke blocks (with or without closing tags)
+    text = _INVOKE_TAG_RE.sub("", text)
+    text = _INVOKE_OPEN_TAG_RE.sub("", text)
+    # Bare leftover tags after block removal
+    text = _BARE_TOOL_CALLS_TAG_RE.sub("", text)
+    text = _BARE_INVOKE_TAG_RE.sub("", text)
+    text = _PARAMETER_TAG_RE.sub("", text)
+    # Standalone tool-name lines
+    text = _TOOL_CALL_LINE_RE.sub("", text)
+    text = _DSML_TOOL_CALL_NO_BRACKET_RE.sub("", text)
+    text = _DSML_INVOKE_NO_BRACKET_TAG_RE.sub("", text)
+    text = _TOOL_CALL_REMNANT_RE.sub("", text)
+    text = _TOOL_CALL_JSON_LEAK_RE.sub("", text)
+    text = _dedup_stream_delta(text)
+    return text
+
 ORCHESTRATOR_AGENT_ID = "agent_orchestrator"
+
+# Idempotency guard: prevent double execution of handle_orchestrator_mention
+_ORCH_PROCESSED_IDS: set[str] = set()
 
 AGENT_CODE_MAP: dict[str, str] = {
     "A": "agent_mock",
@@ -569,6 +681,39 @@ def _fallback_preview_html(user_text: str, reason: str) -> str:
 </body>
 </html>"""
 
+async def _emit_deploy_status(
+    conn: Connection,
+    conversation_id: str,
+    deploy_id: str,
+    status: str,
+    *,
+    title: str = "",
+    url: str = "",
+    summary: str = "",
+    progress: int = 0,
+) -> None:
+    content: dict[str, Any] = {
+        "type": "deploy_status",
+        "deploy_id": deploy_id,
+        "status": status,
+        "title": title or "部署状态",
+    }
+    if url:
+        content["url"] = url
+    if summary:
+        content["summary"] = summary
+    if progress:
+        content["progress"] = progress
+
+    await conn.send(event(
+        "deploy_status",
+        conversation_id=conversation_id,
+        deploy_id=deploy_id,
+        status=status,
+        content=content,
+    ))
+
+
 def _should_create_w4_preview(user_text: str) -> bool:
     lower = user_text.lower()
     return any(k in lower for k in ["html", "web", "app", "landing", "preview", "\u7f51\u9875", "\u9875\u9762", "\u5e94\u7528", "\u9884\u89c8"])
@@ -949,7 +1094,7 @@ async def _generate_preview_html_with_model(
     if loaded is None:
         raise RuntimeError(f"LLM adapter could not be initialized: {agent_id}")
 
-    adapter, _display_name = loaded
+    adapter, _display_name, _agent_meta = loaded
     if hasattr(adapter, "max_tokens"):
         try:
             adapter.max_tokens = max(int(getattr(adapter, "max_tokens", 0)), 12000)
@@ -983,7 +1128,7 @@ async def _generate_preview_html_with_model(
     except asyncio.TimeoutError as exc:
         raise RuntimeError(f"LLM preview generation timed out after 90s: {agent_name}") from exc
 
-    final_text = "".join(final_parts)
+    final_text = _clean_visible_model_text("".join(final_parts))
     html_doc = _extract_html_from_text(final_text)
     if html_doc:
         return html_doc, _html_title(html_doc, _clean_requirement(user_text)), f"{reason}:{agent_name}"
@@ -1025,7 +1170,7 @@ async def _llm_analyze_task(user_text: str) -> tuple[str | None, set[str]]:
     loaded = await load_adapter_for(llm_agents[0].id)
     if loaded is None:
         return None, set()
-    adapter, _ = loaded
+    adapter, _, _agent_meta = loaded
 
     prompt = (
         "Analyze the user request below. Return a JSON object with exactly two fields:\n\n"
@@ -1133,7 +1278,7 @@ async def _resolve_decomposer_deps_with_llm(decomposer, decompose_result) -> Any
     if loaded is None:
         logger.warning("Failed to load LLM adapter for dependency resolution")
         return decompose_result
-    adapter, _ = loaded
+    adapter, _, _agent_meta = loaded
 
     try:
         return await decomposer.resolve_dependencies_llm(
@@ -1154,6 +1299,15 @@ async def handle_orchestrator_mention(
     originating_message_id: str,
 ) -> None:
     logger.info("Orchestrator invoked in conv=%s: %.80s", conversation_id, user_text)
+
+    # Idempotency guard: prevent double execution if somehow invoked twice for the same message
+    if originating_message_id in _ORCH_PROCESSED_IDS:
+        logger.warning("Duplicate orchestrator call for msg=%s, skipping", originating_message_id)
+        return
+    # Cap set size to prevent unbounded growth (keep recent ~1000 ids)
+    if len(_ORCH_PROCESSED_IDS) > 1000:
+        _ORCH_PROCESSED_IDS.clear()
+    _ORCH_PROCESSED_IDS.add(originating_message_id)
 
     Session = get_sessionmaker()
 
@@ -1253,6 +1407,45 @@ async def handle_orchestrator_mention(
         label="Orchestrator: 开始规划",
     )
 
+    # 1.5 Check for deploy request — short-circuit if build output already exists
+    if is_deploy_request(user_text):
+        build_dir = get_build_output_dir(conversation_id)
+        if build_dir.is_dir() and any(build_dir.iterdir()):
+            deploy_id = new_id("deploy")
+            preview_url = generate_preview_url(conversation_id)
+            await _emit_deploy_status(
+                conn, conversation_id, deploy_id, "deployed",
+                title="部署完成",
+                url=preview_url,
+                summary="构建产物已就绪，点击链接预览",
+                progress=100,
+            )
+            async with Session() as s:
+                deploy_msg = await create_service_message(
+                    s,
+                    conversation_id=conversation_id,
+                    sender_id=ORCHESTRATOR_AGENT_ID,
+                    sender_type="agent",
+                    content={
+                        "type": "deploy_status",
+                        "deploy_id": deploy_id,
+                        "status": "deployed",
+                        "title": "部署完成",
+                        "url": preview_url,
+                        "summary": "构建产物已就绪",
+                    },
+                )
+                deploy_msg_dict = message_to_dict(deploy_msg)
+            await conn.send(event("message_created", message=deploy_msg_dict))
+            await conn.send(event(
+                "message_done",
+                message_id=deploy_msg.id,
+                sender_id=ORCHESTRATOR_AGENT_ID,
+                conversation_id=conversation_id,
+                final_content=deploy_msg_dict["content"],
+            ))
+            return
+
     # 2. LLM-driven task analysis: classify type AND detect required domains
     #    Single LLM call replaces both _llm_classify_task and ComplexityJudge
     llm_type, llm_domains = await _llm_analyze_task(user_text)
@@ -1273,6 +1466,10 @@ async def handle_orchestrator_mention(
         complexity_domains = _ensure_preview_collaboration_domains(user_text, complexity_domains)
         if not complexity_domains:
             complexity_domains = {"code"}
+
+    # Ensure devops is included when deploy is requested
+    if is_deploy_request(user_text):
+        complexity_domains.add("devops")
 
     # 3. Build prompt context for subtask description
     context_str = ""
@@ -1324,7 +1521,7 @@ async def handle_orchestrator_mention(
             if llm_agent is not None:
                 loaded = await load_adapter_for(llm_agent.id)
                 if loaded is not None:
-                    llm_adapter, _ = loaded
+                    llm_adapter, _, _agent_meta = loaded
                     logger.info("Using LLM-driven decomposition for task")
                     decompose_result = await decomposer.decompose_with_llm(
                         task=task_input,
@@ -1562,6 +1759,32 @@ async def handle_orchestrator_mention(
     completed_ids: set[str] = dag_result["completed"]
     failed_ids: set[str] = dag_result["failed"]
     subtask_messages: dict[str, str] = dag_result["subtask_messages"]
+
+    # 7.5 Emit deploy status if a devops/deploy subtask completed
+    if is_deploy_request(user_text):
+        deploy_id = new_id("deploy")
+        devops_completed = any(
+            st.domain == "devops" and st.id in completed_ids
+            for st, _, _, _, _ in subtask_records
+        )
+        if devops_completed:
+            build_dir = get_build_output_dir(conversation_id)
+            if build_dir.is_dir() and any(build_dir.iterdir()):
+                preview_url = generate_preview_url(conversation_id)
+                await _emit_deploy_status(
+                    conn, conversation_id, deploy_id, "deployed",
+                    title="部署完成",
+                    url=preview_url,
+                    summary="构建产物已就绪，点击链接预览",
+                    progress=100,
+                )
+            else:
+                await _emit_deploy_status(
+                    conn, conversation_id, deploy_id, "failed",
+                    title="部署失败",
+                    summary="构建输出目录为空，请检查构建日志",
+                    progress=100,
+                )
 
     # 8. Mark parent as done or failed
     all_done = len(completed_ids) == len(subtask_records)
@@ -1923,7 +2146,7 @@ async def _dispatch_subtask_with_result(
             ))
         raise RuntimeError(f"Agent {agent_id} not available")
 
-    adapter, _agent_name = loaded
+    adapter, _agent_name, _agent_meta = loaded
     is_frontend_preview = False
     # Setup workspace + ToolRegistry
     # All agents in the same conversation share the same workspace directory
@@ -1943,24 +2166,35 @@ async def _dispatch_subtask_with_result(
     registry.set_runtime_context(
         conversation_id=conversation_id,
         current_agent_id=agent_id,
+        domain=str(getattr(st, "domain", "") or ""),
         conn=conn,
         _artifacts=tool_artifacts_list,
+        disable_workspace_writes=True,
     )
 
     if hasattr(adapter, 'set_runtime_context'):
         adapter.set_runtime_context(conversation_id, agent_id, conn)
 
     # Tell agent about its workspace and available tools
+    domain = str(getattr(st, "domain", "") or "").lower()
+    workspace_empty = not any(workspace_dir.iterdir())
+    workspace_write_rule = ""
+    if domain in {"frontend", "backend", "database", "devops", "test", "docs", "qa", "product"}:
+        workspace_write_rule = (
+            "\n**输出规则**:\n"
+            "- workspace 写入已禁用，请不要调用 write_file 或 list_files。\n"
+            "- 直接在聊天中回复完整内容。如需预览，使用 create_artifact。\n"
+        )
+
     workspace_note = (
-        f"\n**Workspace**: {workspace_dir}\n"
-        f"你可以使用 read_file / write_file / list_files / web_search 等工具辅助完成任务。\n"
-        f"所有文件操作默认在 workspace 目录下进行。\n"
-        f"此 workspace 由本对话的所有 Agent 共享，你可以看到其他 Agent 创建的文件。\n"
+        f"\n你可以使用 web_search 等工具辅助完成任务。\n"
+        f"⚠️ write_file / list_files 已被禁用，请直接在聊天中回复内容。\n"
+        f"{workspace_write_rule}"
         f"\n**重要规则**：\n"
         f"- 直接执行任务，不要询问用户问题或征求确认。\n"
-        f"- 如需使用工具（如 web_search / write_file），直接调用即可，无需提前告知。\n"
         f"- 不要输出需要我确认的问题，直接行动。\n"
         f"- 一次性完成全部工作，产出完整可用的成果。\n"
+        f"- 如需预览，请使用 create_artifact 创建预览卡片。\n"
     )
     agent_prompt += workspace_note
 
@@ -1987,7 +2221,9 @@ async def _dispatch_subtask_with_result(
             ctype = chunk.get("type")
             if ctype == "text":
                 seq += 1
-                delta = chunk.get("delta", "")
+                delta = _clean_visible_model_text(str(chunk.get("delta", "")))
+                if not delta:
+                    continue
                 final_parts.append(delta)
                 await conn.send(event(
                     "stream_chunk",
@@ -2056,7 +2292,7 @@ async def _dispatch_subtask_with_result(
 
         if error_parts and is_frontend_preview:
             error_text = "; ".join(error_parts)
-            final_text = "".join(final_parts)
+            final_text = _clean_visible_model_text("".join(final_parts))
             html_doc = _extract_html_from_text(final_text) or _close_partial_html(
                 final_text,
                 user_text,
@@ -2123,7 +2359,7 @@ async def _dispatch_subtask_with_result(
             return msg_id
 
         if error_parts:
-            final_text = "".join(final_parts) + _visible_generation_error(
+            final_text = _clean_visible_model_text("".join(final_parts)) + _visible_generation_error(
                 str(code),
                 str(message),
             )
@@ -2153,16 +2389,86 @@ async def _dispatch_subtask_with_result(
                 ))
             raise RuntimeError(final_text)
 
-        final_text = "".join(final_parts) or f"✅ 子任务已完成：{st.title[:100]}"
-        async with Session() as s:
-            await update_message_content(s, msg_id, {"type": "text", "text": final_text})
+        raw_text = _clean_visible_model_text("".join(final_parts))
+        final_text = raw_text or f"✅ 子任务已完成：{st.title[:100]}"
+
+        # Check for artifacts created via tool calls (e.g. create_artifact)
+        tool_artifacts = registry.pop_pending_artifacts() if registry else []
+
+        # When tool artifacts exist, the raw text often contains leaked tool-call
+        # syntax from non-native-FC models (e.g. DeepSeek). Replace with a clean
+        # summary so the chat shows the artifact preview card instead of junk text.
+        if tool_artifacts and raw_text:
+            # Strip raw tool-call XML-like fragments that leak from some models
+            cleaned = _clean_visible_model_text(raw_text).strip()
+            # Remove  <invoke name="..."> ... </invoke> fragments
+            cleaned = re.sub(r'<invoke[^>]*>[\s\S]*?</invoke>', '', cleaned)
+            # Remove standalone tool name lines
+            cleaned = re.sub(r'^\s*(create_artifact|write_file|read_file|list_files|web_search|run_shell)\s*$', '', cleaned, flags=re.MULTILINE)
+            cleaned = cleaned.strip()
+            final_text = cleaned or f"✅ 已生成 {len(tool_artifacts)} 个产物"
+
+        final_content: dict[str, Any] = {"type": "text", "text": final_text}
+
+        if tool_artifacts:
+            last_artifact = tool_artifacts[-1]
+            kind = last_artifact.get("kind", "file")
+            if kind == "preview":
+                final_content = {
+                    "type": "preview",
+                    "artifact_id": last_artifact["id"],
+                    "title": last_artifact["title"],
+                    "mimeType": last_artifact["mime_type"],
+                    "fileSize": last_artifact["file_size"],
+                    "url": last_artifact.get("url"),
+                    "previewUrl": last_artifact.get("preview_url"),
+                    "version": last_artifact.get("version", 1),
+                }
+            elif kind == "file":
+                final_content = {
+                    "type": "file",
+                    "artifact_id": last_artifact["id"],
+                    "fileName": last_artifact.get("file_name") or last_artifact["title"],
+                    "mimeType": last_artifact["mime_type"],
+                    "fileSize": last_artifact["file_size"],
+                    "url": last_artifact.get("url"),
+                    "previewUrl": last_artifact.get("preview_url"),
+                    "version": last_artifact.get("version", 1),
+                }
+            elif kind == "code":
+                final_content = {
+                    "type": "code",
+                    "artifact_id": last_artifact["id"],
+                    "title": last_artifact["title"],
+                    "language": (last_artifact.get("meta") or {}).get("language", "text"),
+                }
+
+            async with Session() as s:
+                await update_message_content(s, msg_id, final_content)
+                m = await s.scalar(select(MessageModel).where(MessageModel.id == msg_id))
+                if m:
+                    m.artifact_id = last_artifact["id"]
+                    await s.commit()
+        else:
+            async with Session() as s:
+                await update_message_content(s, msg_id, final_content)
+
         await conn.send(event(
             "message_done",
             message_id=msg_id,
             sender_id=agent_id,
             conversation_id=conversation_id,
-            final_content={"type": "text", "text": final_text},
+            final_content=final_content,
         ))
+
+        # Emit artifact_ready for each tool-created artifact
+        for art in tool_artifacts:
+            await conn.send(event(
+                "artifact_ready",
+                conversation_id=conversation_id,
+                artifact=art,
+                message_id=msg_id,
+            ))
 
         display_text = final_text
         artifact_payload = None

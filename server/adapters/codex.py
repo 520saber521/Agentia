@@ -99,170 +99,174 @@ class CodexAdapter(AgentAdapter):
             "content-type": "application/json",
         }
 
+        client = httpx.AsyncClient(timeout=httpx.Timeout(REQUEST_TIMEOUT_S))
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(REQUEST_TIMEOUT_S)) as client:
+            try:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     json=body,
                     headers=headers,
                 )
-                if response.status_code == 400:
-                    body_text = await response.aread()
-                    detail = body_text.decode(errors="replace")
-                    if REASONING_CONTENT_ERROR in detail:
-                        retry_body = dict(body)
-                        retry_body["messages"] = [
-                            m for m in openai_messages if m.get("role") != "assistant"
-                        ]
-                        response = await client.post(
-                            f"{self.base_url}/chat/completions",
-                            json=retry_body,
-                            headers=headers,
-                        )
-                    else:
-                        yield {"type": "error", "code": "bad_request", "message": detail}
-                        return
-        except httpx.TimeoutException:
-            yield {"type": "error", "code": "timeout", "message": f"OpenAI API timeout after {REQUEST_TIMEOUT_S}s"}
-            return
-        except httpx.TransportError as exc:
-            yield {"type": "error", "code": "upstream_error", "message": f"Transport error: {exc}"}
-            return
+            except httpx.TimeoutException:
+                yield {"type": "error", "code": "timeout", "message": f"OpenAI API timeout after {REQUEST_TIMEOUT_S}s"}
+                return
+            except httpx.TransportError as exc:
+                yield {"type": "error", "code": "upstream_error", "message": f"Transport error: {exc}"}
+                return
 
-        if response.status_code == 429:
-            yield {"type": "error", "code": "rate_limited", "message": "OpenAI API rate limited (429)"}
-            return
-        if response.status_code == 400:
-            body_text = await response.aread()
-            yield {"type": "error", "code": "bad_request", "message": body_text.decode(errors="replace")}
-            return
-        if response.status_code >= 500:
-            yield {"type": "error", "code": "upstream_error", "message": f"OpenAI API {response.status_code}"}
-            return
-        if response.status_code != 200:
-            body_text = await response.aread()
-            yield {"type": "error", "code": "upstream_error", "message": f"OpenAI API {response.status_code}: {body_text.decode(errors='replace')}"}
-            return
+            if response.status_code == 400:
+                body_text = await response.aread()
+                detail = body_text.decode(errors="replace")
+                if REASONING_CONTENT_ERROR in detail:
+                    retry_body = dict(body)
+                    retry_body["messages"] = [
+                        m for m in openai_messages if m.get("role") != "assistant"
+                    ]
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=retry_body,
+                        headers=headers,
+                    )
+                else:
+                    yield {"type": "error", "code": "bad_request", "message": detail}
+                    return
 
-        if not stream:
-            body_data = response.json()
-            choice = (body_data.get("choices") or [{}])[0]
-            text = (choice.get("message") or {}).get("content", "") or ""
-            if text:
-                yield {"type": "text", "delta": text}
-            usage = body_data.get("usage") or {}
-            yield {
-                "type": "usage",
-                "input_tokens": usage.get("prompt_tokens", 0),
-                "output_tokens": usage.get("completion_tokens", 0),
-            }
-            yield {"type": "done"}
-            return
+            if response.status_code == 429:
+                yield {"type": "error", "code": "rate_limited", "message": "OpenAI API rate limited (429)"}
+                return
+            if response.status_code == 400:
+                body_text = await response.aread()
+                yield {"type": "error", "code": "bad_request", "message": body_text.decode(errors="replace")}
+                return
+            if response.status_code >= 500:
+                yield {"type": "error", "code": "upstream_error", "message": f"OpenAI API {response.status_code}"}
+                return
+            if response.status_code != 200:
+                body_text = await response.aread()
+                yield {"type": "error", "code": "upstream_error", "message": f"OpenAI API {response.status_code}: {body_text.decode(errors='replace')}"}
+                return
 
-        input_tokens = 0
-        output_tokens = 0
-        pending_tool_calls: dict[int, dict[str, Any]] = {}
-        stream_finished = False
-        finish_reason_seen = ""
+            if not stream:
+                body_data = response.json()
+                choice = (body_data.get("choices") or [{}])[0]
+                text = (choice.get("message") or {}).get("content", "") or ""
+                if text:
+                    yield {"type": "text", "delta": text}
+                usage = body_data.get("usage") or {}
+                yield {
+                    "type": "usage",
+                    "input_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                }
+                yield {"type": "done"}
+                return
 
-        try:
-            async for line in response.aiter_lines():
-                if stream_finished:
-                    break
+            input_tokens = 0
+            output_tokens = 0
+            pending_tool_calls: dict[int, dict[str, Any]] = {}
+            stream_finished = False
+            finish_reason_seen = ""
 
-                if not line.startswith("data: "):
-                    if line.startswith(":") or not line.strip():
-                        continue
-                    if line.startswith("{"):
-                        try:
-                            err_data = json.loads(line)
-                            if err_data.get("error"):
-                                yield {"type": "error", "code": "upstream_error", "message": str(err_data["error"])}
-                                return
-                        except (ValueError, TypeError):
-                            pass
-                    continue
-
-                payload_str = line[6:].strip()
-                if payload_str == "[DONE]":
-                    break
-
-                try:
-                    payload = json.loads(payload_str)
-                except (ValueError, TypeError):
-                    continue
-
-                choices = payload.get("choices") or []
-                for choice in choices:
-                    delta = choice.get("delta") or {}
-                    finish_reason = choice.get("finish_reason")
-                    content = delta.get("content")
-                    if not content and delta.get("reasoning_content"):
-                        continue
-
-                    if content:
-                        yield {"type": "text", "delta": content}
-
-                    # Stream tool_calls from delta
-                    tool_calls = delta.get("tool_calls")
-                    if tool_calls:
-                        for tc in tool_calls:
-                            tc_idx = tc.get("index", 0)
-                            if tc_idx not in pending_tool_calls:
-                                pending_tool_calls[tc_idx] = {
-                                    "name": "", "arguments": "", "call_id": "",
-                                }
-                            entry = pending_tool_calls[tc_idx]
-                            if tc.get("id"):
-                                entry["call_id"] = tc["id"]
-                            func = tc.get("function") or {}
-                            if func.get("name"):
-                                entry["name"] = func["name"]
-                            if func.get("arguments"):
-                                entry["arguments"] += func["arguments"]
-
-                    if finish_reason == "tool_calls":
-                        for tc_idx in sorted(pending_tool_calls.keys()):
-                            tc = pending_tool_calls[tc_idx]
-                            if tc.get("name"):
-                                try:
-                                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-                                except (json.JSONDecodeError, TypeError):
-                                    args = {"raw": tc["arguments"]}
-                                yield {"type": "tool_call", "name": tc["name"], "args": args, "call_id": tc["call_id"]}
-                        pending_tool_calls.clear()
-
-                    if finish_reason:
-                        finish_reason_seen = str(finish_reason)
-                        stream_finished = True
+            try:
+                async for line in response.aiter_lines():
+                    if stream_finished:
                         break
 
-                usage = payload.get("usage")
-                if usage:
-                    input_tokens = usage.get("prompt_tokens", input_tokens)
-                    output_tokens = usage.get("completion_tokens", output_tokens)
+                    if not line.startswith("data: "):
+                        if line.startswith(":") or not line.strip():
+                            continue
+                        if line.startswith("{"):
+                            try:
+                                err_data = json.loads(line)
+                                if err_data.get("error"):
+                                    yield {"type": "error", "code": "upstream_error", "message": str(err_data["error"])}
+                                    return
+                            except (ValueError, TypeError):
+                                pass
+                        continue
 
-        except httpx.StreamError as exc:
-            yield {"type": "error", "code": "stream_interrupted", "message": str(exc)}
-            return
+                    payload_str = line[6:].strip()
+                    if payload_str == "[DONE]":
+                        break
 
-        yield {
-            "type": "usage",
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-        }
-        if finish_reason_seen == "length":
+                    try:
+                        payload = json.loads(payload_str)
+                    except (ValueError, TypeError):
+                        continue
+
+                    choices = payload.get("choices") or []
+                    for choice in choices:
+                        delta = choice.get("delta") or {}
+                        finish_reason = choice.get("finish_reason")
+                        content = delta.get("content")
+                        if not content and delta.get("reasoning_content"):
+                            continue
+
+                        if content:
+                            yield {"type": "text", "delta": content}
+
+                        # Stream tool_calls from delta
+                        tool_calls = delta.get("tool_calls")
+                        if tool_calls:
+                            for tc in tool_calls:
+                                tc_idx = tc.get("index", 0)
+                                if tc_idx not in pending_tool_calls:
+                                    pending_tool_calls[tc_idx] = {
+                                        "name": "", "arguments": "", "call_id": "",
+                                    }
+                                entry = pending_tool_calls[tc_idx]
+                                if tc.get("id"):
+                                    entry["call_id"] = tc["id"]
+                                func = tc.get("function") or {}
+                                if func.get("name"):
+                                    entry["name"] = func["name"]
+                                if func.get("arguments"):
+                                    entry["arguments"] += func["arguments"]
+
+                        if finish_reason == "tool_calls":
+                            for tc_idx in sorted(pending_tool_calls.keys()):
+                                tc = pending_tool_calls[tc_idx]
+                                if tc.get("name"):
+                                    try:
+                                        args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                                    except (json.JSONDecodeError, TypeError):
+                                        args = {"raw": tc["arguments"]}
+                                    yield {"type": "tool_call", "name": tc["name"], "args": args, "call_id": tc["call_id"]}
+                            pending_tool_calls.clear()
+
+                        if finish_reason:
+                            finish_reason_seen = str(finish_reason)
+                            stream_finished = True
+                            break
+
+                    usage = payload.get("usage")
+                    if usage:
+                        input_tokens = usage.get("prompt_tokens", input_tokens)
+                        output_tokens = usage.get("completion_tokens", output_tokens)
+
+            except httpx.StreamError as exc:
+                yield {"type": "error", "code": "stream_interrupted", "message": str(exc)}
+                return
+
             yield {
-                "type": "error",
-                "code": "output_truncated",
-                "message": (
-                    "The model stopped because it reached max_tokens. "
-                    "Increase max_tokens or ask it to continue."
-                ),
+                "type": "usage",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
             }
-            return
+            if finish_reason_seen == "length":
+                yield {
+                    "type": "error",
+                    "code": "output_truncated",
+                    "message": (
+                        "The model stopped because it reached max_tokens. "
+                        "Increase max_tokens or ask it to continue."
+                    ),
+                }
+                return
 
-        yield {"type": "done", "finish_reason": finish_reason_seen or "stop"}
+            yield {"type": "done", "finish_reason": finish_reason_seen or "stop"}
+        finally:
+            await client.aclose()
 
     def capabilities(self) -> List[str]:
         return ["text", "code", "tool_use", "web_search"]

@@ -85,22 +85,28 @@ function getText(content: MessageContent | undefined | null): string {
   return "";
 }
 
+function dedupConsecutiveChars(text: string): string {
+  return text.replace(/([\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af])\1+/g, "$1")
+    .replace(/([A-Za-z_][A-Za-z0-9_]{1,32})\1{2,}/g, "$1");
+}
+
 function appendStreamDelta(currentText: string, delta: string): string {
   if (!delta) return currentText;
-  if (!currentText) return delta;
-  if (currentText.endsWith(delta)) return currentText;
+  const cleanDelta = dedupConsecutiveChars(delta);
+  if (!currentText) return cleanDelta;
+  if (currentText.endsWith(cleanDelta)) return currentText;
+  if (cleanDelta.length > 12 && currentText.includes(cleanDelta)) return currentText;
 
-  // Only check for overlap in the trailing 32 chars — O(1) instead of O(n)
-  const suffixLen = Math.min(32, currentText.length);
+  const suffixLen = Math.min(256, currentText.length);
   const suffix = currentText.slice(-suffixLen);
-  const maxOverlap = Math.min(suffixLen, delta.length);
+  const maxOverlap = Math.min(suffixLen, cleanDelta.length);
   for (let size = maxOverlap; size > 0; size -= 1) {
-    if (suffix.endsWith(delta.slice(0, size))) {
-      return currentText + delta.slice(size);
+    if (suffix.endsWith(cleanDelta.slice(0, size))) {
+      return dedupConsecutiveChars(currentText + cleanDelta.slice(size));
     }
   }
 
-  return currentText + delta;
+  return dedupConsecutiveChars(currentText + cleanDelta);
 }
 
 function visibleErrorText(code: string, message: string): string {
@@ -199,7 +205,11 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       let messages = state.messages;
       if (idx >= 0) {
         messages = state.messages.slice();
-        messages[idx] = { ...messages[idx], content: evt.final_content };
+        const cleanFinal = { ...evt.final_content };
+        if (cleanFinal && typeof cleanFinal === "object" && "text" in cleanFinal && typeof cleanFinal.text === "string") {
+          cleanFinal.text = dedupConsecutiveChars(cleanFinal.text);
+        }
+        messages[idx] = { ...messages[idx], content: cleanFinal };
       }
       const nextStreaming = removeStreaming(
         state.streamingMessageIds,
@@ -308,6 +318,26 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
         },
         effects,
       };
+    }
+
+    case "deploy_status": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const content = evt.content as MessageContent;
+      // Update existing deploy message by deploy_id lookup
+      const existingIdx = state.messages.findIndex(
+        (m) =>
+          m.content.type === "deploy_status" &&
+          m.content.deploy_id === evt.deploy_id
+      );
+      if (existingIdx >= 0) {
+        const messages = state.messages.slice();
+        messages[existingIdx] = {
+          ...messages[existingIdx],
+          content: { ...messages[existingIdx].content, ...content },
+        } as Message;
+        return { next: { ...state, messages }, effects };
+      }
+      return { next: state, effects };
     }
 
     case "tool_call": {

@@ -262,14 +262,25 @@ export function Composer() {
             {streamingCount > 1 ? `取消 (${streamingCount})` : "取消"}
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={doSend}
-            disabled={!canSend}
-            className="shrink-0 rounded-md bg-accent px-4 py-2 text-sm text-white transition hover:bg-accent-hover disabled:bg-border disabled:text-muted"
-          >
-            发送
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => send("部署")}
+              disabled={!currentConvId}
+              className="shrink-0 rounded-md border border-border bg-panel px-3 py-2 text-sm text-muted transition hover:border-accent hover:text-accent disabled:opacity-50"
+              title="构建并预览当前项目"
+            >
+              部署
+            </button>
+            <button
+              type="button"
+              onClick={doSend}
+              disabled={!canSend}
+              className="shrink-0 rounded-md bg-accent px-4 py-2 text-sm text-white transition hover:bg-accent-hover disabled:bg-border disabled:text-muted"
+            >
+              发送
+            </button>
+          </>
         )}
       </div>
     </div>

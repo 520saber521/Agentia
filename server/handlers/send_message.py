@@ -44,6 +44,93 @@ from ws import Connection, event
 
 logger = logging.getLogger("agenthub.handlers.send_message")
 
+DSML_TOOL_CALL_RE = re.compile(
+    r"<[|｜]{2}DSML[|｜]{2}tool_calls>[\s\S]*?</[|｜]{2}DSML[|｜]{2}tool_calls>",
+    re.DOTALL,
+)
+DSML_INVOKE_RE = re.compile(r"</?[|｜]{2}DSML[|｜]{2}invoke[^>]*>", re.DOTALL)
+TOOL_CALL_BLOCK_RE = re.compile(r"```(?:tool_call|tool|tool_call_call)[\s\S]*?(?:```|$)", re.MULTILINE)
+TOOL_CALL_LEAK_RE = re.compile(r"(?:^|\n)\s*(?:tool)?`{0,3}(?:tool_call|tool_call_call)\b[\s\S]*$", re.MULTILINE)
+
+# Raw XML tool-call tags that some models (especially in SDK-based paths) leak
+# into visible text output. These cover Anthropic-style and generic XML formats.
+_RAW_TOOL_CALLS_BLOCK_RE = re.compile(
+    r"<\s*tool_calls\s*>[\s\S]*?<\s*/\s*tool_calls\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_RAW_INVOKE_BLOCK_RE = re.compile(
+    r"<\s*invoke\s+name\s*=\s*[\"'][^\"'>]+[\"'][^>]*>[\s\S]*?<\s*/\s*invoke\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_RAW_INVOKE_SELF_CLOSE_RE = re.compile(
+    r"<\s*invoke\s+name\s*=\s*[\"'][^\"'>]+[\"'][^>]*/\s*>",
+    re.IGNORECASE,
+)
+_BARE_TOOL_CALLS_TAG_RE = re.compile(
+    r"<\s*/?\s*tool_calls\s*>",
+    re.IGNORECASE,
+)
+_BARE_INVOKE_TAG_RE = re.compile(
+    r"<\s*/?\s*invoke\b[^>]*>",
+    re.IGNORECASE,
+)
+_PARAMETER_TAG_RE = re.compile(
+    r"<\s*/?\s*parameter\b[^>]*>",
+    re.IGNORECASE,
+)
+_DUP_CJK_RE = re.compile(r"([\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af])\1+")
+
+# DSML without angle brackets (DeepSeek variant leaks)
+_DSML_TOOL_CALL_NO_BRACKET_RE = re.compile(
+    r"\n?[|｜]{2}DSML[|｜]{2}tool_calls>[\s\S]*?</[|｜]{2}DSML[|｜]{2}tool_calls>",
+    re.DOTALL,
+)
+_DSML_INVOKE_NO_BRACKET_TAG_RE = re.compile(
+    r"</?[|｜]{2}DSML[|｜]{2}invoke[^>]*>",
+    re.DOTALL,
+)
+_TOOL_CALL_REMNANT_RE = re.compile(
+    r"(?:^|\n)\s*_call\b[\s\S]*?(?=\n(?:[^\s{]|$)|\Z)",
+    re.MULTILINE,
+)
+_TOOL_CALL_JSON_LEAK_RE = re.compile(
+    r'(?:^|\n)\s*"name"\s*:\s*"(?:create_artifact|write_file|read_file|list_files|web_search|run_shell)"[\s\S]*?'
+    r'(?:}\s*\n```|\n```|$)',
+    re.MULTILINE,
+)
+
+
+def _dedup_stream_delta(text: str) -> str:
+    if not text:
+        return text
+    return _DUP_CJK_RE.sub(r"\1", text)
+
+
+def clean_visible_model_text(text: str) -> str:
+    """Remove raw tool-call protocols that should never be shown to users."""
+    if not text:
+        return text
+    # DSML pipe-delimited format (DeepSeek)
+    text = DSML_TOOL_CALL_RE.sub("", text)
+    text = DSML_INVOKE_RE.sub("", text)
+    # Markdown-fenced tool_call blocks
+    text = TOOL_CALL_BLOCK_RE.sub("", text)
+    text = TOOL_CALL_LEAK_RE.sub("", text)
+    # Raw XML tool-call tags (Anthropic SDK / Claude Code style)
+    text = _RAW_TOOL_CALLS_BLOCK_RE.sub("", text)
+    text = _RAW_INVOKE_BLOCK_RE.sub("", text)
+    text = _RAW_INVOKE_SELF_CLOSE_RE.sub("", text)
+    # Bare leftover tags after block removal
+    text = _BARE_TOOL_CALLS_TAG_RE.sub("", text)
+    text = _BARE_INVOKE_TAG_RE.sub("", text)
+    text = _PARAMETER_TAG_RE.sub("", text)
+    text = _DSML_TOOL_CALL_NO_BRACKET_RE.sub("", text)
+    text = _DSML_INVOKE_NO_BRACKET_TAG_RE.sub("", text)
+    text = _TOOL_CALL_REMNANT_RE.sub("", text)
+    text = _TOOL_CALL_JSON_LEAK_RE.sub("", text)
+    text = _dedup_stream_delta(text)
+    return text
+
 AGENT_CREATE_TOOLS = {
     "code_editor",
     "artifact_read",
@@ -756,8 +843,8 @@ async def _maybe_create_agent_from_chat(
     return True
 
 
-async def load_adapter_for(agent_id: str) -> tuple[Any, str] | None:
-    """Load ``(adapter_instance, agent_display_name)`` from DB row.
+async def load_adapter_for(agent_id: str) -> tuple[Any, str, dict[str, Any]] | None:
+    """Load ``(adapter_instance, agent_display_name, agent_meta)`` from DB row.
 
     Returns ``None`` if agent not found or config is broken.
     """
@@ -769,12 +856,16 @@ async def load_adapter_for(agent_id: str) -> tuple[Any, str] | None:
         adapter_type = row.adapter_type
         name = row.name
         config = adapter_config_for_runtime(row)
+        agent_meta = {
+            "name": row.name or "",
+            "capabilities": row.capabilities or "",
+        }
 
     try:
         adapter = build_adapter(adapter_type, config)
     except ValueError:
         return None
-    return adapter, name
+    return adapter, name, agent_meta
 
 
 async def run_agent_reply(
@@ -805,7 +896,7 @@ async def run_agent_reply(
             )
         )
         return
-    adapter, _agent_name = loaded
+    adapter, _agent_name, agent_meta = loaded
 
     # Inject runtime context for stateful adapters (SDK client pool needs conv + agent id)
     if hasattr(adapter, 'set_runtime_context'):
@@ -887,8 +978,13 @@ async def run_agent_reply(
         registry.set_runtime_context(
             conversation_id=conversation_id,
             current_agent_id=agent_id,
+            domain=" ".join([
+                str(agent_meta.get("name", "") or ""),
+                str(agent_meta.get("capabilities", "") or ""),
+            ]),
             conn=conn,
             _artifacts=tool_artifacts_list,
+            disable_workspace_writes=True,
         )
         has_tools = bool(registry.list_tools())
         if has_tools and ReActEngine.should_use_react(adapter, user_text):
@@ -907,7 +1003,9 @@ async def run_agent_reply(
             ctype = chunk.get("type")
             if ctype == "text":
                 seq += 1
-                delta = chunk.get("delta", "")
+                delta = clean_visible_model_text(str(chunk.get("delta", "")))
+                if not delta:
+                    continue
                 final_parts.append(delta)
                 await conn.send(
                     event(
@@ -1007,7 +1105,7 @@ async def run_agent_reply(
             elif ctype == "error":
                 error_code = str(chunk.get("code", "adapter_error"))
                 error_message = str(chunk.get("message", ""))
-                final_text = "".join(final_parts) + _visible_generation_error(
+                final_text = clean_visible_model_text("".join(final_parts)) + _visible_generation_error(
                     error_code,
                     error_message,
                 )
@@ -1053,7 +1151,7 @@ async def run_agent_reply(
             elif ctype == "done":
                 break
 
-        final_text = "".join(final_parts)
+        final_text = clean_visible_model_text("".join(final_parts))
         if not builtin_loop and _should_auto_continue_generation(user_text, final_text):
             final_text = await _auto_continue_generation(
                 adapter=adapter,
@@ -1066,6 +1164,7 @@ async def run_agent_reply(
                 conversation_id=conversation_id,
                 seq_start=seq,
             )
+            final_text = clean_visible_model_text(final_text)
         if artifact_messages:
             final_content = artifact_messages[-1]["content"]
         else:
@@ -1127,7 +1226,7 @@ async def run_agent_reply(
                 seq=0,
             )
     except asyncio.CancelledError:
-        final_text = "".join(final_parts)
+        final_text = clean_visible_model_text("".join(final_parts))
         await persist_final(Session, ai_msg_id, final_text)
         async with Session() as s:
             await record_agent_execution_finish(
@@ -1167,7 +1266,7 @@ async def run_agent_reply(
         logger.exception(
             "ws[%s] agent[%s] reply crashed", conn.conn_id, agent_id
         )
-        final_text = "".join(final_parts)
+        final_text = clean_visible_model_text("".join(final_parts))
         await persist_final(Session, ai_msg_id, final_text)
         async with Session() as s:
             await record_agent_execution_finish(
@@ -1239,7 +1338,18 @@ async def _run_orchestrator(
         )
 
         Session = get_sessionmaker()
-        await persist_final(Session, ai_msg_id, f"✅ Orchestrator completed coordination for: {user_text[:100]}")
+        async with Session() as s:
+            row = await s.get(Message, ai_msg_id)
+            final_content = json.loads(row.content) if row and row.content else {"type": "text", "text": "✅ Orchestrator completed coordination."}
+        await conn.send(
+            event(
+                "message_done",
+                message_id=ai_msg_id,
+                sender_id=ORCHESTRATOR_AGENT_ID,
+                conversation_id=conversation_id,
+                final_content=final_content,
+            )
+        )
     except asyncio.CancelledError:
         Session = get_sessionmaker()
         await persist_final(Session, ai_msg_id, "[cancelled]")
@@ -1313,7 +1423,7 @@ async def _auto_continue_generation(
         async for chunk in adapter.send(messages=messages, stream=True):
             ctype = chunk.get("type")
             if ctype == "text":
-                delta = str(chunk.get("delta", ""))
+                delta = clean_visible_model_text(str(chunk.get("delta", "")))
                 if not delta:
                     continue
                 seq += 1

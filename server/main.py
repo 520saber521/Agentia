@@ -36,6 +36,7 @@ from api import router as rest_router
 from api.animation import router as animation_router
 from api.artifacts import router as artifacts_router
 from api.trace import router as trace_router
+from api.deploy import router as deploy_router
 from api.workspace import router as workspace_router
 from db import dispose, init_db, seed_defaults
 from handlers import dispatch
@@ -115,6 +116,7 @@ app.include_router(rest_router)
 app.include_router(animation_router)
 app.include_router(artifacts_router)
 app.include_router(trace_router)
+app.include_router(deploy_router)
 app.include_router(workspace_router)
 
 

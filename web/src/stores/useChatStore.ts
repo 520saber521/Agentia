@@ -70,7 +70,7 @@ function _flushStreamAcc() {
     let newText: string;
     if (!prevText) {
       newText = delta;
-    } else if (prevText.endsWith(delta)) {
+    } else if (prevText.endsWith(delta) || (delta.length > 12 && prevText.includes(delta))) {
       newText = prevText;
     } else {
       const suffixLen = Math.min(32, prevText.length);
@@ -83,7 +83,7 @@ function _flushStreamAcc() {
           break;
         }
       }
-      newText = prevText + delta.slice(overlap);
+      newText = collapseImmediateRepeats(prevText + delta.slice(overlap));
     }
 
     messages[idx] = { ...prev, content: { type: "text", text: newText } as any };
@@ -91,6 +91,10 @@ function _flushStreamAcc() {
   }
 
   if (changed) set({ messages });
+}
+
+function collapseImmediateRepeats(text: string): string {
+  return text.replace(/([\u4e00-\u9fff]{2,6})\1/g, "$1");
 }
 
 /* ------------------------------------------------------------------ */

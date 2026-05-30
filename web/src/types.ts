@@ -81,6 +81,7 @@ export interface DeployStatusContent {
   title?: string;
   url?: string;
   summary?: string;
+  progress?: number;
 }
 
 export type MessageContent =
@@ -385,6 +386,27 @@ export type ClientEvent =
     }
   | { type: "cancel"; message_id: string }
   | { type: "tool_confirm_response"; confirm_id: string; approved: boolean }
+  | {
+      type: "deploy_status";
+      ts: number;
+      conversation_id: string;
+      deploy_id: string;
+      status: string;
+      content: DeployStatusContent;
+    }
+  | {
+      type: "shell_command_started";
+      ts: number;
+      conversation_id: string;
+      command: string;
+    }
+  | {
+      type: "shell_command_completed";
+      ts: number;
+      conversation_id: string;
+      command: string;
+      exit_code: number;
+    }
 ;
 
 /**

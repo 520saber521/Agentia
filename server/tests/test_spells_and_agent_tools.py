@@ -49,6 +49,40 @@ class InvalidToolCallThenTextAdapter(AgentAdapter):
         return []
 
 
+class DSMLToolCallThenTextAdapter(AgentAdapter):
+    name = "dsml_tool_call_then_text"
+
+    def __init__(self) -> None:
+        super().__init__({})
+        self.calls = 0
+
+    async def send(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        artifacts_context: dict[str, Any] | None = None,
+        stream: bool = True,
+    ) -> AsyncIterator[Chunk]:
+        self.calls += 1
+        if self.calls == 1:
+            yield {
+                "type": "text",
+                "delta": (
+                    "我先查看工作区。\n"
+                    "<｜｜DSML｜｜tool_calls>\n"
+                    "<｜｜DSML｜｜invoke name=\"list_files\">{\"path\":\".\"}</｜｜DSML｜｜invoke>\n"
+                    "</｜｜DSML｜｜tool_calls>"
+                ),
+            }
+        else:
+            yield {"type": "text", "delta": "工作区已检查，继续生成完整项目。"}
+        yield {"type": "done"}
+
+    def capabilities(self) -> list[str]:
+        return []
+
+
 class OpenAIToolHistoryAdapter(AgentAdapter):
     name = "codex"
 
@@ -120,6 +154,28 @@ async def test_react_discards_invalid_structured_tool_call_without_leaking_json(
     assert "create_artifact" not in text
     assert "jmap -h" not in text
     assert "# Java 内存管理" in text
+    assert adapter.calls == 2
+
+
+async def test_react_parses_dsml_tool_call_and_continues_without_leaking_markup() -> None:
+    registry = get_tool_registry(project_root=".")
+    adapter = DSMLToolCallThenTextAdapter()
+    engine = ReActEngine(registry=registry, max_steps=2)
+
+    chunks = [
+        chunk
+        async for chunk in engine.run(
+            adapter,
+            [{"role": "user", "content": "查看 workspace 后继续生成项目"}],
+        )
+    ]
+    text = "".join(str(chunk.get("delta", "")) for chunk in chunks if chunk.get("type") == "text")
+    observations = [chunk for chunk in chunks if chunk.get("type") == "observation"]
+
+    assert "DSML" not in text
+    assert "tool_calls" not in text
+    assert "工作区已检查" in text
+    assert any(chunk.get("name") == "list_files" and chunk.get("status") == "done" for chunk in observations)
     assert adapter.calls == 2
 
 
