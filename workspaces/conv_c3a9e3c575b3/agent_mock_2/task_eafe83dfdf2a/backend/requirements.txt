@@ -1,0 +1,6 @@
+Flask==2.3.2
+Flask-SQLAlchemy==3.0.5
+Flask-Marshmallow==0.15.0
+PyJWT==2.8.0
+marshmallow-sqlalchemy==0.29.0
+Werkzeug==2.3.6

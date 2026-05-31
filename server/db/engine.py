@@ -52,6 +52,11 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 
 async def _ensure_sqlite_schema(conn: Any) -> None:
+    rows = await conn.execute(text("PRAGMA table_info(conversation)"))
+    conv_columns = {str(row[1]) for row in rows.fetchall()}
+    if conv_columns and "workspace_path" not in conv_columns:
+        await conn.execute(text("ALTER TABLE conversation ADD COLUMN workspace_path VARCHAR(1024)"))
+
     rows = await conn.execute(text("PRAGMA table_info(task)"))
     task_columns = {str(row[1]) for row in rows.fetchall()}
     if task_columns and "agent_name" not in task_columns:

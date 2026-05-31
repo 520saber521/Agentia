@@ -1,16 +1,15 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { useChatStore } from "../stores/useChatStore";
-import type { Agent } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { CollaborationProgressCard } from "./CollaborationProgressCard";
+import { AgentGraph } from "./AgentGraph";
 
 interface Props {
   onEditArtifact?: (artifactId: string) => void;
-  onFullscreen?: (type: "code" | "preview", artifactId: string) => void;
 }
 
-export function MessagePanel({ onEditArtifact, onFullscreen }: Props) {
+export function MessagePanel({ onEditArtifact }: Props) {
   const messages = useChatStore((s) => s.messages);
   const streamingIds = useChatStore((s) => s.streamingMessageIds);
   const agentTyping = useChatStore((s) => s.agentTyping);
@@ -20,6 +19,7 @@ export function MessagePanel({ onEditArtifact, onFullscreen }: Props) {
   const agents = useChatStore((s) => s.agents);
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottomRef = useRef(true);
+  const scrollRafRef = useRef<number | null>(null);
 
   const currentTasks = currentConvId
     ? Object.values(tasks ?? {})
@@ -32,19 +32,29 @@ export function MessagePanel({ onEditArtifact, onFullscreen }: Props) {
     .filter((m) => m.member_type === "agent")
     .map((m) => agents.find((a) => a.id === m.member_id))
     .filter((a): a is NonNullable<typeof a> => a != null);
-
-  const agentsById = useMemo(() => {
-    const map = new Map<string, Agent>();
-    for (const a of agents) {
-      map.set(a.id, a);
-    }
-    return map;
-  }, [agents]);
+  const showGraph = Boolean(currentConv && memberAgents.length > 0);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !shouldStickToBottomRef.current) return;
-    el.scrollTop = el.scrollHeight;
+
+    // Defer scroll to next animation frame to avoid layout thrash
+    if (scrollRafRef.current !== null) {
+      cancelAnimationFrame(scrollRafRef.current);
+    }
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      if (el && shouldStickToBottomRef.current) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
   }, [messages, agentTyping, tasks]);
 
   function handleScroll() {
@@ -100,6 +110,12 @@ export function MessagePanel({ onEditArtifact, onFullscreen }: Props) {
         </div>
       )}
 
+      {showGraph && (
+        <div className="shrink-0 border-b border-border bg-bg/80">
+          <AgentGraph height={220} />
+        </div>
+      )}
+
       <div
         ref={scrollRef}
         onScroll={handleScroll}
@@ -116,11 +132,12 @@ export function MessagePanel({ onEditArtifact, onFullscreen }: Props) {
             msg={m}
             streaming={streamingIds.includes(m.id)}
             onEditArtifact={onEditArtifact}
-            onFullscreen={onFullscreen}
           />
         ))}
         {currentTasks.length > 0 && (
-          <CollaborationProgressCard tasks={currentTasks} />
+          <>
+            <CollaborationProgressCard tasks={currentTasks} />
+          </>
         )}
         {agentTyping && (
           <div className="animate-fade-in px-3 text-xs text-muted">

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 
-import { fetchArtifactContent, fetchArtifactHistory, saveArtifactVersion, describeApiError } from "../api/client";
+import { fetchArtifactContent, saveArtifactVersion, describeApiError } from "../api/client";
 import type { Artifact } from "../types";
+import { VersionHistoryPanel } from "./VersionHistoryPanel";
+import { formatHtml } from "../formatHtml";
 
 interface Props {
   artifact: Artifact;
@@ -46,19 +48,14 @@ function detectLanguage(artifact: Artifact): string {
 
 export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: Props) {
   const [content, setContent] = useState<string | null>(null);
+  const [originalContent, setOriginalContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [currentArtifact, setCurrentArtifact] = useState(artifact);
-  const editorRef = useRef<HTMLDivElement>(null);
-
   const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<Artifact[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [viewingVersion, setViewingVersion] = useState<Artifact | null>(null);
-  const [isReadonly, setIsReadonly] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setCurrentArtifact(artifact);
@@ -74,7 +71,9 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     fetchArtifactContent(currentArtifact.id)
       .then((c) => {
         if (!cancelled) {
-          setContent(c);
+          const formatted = language === "html" ? formatHtml(c) : c;
+          setContent(formatted);
+          setOriginalContent(formatted);
           setLoading(false);
         }
       })
@@ -90,77 +89,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     };
   }, [currentArtifact.id]);
 
-  const loadHistory = useCallback(async () => {
-    setHistoryLoading(true);
-    setHistoryError(null);
-    try {
-      const items = await fetchArtifactHistory(currentArtifact.id);
-      setHistory(items);
-    } catch (err) {
-      setHistoryError(err instanceof Error ? err.message : "加载失败");
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, [currentArtifact.id]);
-
-  const handleViewVersion = useCallback(async (version: Artifact) => {
-    try {
-      const c = await fetchArtifactContent(version.id);
-      setContent(c);
-      setViewingVersion(version);
-      setIsReadonly(true);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const handleRestoreVersion = useCallback(async (version: Artifact) => {
-    let c: string;
-    try {
-      c = await fetchArtifactContent(version.id);
-    } catch {
-      return;
-    }
-    setSaveStatus("saving");
-    setSaveError(null);
-    try {
-      const newArtifact = await saveArtifactVersion({
-        conversation_id: conversationId,
-        kind: currentArtifact.kind,
-        title: currentArtifact.title,
-        mime_type: currentArtifact.mime_type,
-        file_name: currentArtifact.file_name ?? undefined,
-        content: c,
-        parent_id: currentArtifact.id,
-        meta: {
-          ...(currentArtifact.meta as Record<string, unknown> || {}),
-          restored_from_version: version.version,
-        },
-      });
-      setCurrentArtifact(newArtifact);
-      setContent(c);
-      setViewingVersion(null);
-      setIsReadonly(false);
-      setSaveStatus("success");
-      onSaved(newArtifact);
-      loadHistory();
-    } catch (err) {
-      setSaveStatus("error");
-      setSaveError(describeApiError(err));
-    }
-  }, [conversationId, currentArtifact, onSaved, loadHistory]);
-
-  const handleShowCurrent = useCallback(() => {
-    if (viewingVersion) {
-      setViewingVersion(null);
-      setIsReadonly(false);
-      let cancelled = false;
-      fetchArtifactContent(currentArtifact.id)
-        .then((c) => { if (!cancelled) setContent(c); })
-        .catch(() => {});
-      return () => { cancelled = true; };
-    }
-  }, [currentArtifact.id, viewingVersion]);
+  const hasChanges = content !== null && content !== originalContent;
 
   const handleSave = useCallback(async () => {
     if (content === null) return;
@@ -179,6 +108,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
         meta: currentArtifact.meta,
       });
       setCurrentArtifact(newArtifact);
+      setOriginalContent(content);
       setSaveStatus("success");
       onSaved(newArtifact);
     } catch (err) {
@@ -204,6 +134,21 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
 
   const language = detectLanguage(currentArtifact);
 
+  const handleSelectVersion = useCallback(async (versionArtifactId: string, _versionNumber: number) => {
+    try {
+      setLoading(true);
+      setLoadError(null);
+      const c = await fetchArtifactContent(versionArtifactId);
+      const formatted = language === "html" ? formatHtml(c) : c;
+      setContent(formatted);
+      setOriginalContent(formatted);
+      setLoading(false);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "版本加载失败");
+      setLoading(false);
+    }
+  }, [language]);
+
   return (
     <div
       ref={editorRef}
@@ -228,16 +173,16 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           <span className="text-[10px] text-muted shrink-0">
             {language}
           </span>
+          {hasChanges && (
+            <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+              未保存的修改
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {isReadonly && viewingVersion && (
-            <span className="text-xs text-amber-400/80">
-              查看 v{viewingVersion.version}
-            </span>
-          )}
           {saveStatus === "success" && (
-            <span className="text-xs text-green-500/80">已保存</span>
+            <span className="text-xs text-emerald-400/80">已保存</span>
           )}
           {saveStatus === "error" && (
             <span className="text-xs text-red-500/80 max-w-64 truncate" title={saveError ?? ""}>
@@ -246,14 +191,10 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           )}
           <button
             type="button"
-            onClick={() => {
-              const next = !showHistory;
-              setShowHistory(next);
-              if (next && history.length === 0) loadHistory();
-            }}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+            onClick={() => setShowHistory(!showHistory)}
+            className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md border transition-colors ${
               showHistory
-                ? "bg-accent/10 border-accent/30 text-accent"
+                ? "border-accent/30 text-accent bg-accent/5"
                 : "border-border text-muted hover:text-fg hover:bg-bg"
             }`}
           >
@@ -262,15 +203,16 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           <button
             type="button"
             onClick={handleSave}
-            disabled={saveStatus === "saving" || content === null || isReadonly}
+            disabled={saveStatus === "saving" || content === null || !hasChanges}
             className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {saveStatus === "saving" ? "保存中…" : "保存 (Ctrl+S)"}
+            {saveStatus === "saving" ? "保存中…" : hasChanges ? "保存 (Ctrl+S)" : "已是最新"}
           </button>
         </div>
       </div>
 
       <div className="flex-1 min-h-0 flex">
+        {/* Editor area */}
         <div className="flex-1 min-w-0">
           {loading && (
             <div className="flex items-center justify-center h-full text-sm text-muted">
@@ -294,7 +236,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
               height="100%"
               language={language}
               value={content}
-              onChange={(v) => { if (!isReadonly) setContent(v ?? ""); }}
+              onChange={(v) => setContent(v ?? "")}
               theme="vs-dark"
               options={{
                 fontSize: 13,
@@ -308,85 +250,19 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
                 renderWhitespace: "selection",
                 bracketPairColorization: { enabled: true },
                 padding: { top: 12 },
-                readOnly: isReadonly,
               }}
             />
           )}
         </div>
 
+        {/* Version history sidebar */}
         {showHistory && (
-          <div className="w-64 shrink-0 border-l border-border bg-panel/60 flex flex-col">
-            <div className="px-3 py-2 border-b border-border text-xs font-medium text-fg flex items-center justify-between">
-              <span>版本历史</span>
-              <button
-                type="button"
-                onClick={() => setShowHistory(false)}
-                className="text-muted hover:text-fg"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {historyLoading ? (
-                <div className="p-3 text-xs text-muted">加载中…</div>
-              ) : historyError ? (
-                <div className="p-3 text-xs text-red-400">
-                  {historyError}
-                  <button type="button" onClick={loadHistory} className="ml-2 text-accent hover:underline">重试</button>
-                </div>
-              ) : history.length === 0 ? (
-                <div className="p-3 text-xs text-muted">暂无历史版本</div>
-              ) : (
-                <div className="py-1">
-                  {history.map((v) => (
-                    <div
-                      key={v.id}
-                      className={`px-3 py-2 border-b border-border/40 text-xs transition-colors ${
-                        viewingVersion?.id === v.id
-                          ? "bg-accent/10"
-                          : "hover:bg-bg"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (viewingVersion?.id === v.id) {
-                              handleShowCurrent();
-                            } else {
-                              void handleViewVersion(v);
-                            }
-                          }}
-                          className="text-left flex-1 min-w-0"
-                        >
-                          <div className={`font-medium truncate ${
-                            v.id === currentArtifact.id ? "text-accent" : "text-fg"
-                          }`}>
-                            v{v.version}
-                            {v.id === currentArtifact.id && " (当前)"}
-                          </div>
-                          <div className="text-[10px] text-muted mt-0.5">
-                            {new Date(v.created_at * 1000).toLocaleString("zh-CN")}
-                          </div>
-                        </button>
-                        {v.id !== currentArtifact.id && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void handleRestoreVersion(v);
-                            }}
-                            className="ml-2 text-[10px] text-muted hover:text-accent transition-colors shrink-0"
-                            title="恢复到此版本"
-                          >
-                            恢复
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="w-72 border-l border-border bg-panel flex flex-col min-h-0">
+            <VersionHistoryPanel
+              artifactId={currentArtifact.id}
+              currentVersion={currentArtifact.version || 1}
+              onSelectVersion={handleSelectVersion}
+            />
           </div>
         )}
       </div>

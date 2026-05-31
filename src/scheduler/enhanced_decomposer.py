@@ -9,8 +9,11 @@
 3. 各 Agent 按契约实现，天然对接
 """
 
+import asyncio
+import json
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from .decomposer import SubTask, DecomposeResult, TaskDecomposer, DOMAIN_DEPENDENCIES
 from .complexity import TaskInput
@@ -105,12 +108,11 @@ class EnhancedTaskDecomposer(TaskDecomposer):
             contract_doc=contract_doc,
         )
         
-        # 5. 构建依赖图和执行顺序
+        # 5. 构建依赖图和执行顺序（由 LLM 决定，不做硬编码预设）
         dependency_graph = {}
         for subtask in subtasks:
-            deps = self._resolve_enhanced_dependencies(subtask, subtasks, contract)
-            dependency_graph[subtask.id] = deps
-            subtask.dependencies = deps
+            subtask.dependencies = []
+            dependency_graph[subtask.id] = []
         
         execution_order = self._compute_execution_order(subtasks, dependency_graph)
         
@@ -468,17 +470,31 @@ class EnhancedTaskDecomposer(TaskDecomposer):
         task: TaskInput,
         contract_doc: str,
         contract_section: str,
+        llm_description: str = "",
     ) -> str:
-        """构建简明的子任务描述，不含模板化契约内容。"""
+        """Build a domain-specific subtask description.
+
+        When ``llm_description`` is provided (LLM-driven decomposition), it is
+        used as the primary description supplemented with the relevant contract
+        section. Otherwise falls back to the legacy format.
+        """
         domain_names = {
             "frontend": "前端",
             "backend": "后端",
             "database": "数据库",
             "test": "测试",
             "docs": "文档",
+            "devops": "运维部署",
+            "code": "通用代码",
         }
         domain_name = domain_names.get(domain, domain)
-        # 只保留领域标签 + 原始需求，不要样板文字
+
+        if llm_description:
+            parts = [f"[{domain_name}] {llm_description}"]
+            if contract_section:
+                parts.append(f"\n\n负责契约部分: {contract_section}")
+            return "".join(parts)
+
         return f"[{domain_name}] {task.description}"
     
     def _generate_success_criteria_with_contract(
@@ -573,13 +589,420 @@ class EnhancedTaskDecomposer(TaskDecomposer):
         from .decomposer import DOMAIN_FILE_PATTERNS
         return DOMAIN_FILE_PATTERNS.get(domain, [])[:3]
     
-    def _compute_priority(self, domain: str) -> int:
-        """计算优先级"""
-        priority_map = {
-            "database": 2,
-            "backend": 1,
-            "frontend": 0,
-            "test": -1,
-            "docs": -1,
+    # def _compute_priority(self, domain: str) -> int:
+    #     """计算优先级"""
+    #     priority_map = {
+    #         "database": 2,
+    #         "backend": 1,
+    #         "frontend": 0,
+    #         "test": -1,
+    #         "docs": -1,
+    #     }
+    #     return priority_map.get(domain, 0)
+
+    async def decompose_with_llm(
+        self,
+        task: TaskInput,
+        domains: Set[str],
+        llm_send_fn: Callable,
+        timeout: float = 30.0,
+        parent_task_id: Optional[str] = None,
+    ) -> EnhancedDecomposeResult:
+        """LLM-driven intelligent task decomposition.
+
+        Uses an LLM to analyze the user's requirement and produce domain-specific
+        subtasks with meaningful descriptions, extracted entities, APIs, and UI
+        components. Falls back to keyword-based ``decompose_with_contract()`` on
+        any failure (timeout, parse error, empty response).
+        """
+        logger = logging.getLogger("agenthub.decomposer")
+        if not parent_task_id:
+            parent_task_id = self._generate_task_id("TASK")
+
+        prompt = self._build_llm_decomposition_prompt(task, domains)
+
+        try:
+            async with asyncio.timeout(timeout):
+                response_text = ""
+                async for chunk in llm_send_fn(
+                    messages=[{"role": "user", "content": prompt}]
+                ):
+                    if chunk.get("type") == "text":
+                        response_text += chunk.get("delta", "")
+                    elif chunk.get("type") == "error":
+                        logger.warning("LLM decomposition error: %s", chunk.get("message"))
+                        return self.decompose_with_contract(task, domains, parent_task_id)
+                    elif chunk.get("type") == "done":
+                        break
+
+            parsed = self._parse_llm_decomposition_response(
+                response_text, task, domains, parent_task_id
+            )
+            if parsed is None:
+                logger.warning("Failed to parse LLM decomposition response, falling back")
+                return self.decompose_with_contract(task, domains, parent_task_id)
+
+            logger.info(
+                "LLM decomposition produced %d subtasks: %s",
+                len(parsed.subtasks),
+                {st.id: st.description[:60] for st in parsed.subtasks},
+            )
+            return parsed
+
+        except asyncio.TimeoutError:
+            logger.warning("LLM decomposition timed out after %.1fs, falling back", timeout)
+            return self.decompose_with_contract(task, domains, parent_task_id)
+        except Exception as exc:
+            logger.warning("LLM decomposition failed: %s, falling back", exc)
+            return self.decompose_with_contract(task, domains, parent_task_id)
+
+    def _build_llm_decomposition_prompt(
+        self, task: TaskInput, domains: Set[str]
+    ) -> str:
+        """Build the LLM prompt for intelligent task decomposition."""
+        domain_cn = {
+            "frontend": "前端UI",
+            "backend": "后端API",
+            "database": "数据库",
+            "test": "测试",
+            "docs": "技术文档",
+            "devops": "运维部署",
+            "code": "通用代码",
         }
-        return priority_map.get(domain, 0)
+        domain_list = "\n".join(
+            f"  - {d} ({domain_cn.get(d, d)})" for d in sorted(domains)
+        )
+
+        return (
+            "你是一个软件任务分解专家。分析用户需求，将其拆解为领域特定的子任务。\n\n"
+            f"用户需求：\n{task.description[:3000]}\n\n"
+            f"可用领域（只能从以下选择）：\n{domain_list}\n\n"
+            "请完成以下分析并以 JSON 格式返回（只输出 JSON，不要解释）：\n\n"
+            "1. **entities**: 从需求中提取数据实体（用户、订单、文章等），每个实体包含 name、table_name、fields（字段列表，每个字段有 name/type/description）\n"
+            "2. **apis**: 分析需要的 API 接口，每个接口包含 method、path、description、request_model、response_model\n"
+            "3. **components**: 分析需要的 UI 组件，每个组件包含 name、description、props（属性列表）、events（事件列表）\n"
+            "4. **subtasks**: 为每个可用领域创建具体子任务，每个子任务包含：\n"
+            '   - domain: 领域名（必须从上方的可用领域列表中选择，不可自创）\n'
+            "   - description: **具体的、可执行的**任务描述（200-500字），说明该领域的 Agent 具体要做什么、实现什么功能\n"
+            "   - dependencies: 依赖的其他领域列表（只有存在明确数据/接口传递关系时才添加，默认空数组）\n"
+            "   - acceptance_criteria: 验收标准列表（3-5条具体可验证的标准）\n\n"
+            "重要原则：\n"
+            "- 每个 subtask 的 description 必须包含该领域的具体实现要求，而非简单重复用户需求\n"
+            "- 例如数据库 subtask 应说明要创建哪些表、关键字段；前端 subtask 应说明要创建哪些组件、交互逻辑\n"
+            "- 默认所有 subtask 无依赖（dependencies: []），只有明确需要另一领域产出时才添加\n"
+            "- 前端可用 mock 数据独立开发，不需要等后端\n"
+            "- entities/apis/components 只提取需求中实际提到的，不要编造\n\n"
+            'JSON 格式：\n'
+            "{\n"
+            '  "entities": [{"name": "...", "table_name": "...", "fields": [{"name": "...", "type": "...", "description": "..."}]}],\n'
+            '  "apis": [{"method": "GET/POST/PUT/DELETE", "path": "/api/v1/...", "description": "...", "request_model": "...", "response_model": "..."}],\n'
+            '  "components": [{"name": "...", "description": "...", "props": [{"name": "...", "type": "..."}], "events": ["..."]}],\n'
+            '  "subtasks": [\n'
+            '    {"domain": "...", "description": "...", "dependencies": [], "acceptance_criteria": ["..."]}\n'
+            "  ]\n"
+            "}"
+        )
+
+    def _parse_llm_decomposition_response(
+        self,
+        text: str,
+        task: TaskInput,
+        domains: Set[str],
+        parent_task_id: str,
+    ) -> Optional[EnhancedDecomposeResult]:
+        """Parse the LLM's JSON decomposition response into an EnhancedDecomposeResult."""
+        import re
+
+        # Extract JSON block — try code-fenced first, then raw brace match
+        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+        if json_match:
+            json_str = json_match.group(1).strip()
+        else:
+            json_match = re.search(r"\{[\s\S]*\}", text)
+            if not json_match:
+                return None
+            json_str = json_match.group()
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(data, dict) or "subtasks" not in data:
+            return None
+
+        # Build contract from LLM-extracted entities/APIs/components
+        contract = self._build_contract_from_llm_response(
+            parent_task_id, task.description, data
+        )
+        contract_doc = generate_contract_document(contract)
+
+        # Create subtasks from LLM response
+        subtasks: List[EnhancedSubTask] = []
+        seen_domains: Set[str] = set()
+
+        for i, st_data in enumerate(data.get("subtasks", [])):
+            if not isinstance(st_data, dict):
+                continue
+            domain = st_data.get("domain", "")
+            if not domain or domain not in domains:
+                continue
+            if domain in seen_domains:
+                # Append suffix for duplicate domains
+                domain_key = f"{domain}_{i}"
+            else:
+                domain_key = domain
+            seen_domains.add(domain)
+
+            subtask_id = f"{parent_task_id}-{domain.upper()}"
+            if domain_key != domain:
+                subtask_id = f"{parent_task_id}-{domain.upper()}-{i}"
+
+            llm_description = st_data.get("description", "")
+            contract_section = self._get_contract_section(domain, contract)
+            shared_models = self._get_shared_models(domain, contract)
+
+            description = self._build_enhanced_description(
+                domain=domain,
+                task=task,
+                contract_doc=contract_doc,
+                contract_section=contract_section,
+                llm_description=llm_description,
+            )
+
+            subtask = EnhancedSubTask(
+                id=subtask_id,
+                domain=domain,
+                description=description,
+                files=self._infer_files_for_domain(task, domain),
+                success_criteria=st_data.get("acceptance_criteria", [])[:5],
+                priority=self._compute_priority(domain),
+                dependencies=list(st_data.get("dependencies", [])),
+                contract_section=contract_section,
+                shared_models=shared_models,
+                provided_interfaces=self._get_provided_interfaces(domain, contract),
+                required_interfaces=self._get_required_interfaces(domain, contract),
+                integration_tests=self._get_integration_tests(domain, contract),
+            )
+            subtasks.append(subtask)
+
+        if not subtasks:
+            return None
+
+        # Build dependency graph
+        dependency_graph: Dict[str, List[str]] = {}
+        for st in subtasks:
+            resolved = []
+            for dep_domain in st.dependencies:
+                for other in subtasks:
+                    if other.domain == dep_domain and other.id != st.id:
+                        resolved.append(other.id)
+            dependency_graph[st.id] = resolved
+            st.dependencies = resolved
+
+        execution_order = self._compute_execution_order(subtasks, dependency_graph)
+
+        summary = self._generate_enhanced_summary(
+            task, subtasks, execution_order, contract
+        )
+
+        return EnhancedDecomposeResult(
+            parent_task_id=parent_task_id,
+            subtasks=subtasks,
+            dependency_graph=dependency_graph,
+            execution_order=execution_order,
+            summary=summary,
+            contract=contract,
+            contract_document=contract_doc,
+        )
+
+    def _build_contract_from_llm_response(
+        self,
+        task_id: str,
+        description: str,
+        data: Dict[str, Any],
+    ) -> InterfaceContract:
+        """Build an InterfaceContract from the LLM's JSON response."""
+        builder = ContractBuilder()
+
+        for entity in data.get("entities", []):
+            if not isinstance(entity, dict):
+                continue
+            fields = entity.get("fields", [])
+            builder.add_model(
+                name=entity.get("name", "Unknown"),
+                description=entity.get("description", ""),
+                table_name=entity.get("table_name", entity.get("name", "unknown").lower()),
+                fields=[
+                    {
+                        "name": f.get("name", ""),
+                        "type": f.get("type", "string"),
+                        "description": f.get("description", ""),
+                    }
+                    for f in fields
+                    if isinstance(f, dict)
+                ],
+            )
+
+        for api in data.get("apis", []):
+            if not isinstance(api, dict):
+                continue
+            builder.add_endpoint(
+                method=api.get("method", "GET"),
+                path=api.get("path", ""),
+                description=api.get("description", ""),
+                request_model=api.get("request_model"),
+                response_model=api.get("response_model"),
+            )
+
+        for comp in data.get("components", []):
+            if not isinstance(comp, dict):
+                continue
+            builder.add_component(
+                name=comp.get("name", ""),
+                description=comp.get("description", ""),
+                props=comp.get("props", []),
+                events=comp.get("events", []),
+            )
+
+        return builder.build(task_id, description)
+
+    async def resolve_dependencies_llm(
+        self,
+        result: EnhancedDecomposeResult,
+        llm_send_fn: Callable,
+        timeout: float = 30.0,
+    ) -> EnhancedDecomposeResult:
+        """Use LLM to semantically resolve dependencies between subtasks.
+
+        Replaces the hardcoded DOMAIN_DEPENDENCIES with LLM-driven
+        semantic analysis. Each subtask's description is analyzed to
+        determine if it truly depends on another subtask's output.
+
+        Falls back to the original hardcoded dependencies on failure.
+        """
+        if not result.subtasks:
+            return result
+
+        logger = logging.getLogger("agenthub.decomposer")
+
+        prompt = self._build_dependency_prompt(result.subtasks)
+
+        try:
+            async with asyncio.timeout(timeout):
+                response_text = ""
+                async for chunk in llm_send_fn(
+                    messages=[{"role": "user", "content": prompt}]
+                ):
+                    if chunk.get("type") == "text":
+                        response_text += chunk.get("delta", "")
+                    elif chunk.get("type") == "error":
+                        logger.warning("LLM dependency resolution error: %s", chunk.get("message"))
+                        return result
+                    elif chunk.get("type") == "done":
+                        break
+
+            deps_map = self._parse_dependency_response(response_text, result.subtasks)
+            if deps_map is None:
+                logger.warning("Failed to parse LLM dependency response, using hardcoded deps")
+                return result
+
+            for subtask in result.subtasks:
+                subtask.dependencies = deps_map.get(subtask.id, [])
+
+            dependency_graph = {st.id: list(st.dependencies) for st in result.subtasks}
+            execution_order = self._compute_execution_order(result.subtasks, dependency_graph)
+
+            result.dependency_graph = dependency_graph
+            result.execution_order = execution_order
+            result.summary = self._generate_enhanced_summary(
+                TaskInput(description=result.parent_task_id, context=""),
+                result.subtasks,
+                execution_order,
+                result.contract,
+            )
+
+            logger.info(
+                "LLM-resolved deps: %s",
+                {st.id: st.dependencies for st in result.subtasks}
+            )
+            return result
+
+        except asyncio.TimeoutError:
+            logger.warning("LLM dependency resolution timed out, using hardcoded deps")
+            return result
+        except Exception as exc:
+            logger.warning("LLM dependency resolution failed: %s, using hardcoded deps", exc)
+            return result
+
+    def _build_dependency_prompt(self, subtasks: List[EnhancedSubTask]) -> str:
+        """Build the LLM prompt for semantic dependency analysis."""
+        domain_cn = {
+            "frontend": "前端UI",
+            "backend": "后端API",
+            "database": "数据库",
+            "test": "测试",
+            "docs": "技术文档",
+            "devops": "运维部署",
+            "code": "通用代码",
+        }
+        subtask_lines = []
+        for i, st in enumerate(subtasks, 1):
+            desc = st.description
+            cn = domain_cn.get(st.domain, st.domain)
+            subtask_lines.append(f"{i}. ID: {st.id}, 领域: {cn}, 描述: {desc[:200]}")
+
+        return (
+            '你是一个任务依赖分析器。根据以下子任务的具体语义内容，分析它们之间的实际依赖关系。\n\n'
+            '核心原则：默认并行。只有存在明确的数据/接口传递关系时，才添加依赖。\n\n'
+            '子任务列表：\n'
+            + '\n'.join(subtask_lines) +
+            '\n\n'
+            '判断规则（按优先级）：\n'
+            '1. 如果所有子任务描述几乎相同（同一用户需求被拆分到不同领域），则全部并行，全部[]，不要加任何依赖\n'
+            '2. 如果子任务B必须使用子任务A产出的具体API/数据模型/函数签名，B才依赖A\n'
+            '3. 前端完全可以用模拟数据(mock data)独立开发，不需要等后端。描述相同的前端/后端任务各自独立实现\n'
+            '4. 如果两个子任务可以完全独立并行完成，则不应有依赖关系\n'
+            '5. 技术文档(docs)依赖实现结果来撰写\n\n'
+            '格式示例（全并行，无依赖）：\n'
+            '{"dependencies": {"TASK-xxx-FRONTEND": [], "TASK-xxx-BACKEND": []}}\n\n'
+            '确保：\n'
+            '1. 所有子任务ID都必须出现在dependencies中\n'
+            '2. 依赖列表必须是子任务ID的数组，即使是空数组也要写[]\n'
+            '3. 只输出JSON，不要输出解释文字\n'
+            '4. 默认全部[]，只有非常明确的数据传递关系才加依赖\n'
+        )
+
+    def _parse_dependency_response(
+        self, text: str, subtasks: List[EnhancedSubTask]
+    ) -> Optional[Dict[str, List[str]]]:
+        """Parse the LLM dependency response JSON."""
+        import re
+
+        valid_ids = {st.id for st in subtasks}
+
+        json_match = re.search(r'\{[\s\S]*"dependencies"[\s\S]*\}', text)
+        if not json_match:
+            return None
+
+        try:
+            data = json.loads(json_match.group())
+        except json.JSONDecodeError:
+            return None
+
+        if "dependencies" not in data or not isinstance(data["dependencies"], dict):
+            return None
+
+        deps_map: Dict[str, List[str]] = {}
+        for st_id, deps in data["dependencies"].items():
+            if st_id not in valid_ids:
+                continue
+            if not isinstance(deps, list):
+                deps = []
+            deps_map[st_id] = [d for d in deps if d in valid_ids]
+
+        for st in subtasks:
+            if st.id not in deps_map:
+                deps_map[st.id] = []
+
+        return deps_map

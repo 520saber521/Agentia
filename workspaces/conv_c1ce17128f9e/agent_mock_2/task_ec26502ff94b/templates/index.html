@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前后端整合示例</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            text-align: center;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <h1>欢迎访问前后端集成页面</h1>
+    <button id="fetchGreeting">从后端获取问候</button>
+    <div id="greetingResult" class="result">等待获取...</div>
+
+    <script>
+        document.getElementById('fetchGreeting').addEventListener('click', function() {
+            fetch('/api/greeting')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('greetingResult').innerHTML = `
+                        <p>消息: ${data.message}</p>
+                        <p>状态: ${data.status}</p>
+                    `;
+                })
+                .catch(error => {
+                    document.getElementById('greetingResult').innerHTML = `<p style='color:red'>请求失败: ${error}</p>`;
+                });
+        });
+    </script>
+</body>
+</html>

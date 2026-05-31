@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { fetchArtifactContent } from "../../api/client";
+import { formatHtml } from "../../formatHtml";
 
 interface Props {
   artifactId: string;
@@ -10,7 +11,6 @@ interface Props {
   url?: string;
   previewUrl?: string;
   onEdit?: (artifactId: string) => void;
-  onFullscreen?: (type: "code" | "preview", artifactId: string) => void;
 }
 
 function formatSize(bytes: number): string {
@@ -19,216 +19,223 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-function detectPreviewType(mimeType: string, title: string): "html" | "ppt" | "document" | "unknown" {
-  const t = mimeType.toLowerCase();
-  if (t.includes("html")) return "html";
-  if (t.includes("presentation") || t.includes("powerpoint") || title.toLowerCase().endsWith(".pptx") || title.toLowerCase().endsWith(".ppt"))
-    return "ppt";
-  if (t.includes("markdown") || t.includes("text/") || title.match(/\.(md|markdown|txt|csv|log)$/i))
-    return "document";
-  return "unknown";
+function safeTitle(title: string): string {
+  return title.replace(/[<>&"']/g, "");
 }
 
-function PreviewIcon({ type }: { type: "html" | "ppt" | "document" | "unknown" }) {
-  switch (type) {
-    case "html":
-      return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 4v16" /><path d="M3 9h18" />
-        </svg>
-      );
-    case "ppt":
-      return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <circle cx="10" cy="12" r="2" /><path d="M15 10l4 4-4 4" />
-        </svg>
-      );
-    case "document":
-      return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M6 22h12a2 2 0 002-2V8l-6-6H6a2 2 0 00-2 2v16a2 2 0 002 2z" />
-          <path d="M14 2v6h6" /><path d="M8 13h8" /><path d="M8 17h5" />
-        </svg>
-      );
-    default:
-      return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 4v16" /><path d="M3 9h18" />
-        </svg>
-      );
-  }
+function fallbackHtml(title: string): string {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle(title)}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#10131a;color:#eef2ff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif}.card{max-width:560px;padding:28px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:#171b24;box-shadow:0 24px 80px rgba(0,0,0,.35)}h1{margin:0 0 10px;font-size:22px}p{margin:0;color:#aab3c5;line-height:1.8}</style></head><body><main class="card"><h1>预览暂不可用</h1><p>该产物没有返回可直接渲染的完整 HTML。你仍可以打开编辑器查看和修复源码。</p></main></body></html>`;
 }
 
-export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previewUrl, onEdit, onFullscreen }: Props) {
-  const [showIframe, setShowIframe] = useState(false);
-  const [iframeError, setIframeError] = useState(false);
-  const [retryKey, setRetryKey] = useState(0);
-  const [inlineHtml, setInlineHtml] = useState<string | null>(null);
-  const [loadingInlineHtml, setLoadingInlineHtml] = useState(false);
-  const [inlineHtmlError, setInlineHtmlError] = useState<string | null>(null);
+function highlightHtml(code: string): string {
+  return code
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/(&lt;!--[\s\S]*?--&gt;|&lt;\/?[a-zA-Z][\w:.-]*|\/?&gt;)/g, '<span class="syn-tag">$1</span>')
+    .replace(/([\w:-]+)(\s*=\s*)(&quot;[^&]*&quot;|'[^']*'|[^\s&]+)/g, '<span class="syn-attr">$1</span>$2<span class="syn-string">$3</span>');
+}
 
-  const previewType = detectPreviewType(mimeType, title);
-  const viewerUrl = artifactId ? `/preview/${encodeURIComponent(artifactId)}/viewer` : "";
+const CODE_STYLE = ".syn-tag{color:#f0abfc}.syn-attr{color:#93c5fd}.syn-string{color:#86efac}";
+
+export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previewUrl, onEdit }: Props) {
+  const [expanded, setExpanded] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [mode, setMode] = useState<"preview" | "code">("preview");
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const isHtml = mimeType.toLowerCase().includes("html");
+  const isImage = mimeType.startsWith("image/");
   const resolvedPreviewUrl = previewUrl || (artifactId ? `/preview/${encodeURIComponent(artifactId)}` : "");
   const sourceUrl = url || (artifactId ? `/api/artifacts/${encodeURIComponent(artifactId)}/content` : "");
-  const isViewerSupported = previewType !== "unknown";
+  const html = content || fallbackHtml(title);
+  const highlighted = useMemo(() => highlightHtml(content || ""), [content]);
 
-  const fallbackHtml = useMemo(
-    () => {
-      const safeTitle = title.replace(/[<>&"']/g, "");
-      return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f7f7;color:#222;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif}.card{max-width:520px;padding:28px;border-radius:22px;background:white;box-shadow:0 20px 60px rgba(0,0,0,.12)}h1{margin:0 0 10px;font-size:24px}p{margin:0;color:#666;line-height:1.7}</style></head><body><main class="card"><h1>预览暂不可用</h1><p>当前产物没有返回可直接渲染的 HTML，已保留编辑和全屏入口。</p></main></body></html>`;
-    },
-    [title],
-  );
-  const iframeHtml = inlineHtml || fallbackHtml;
-
-  const iframeSrc = previewType === "html"
-    ? undefined
-    : isViewerSupported
-      ? viewerUrl
-      : resolvedPreviewUrl || sourceUrl;
-
-  const iframeSrcDoc = previewType === "html" ? iframeHtml : undefined;
-
-  useEffect(() => {
-    if (!showIframe || !artifactId) return;
-    // Only fetch inline content for HTML previews
-    if (previewType !== "html") return;
-
-    let cancelled = false;
-    setLoadingInlineHtml(true);
-    setInlineHtmlError(null);
+  const loadContent = useCallback(() => {
+    if (!artifactId || !isHtml || content !== null || loading) return;
+    setLoading(true);
+    setError(null);
     fetchArtifactContent(artifactId)
-      .then((content) => {
-        if (cancelled) return;
-        setInlineHtml(content.trim() || fallbackHtml);
-        setIframeError(false);
+      .then((value) => {
+        const formatted = formatHtml(value.trim());
+        setContent(formatted || fallbackHtml(title));
       })
       .catch((err) => {
-        if (cancelled) return;
-        setInlineHtmlError(err instanceof Error ? err.message : "预览内容加载失败");
-        setInlineHtml(fallbackHtml);
+        setContent(fallbackHtml(title));
+        setError(err instanceof Error ? err.message : "预览内容加载失败");
       })
-      .finally(() => {
-        if (!cancelled) setLoadingInlineHtml(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [artifactId, fallbackHtml, previewType, retryKey, showIframe]);
+      .finally(() => setLoading(false));
+  }, [artifactId, content, isHtml, loading, title]);
 
-  function handleTogglePreview() {
-    if (!artifactId) {
-      setIframeError(true);
-      return;
-    }
-    if (!showIframe) {
-      setIframeError(false);
-    }
-    setShowIframe(!showIframe);
+  useEffect(() => {
+    if (expanded || fullscreen || mode === "code") loadContent();
+  }, [expanded, fullscreen, mode, loadContent]);
+
+  function copyCode() {
+    if (!content) return;
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    }).catch(() => {});
   }
 
-  function handleRetry() {
-    setIframeError(false);
-    setInlineHtmlError(null);
-    setInlineHtml(null);
-    setRetryKey((value) => value + 1);
+  function sendToChat() {
+    if (!content) return;
+    window.dispatchEvent(new CustomEvent("agenthub:code-to-chat", { detail: { code: content, title } }));
   }
 
-  function handleFullscreen() {
-    if (onFullscreen) {
-      onFullscreen("preview", artifactId);
-    } else {
-      window.open(viewerUrl || resolvedPreviewUrl || sourceUrl, "_blank", "noopener noreferrer");
-    }
-  }
-
-  const labelMap: Record<string, string> = {
-    html: "网页预览",
-    ppt: "PPT 预览",
-    document: "文档预览",
-    unknown: "预览",
-  };
+  const previewFrame = (
+    <div className="relative h-full min-h-[420px] bg-bg">
+      {loading && (
+        <div className="absolute inset-0 z-10 grid place-items-center bg-bg/80">
+          <div className="rounded-full border border-border bg-panel px-4 py-2 text-xs text-muted">加载预览中...</div>
+        </div>
+      )}
+      {isImage ? (
+        <div className="grid h-full place-items-center p-4">
+          <img src={sourceUrl} alt={title} className="max-h-full max-w-full rounded object-contain" />
+        </div>
+      ) : mode === "code" && isHtml ? (
+        <pre
+          className="h-full overflow-auto p-4 text-[11px] leading-relaxed text-fg"
+          dangerouslySetInnerHTML={{ __html: highlighted || "暂无源码" }}
+        />
+      ) : (
+        <iframe
+          title={title}
+          src={isHtml ? undefined : resolvedPreviewUrl || sourceUrl}
+          srcDoc={isHtml ? html : undefined}
+          className="h-full w-full border-0 bg-white"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+        />
+      )}
+    </div>
+  );
 
   return (
-    <div className="rounded-xl border border-border bg-panel overflow-hidden my-2 shadow-[0_12px_34px_rgba(0,0,0,0.18)]">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bg/40">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="h-8 w-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-accent shrink-0">
-            <PreviewIcon type={previewType} />
-          </div>
+    <div className="my-2 overflow-hidden rounded-xl border border-border bg-panel shadow-[0_12px_34px_rgba(0,0,0,0.18)]">
+      <style>{CODE_STYLE}</style>
+      <button
+        type="button"
+        onClick={() => {
+          setExpanded((v) => !v);
+          setMode("preview");
+        }}
+        className="flex w-full items-center justify-between gap-3 border-b border-border bg-bg/40 px-3 py-2.5 text-left"
+      >
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-accent/20 bg-accent/10 text-accent">HTML</div>
           <div className="min-w-0">
-            <div className="text-sm font-medium text-fg truncate">{title}</div>
-            <div className="text-[10px] text-muted truncate">
-              {labelMap[previewType]} · {mimeType} · {formatSize(fileSize)}
+            <div className="truncate text-sm font-medium text-fg">{title}</div>
+            <div className="mt-0.5 text-[10px] text-muted">
+              {isHtml ? "网页预览" : mimeType} · {formatSize(fileSize)}
+              {error ? ` · ${error}` : ""}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0 ml-3">
+        <div className="flex shrink-0 items-center gap-1.5">
           {onEdit && artifactId && (
-            <button
-              type="button"
-              onClick={() => onEdit(artifactId)}
-              className="rounded-full border border-border px-3 py-1.5 text-xs text-muted hover:text-accent hover:bg-bg transition-colors"
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(artifactId);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onEdit(artifactId);
+                }
+              }}
+              className="rounded-md border border-border px-2 py-1 text-[11px] text-muted hover:text-accent"
             >
               编辑
-            </button>
+            </span>
           )}
-          <button
-            type="button"
-            onClick={handleTogglePreview}
-            className="rounded-full border border-accent/30 px-3 py-1.5 text-xs text-accent hover:bg-accent/10 transition-colors"
-          >
-            {showIframe ? "关闭预览" : labelMap[previewType]}
-          </button>
-          <button
-            type="button"
-            onClick={handleFullscreen}
-            className="rounded-full border border-border px-3 py-1.5 text-xs text-muted hover:text-fg hover:bg-bg transition-colors"
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              setFullscreen(true);
+              setMode("preview");
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                setFullscreen(true);
+                setMode("preview");
+              }
+            }}
+            className="rounded-md border border-accent/30 px-2 py-1 text-[11px] text-accent hover:bg-accent/10"
           >
             全屏
-          </button>
+          </span>
+          <span className="rounded-md border border-border px-2 py-1 text-[11px] text-muted">{expanded ? "收起" : "展开"}</span>
         </div>
-      </div>
+      </button>
 
-      {showIframe && (
-        <div className="relative w-full bg-bg" style={{ height: previewType === "ppt" ? "600px" : "520px" }}>
-          {loadingInlineHtml && previewType === "html" && (
-            <div className="absolute left-3 top-3 z-10 rounded-full border border-border bg-panel/90 px-3 py-1.5 text-xs text-muted shadow-lg">
-              正在加载预览内容…
+      {expanded && (
+        <div>
+          {isHtml && (
+            <div className="flex items-center border-b border-border bg-bg/60">
+              <button type="button" onClick={() => setMode("preview")} className={`px-3 py-1.5 text-[11px] ${mode === "preview" ? "text-accent" : "text-muted"}`}>
+                预览
+              </button>
+              <button type="button" onClick={() => setMode("code")} className={`px-3 py-1.5 text-[11px] ${mode === "code" ? "text-accent" : "text-muted"}`}>
+                源码
+              </button>
+              {mode === "code" && (
+                <div className="ml-auto flex gap-1 pr-2">
+                  <button type="button" onClick={sendToChat} className="rounded px-2 py-1 text-[10px] text-sky-300 hover:bg-sky-500/10">
+                    在聊天中修改
+                  </button>
+                  <button type="button" onClick={copyCode} className="rounded px-2 py-1 text-[10px] text-muted hover:text-fg">
+                    {copied ? "已复制" : "复制源码"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
-          {inlineHtmlError && !loadingInlineHtml && previewType === "html" && (
-            <div className="absolute left-3 top-3 z-10 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100 shadow-lg">
-              已启用本地兜底预览
+          <div className="h-[520px]">{previewFrame}</div>
+        </div>
+      )}
+
+      {fullscreen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-bg">
+          <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-panel px-4">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-fg">{title}</div>
+              <div className="text-[10px] text-muted">全屏预览 · {formatSize(fileSize)}</div>
             </div>
-          )}
-          {iframeError ? (
-            <div className="flex items-center justify-center h-full text-sm text-muted">
-              <div className="text-center rounded-xl border border-red-500/20 bg-red-500/5 px-6 py-5">
-                <p className="text-red-300">预览加载失败</p>
-                <button
-                  type="button"
-                  onClick={handleRetry}
-                  className="mt-3 rounded-full border border-red-400/30 px-3 py-1.5 text-xs text-red-200 hover:bg-red-500/10 transition-colors"
-                >
-                  重试
+            <div className="flex items-center gap-2">
+              {isHtml && (
+                <>
+                  <button type="button" onClick={() => setMode("preview")} className={`rounded border px-2 py-1 text-xs ${mode === "preview" ? "border-accent text-accent" : "border-border text-muted"}`}>
+                    预览
+                  </button>
+                  <button type="button" onClick={() => setMode("code")} className={`rounded border px-2 py-1 text-xs ${mode === "code" ? "border-accent text-accent" : "border-border text-muted"}`}>
+                    源码
+                  </button>
+                </>
+              )}
+              {onEdit && artifactId && (
+                <button type="button" onClick={() => onEdit(artifactId)} className="rounded bg-accent px-3 py-1.5 text-xs text-white">
+                  编辑代码
                 </button>
-              </div>
+              )}
+              <button type="button" onClick={() => setFullscreen(false)} className="rounded border border-border px-3 py-1.5 text-xs text-muted hover:text-fg">
+                关闭
+              </button>
             </div>
-          ) : (
-            <iframe
-              key={retryKey}
-              src={iframeSrc}
-              srcDoc={iframeSrcDoc}
-              title={title}
-              className="w-full h-full border-0 bg-white"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-              onLoad={() => setIframeError(false)}
-              onError={() => setIframeError(true)}
-            />
-          )}
+          </div>
+          <div className="min-h-0 flex-1">{previewFrame}</div>
         </div>
       )}
     </div>

@@ -1,268 +1,318 @@
-import { useState } from "react";
-import { useChatStore } from "../stores/useChatStore";
-import type { Agent, Conversation } from "../types";
+import { useMemo, useState } from "react";
 
-interface Props {
-  conversations: Conversation[];
-  currentId: string | null;
-  onNewAgent?: () => void;
+import { fetchAgentPrompt } from "../api/client";
+import { useChatStore } from "../stores/useChatStore";
+import { AgentCreateDialog } from "./AgentCreateDialog";
+import { NewConversationDialog } from "./NewConversationDialog";
+
+type ViewMode = "active" | "archived";
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString([], { month: "2-digit", day: "2-digit" });
 }
 
-type ViewTab = "agents" | "chats";
+const CAP_COLORS: Record<string, string> = {
+  actor: "border-blue-500/40 bg-blue-500/10 text-blue-400",
+  critic: "border-amber-500/40 bg-amber-500/10 text-amber-400",
+  idea: "border-purple-500/40 bg-purple-500/10 text-purple-400",
+  prd: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
+  design: "border-cyan-500/40 bg-cyan-500/10 text-cyan-400",
+  plan: "border-rose-500/40 bg-rose-500/10 text-rose-400",
+  coding: "border-indigo-500/40 bg-indigo-500/10 text-indigo-400",
+  frontend: "border-blue-500/40 bg-blue-500/10 text-blue-400",
+  backend: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
+  database: "border-purple-500/40 bg-purple-500/10 text-purple-400",
+  testing: "border-amber-500/40 bg-amber-500/10 text-amber-400",
+  devops: "border-rose-500/40 bg-rose-500/10 text-rose-400",
+  orchestration: "border-accent/40 bg-accent/10 text-accent",
+};
 
-export function ConversationListPanel({ conversations = [], currentId, onNewAgent }: Props) {
-  const [tab, setTab] = useState<ViewTab>("agents");
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [groupMode, setGroupMode] = useState(false);
-  const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
+function capColor(cap: string): string {
+  for (const [key, color] of Object.entries(CAP_COLORS)) {
+    if (cap.toLowerCase().includes(key)) return color;
+  }
+  return "border-border bg-bg text-muted";
+}
 
+export function ConversationListPanel() {
+  const items = useChatStore((s) => s.conversations);
   const agents = useChatStore((s) => s.agents);
-  const selectConversation = useChatStore((s) => s.selectConversation);
-  const removeConversation = useChatStore((s) => s.removeConversation);
-  const createAndSelect = useChatStore((s) => s.createAndSelect);
+  const current = useChatStore((s) => s.currentConvId);
+  const select = useChatStore((s) => s.openTab);
+  const refresh = useChatStore((s) => s.refreshConversations);
   const startAgentChat = useChatStore((s) => s.startAgentChat);
+  const createAndSelect = useChatStore((s) => s.createAndSelect);
+  const updateConversationMeta = useChatStore((s) => s.updateConversationMeta);
 
-  async function handleDelete(e: React.MouseEvent, convId: string) {
-    e.stopPropagation();
-    if (confirmDelete === convId) {
-      await removeConversation(convId);
-      setConfirmDelete(null);
-      setGroupMode(false);
-      setSelectedAgents(new Set());
-    } else {
-      setConfirmDelete(convId);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showAgentCreate, setShowAgentCreate] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<(typeof agents)[number] | null>(null);
+  const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<ViewMode>("active");
+  const [promptAgentId, setPromptAgentId] = useState<string | null>(null);
+  const [promptText, setPromptText] = useState("");
+  const [promptLoading, setPromptLoading] = useState(false);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return items.filter((c) => {
+      if (mode === "active" && c.archived) return false;
+      if (mode === "archived" && !c.archived) return false;
+      if (!q) return true;
+      return (
+        c.title.toLowerCase().includes(q) ||
+        (c.last_msg_preview ?? "").toLowerCase().includes(q) ||
+        c.members.some((m) => m.member_id.toLowerCase().includes(q))
+      );
+    });
+  }, [items, mode, query]);
+
+  async function togglePrompt(agentId: string) {
+    if (promptAgentId === agentId) {
+      setPromptAgentId(null);
+      return;
+    }
+    setPromptAgentId(agentId);
+    setPromptText("");
+    setPromptLoading(true);
+    try {
+      const res = await fetchAgentPrompt(agentId);
+      setPromptText(res.prompt);
+    } catch {
+      setPromptText("");
+    } finally {
+      setPromptLoading(false);
     }
   }
 
-  function toggleAgentSelection(agentId: string) {
-    setSelectedAgents((prev) => {
-      const next = new Set(prev);
-      if (next.has(agentId)) next.delete(agentId);
-      else next.add(agentId);
-      return next;
-    });
-  }
-
-  async function handleStartSingleChat(agentId: string) {
-    await startAgentChat(agentId);
-    setTab("chats");
-  }
-
-  async function handleCreateGroup() {
-    if (selectedAgents.size === 0) return;
-    const agentIds = Array.from(selectedAgents);
+  async function createLoginDemoConversation() {
     await createAndSelect({
-      title: `群聊 (${agentIds.length} 个 Agent)`,
+      title: "登录页多 Agent 协作 Demo",
       type: "group",
-      agent_ids: agentIds,
+      agent_ids: ["agent_orchestrator", "agent_mock", "agent_mock_2", "agent_claude", "agent_deepseek"],
     });
-    setGroupMode(false);
-    setSelectedAgents(new Set());
-    setTab("chats");
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="px-3 py-2 border-b border-border shrink-0">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
-            AGENT CONTACTS
-          </h2>
-          {onNewAgent && (
+    <aside className="flex min-h-0 w-80 min-w-80 max-w-80 shrink-0 flex-col overflow-hidden border-r border-border bg-panel">
+      <div className="shrink-0 border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted">Conversations</h2>
+          <div className="flex items-center gap-2">
             <button
-              type="button"
-              onClick={onNewAgent}
-              className="text-[11px] text-accent hover:text-accent/80 transition-colors"
+              onClick={() => void createLoginDemoConversation()}
+              className="rounded-md border border-accent/50 px-2.5 py-1.5 text-xs text-accent transition hover:bg-accent/10"
+              title="创建登录页多 Agent 协作 Demo 群聊"
             >
-              New Agent
-            </button>
-          )}
-        </div>
-
-        {/* Tab 切换 */}
-        <div className="flex gap-1 bg-bg rounded-lg p-0.5">
-          <button
-            type="button"
-            onClick={() => { setTab("agents"); setGroupMode(false); setSelectedAgents(new Set()); }}
-            className={`flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition ${
-              tab === "agents" ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"
-            }`}
-          >
-            Agents ({agents.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => { setTab("chats"); setGroupMode(false); setSelectedAgents(new Set()); }}
-            className={`flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition ${
-              tab === "chats" ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"
-            }`}
-          >
-            Chats ({conversations.length})
-          </button>
-        </div>
-      </div>
-
-      {/* Agent 群聊操作栏 */}
-      {tab === "agents" && groupMode && selectedAgents.size > 0 && (
-        <div className="mx-3 mt-2 p-2 rounded-lg bg-accent/10 border border-accent/30 flex items-center justify-between">
-          <span className="text-[11px] text-accent">已选 {selectedAgents.size} 个 Agent</span>
-          <div className="flex gap-1.5">
-            <button
-              type="button"
-              onClick={() => { setGroupMode(false); setSelectedAgents(new Set()); }}
-              className="rounded-md px-2 py-1 text-[10px] text-muted hover:text-fg border border-border"
-            >
-              取消
+              Demo
             </button>
             <button
-              type="button"
-              onClick={handleCreateGroup}
-              className="rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-white hover:bg-accent/90"
+              onClick={() => setShowCreate(true)}
+              className="rounded-md bg-accent px-2.5 py-1.5 text-xs text-white transition hover:bg-accent-hover"
+              title="新建会话"
             >
-              建立群聊
+              新建
+            </button>
+            <button
+              onClick={() => void refresh()}
+              className="rounded-md border border-border px-2.5 py-1.5 text-xs text-muted transition hover:border-accent/60 hover:text-fg"
+            >
+              刷新
             </button>
           </div>
         </div>
-      )}
 
-      {/* Agent 群聊模式提示 */}
-      {tab === "agents" && !groupMode && (
-        <div className="mx-3 mt-2 flex gap-1.5">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="搜索标题、成员或最近消息"
+          className="mt-3 w-full rounded-md border border-border bg-bg px-3 py-2 text-xs text-fg outline-none transition focus:border-accent"
+        />
+
+        <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border border-border bg-bg p-1">
+          {(["active", "archived"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`rounded px-2 py-1.5 text-xs transition ${mode === m ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}
+            >
+              {m === "active" ? "活跃" : "归档"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <NewConversationDialog open={showCreate} onClose={() => setShowCreate(false)} />
+      <AgentCreateDialog
+        open={showAgentCreate || editingAgent != null}
+        agent={editingAgent}
+        onClose={() => {
+          setShowAgentCreate(false);
+          setEditingAgent(null);
+        }}
+      />
+
+      <div className="border-b border-border p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-[10.5px] font-semibold uppercase text-muted">Agent contacts</h3>
           <button
             type="button"
-            onClick={() => setGroupMode(true)}
-            className="flex-1 rounded-md border border-border px-2 py-1.5 text-[10px] text-muted hover:text-fg hover:border-accent/40 transition-colors"
+            onClick={() => setShowAgentCreate(true)}
+            className="rounded-md border border-border px-2 py-1 text-[10.5px] text-muted transition hover:border-accent/60 hover:text-fg"
           >
-            ☰ 多选建群聊
-          </button>
-          <button
-            type="button"
-            onClick={() => createAndSelect({ title: "New Chat" })}
-            className="flex-1 rounded-md border border-border px-2 py-1.5 text-[10px] text-muted hover:text-fg hover:border-accent/40 transition-colors"
-          >
-            + 新对话
+            New Agent
           </button>
         </div>
-      )}
-
-      {/* ===== Agent 列表 ===== */}
-      {tab === "agents" && (
-        <ul className="flex-1 overflow-y-auto p-2 space-y-1.5">
-          {agents.map((agent) => {
-            const isSelected = selectedAgents.has(agent.id);
-            return (
-              <li key={agent.id}>
-                <div
-                  className={`relative w-full p-3 rounded-lg border transition cursor-pointer group ${
-                    isSelected
-                      ? "border-accent bg-accent/10"
-                      : "border-border hover:border-accent/50 bg-panel/50"
-                  }`}
-                  onClick={() => groupMode ? toggleAgentSelection(agent.id) : void handleStartSingleChat(agent.id)}
-                >
-                  {/* 头像 + 名称行 */}
-                  <div className="flex items-center gap-2.5">
-                    <span className="shrink-0 w-8 h-8 rounded-lg bg-bg flex items-center justify-center text-base leading-none border border-border">
-                      {agent.avatar || "🤖"}
+        <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
+          {agents.map((agent) => (
+            <div key={agent.id} className="group rounded-md border border-border p-2 transition hover:border-accent/60 hover:bg-accent/10">
+              <button type="button" onClick={() => void startAgentChat(agent.id)} className="w-full text-left">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 text-xs font-semibold text-accent">
+                    {agent.avatar || agent.name.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-fg">{agent.name}</span>
+                    <span className="block truncate text-[10.5px] text-muted">
+                      {agent.adapter_type}
+                      {agent.model ? ` · ${agent.model}` : ""}
                     </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-sm text-fg truncate">{agent.name}</div>
-                      <div className="text-[10.5px] text-muted truncate mt-0.5">
-                        {agent.adapter_type} · {agent.model || "—"}
-                      </div>
+                  </span>
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${agent.api_key_configured || agent.adapter_type === "mock" ? "bg-emerald-400" : "bg-amber-400"}`}
+                    title={agent.api_key_configured ? "可调用" : "未配置 API Key"}
+                  />
+                </div>
+              </button>
+
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  {agent.capabilities.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {agent.capabilities.slice(0, 4).map((cap) => (
+                        <span key={cap} className={`rounded border px-1.5 py-0.5 text-[10px] ${capColor(cap)}`}>
+                          {cap}
+                        </span>
+                      ))}
+                      {agent.capabilities.length > 4 && (
+                        <span className="rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-muted">
+                          +{agent.capabilities.length - 4}
+                        </span>
+                      )}
                     </div>
-
-                    {!groupMode && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onNewAgent?.();
-                        }}
-                        className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[10px] text-muted opacity-0 group-hover:opacity-100 hover:text-fg hover:border-accent/40 transition-all"
-                      >
-                        Edit
-                      </button>
-                    )}
-
-                    {groupMode && (
-                      <span className={`shrink-0 w-5 h-5 rounded-md border flex items-center justify-center text-[10px] font-bold transition ${
-                        isSelected ? "bg-accent border-accent text-white" : "border-border text-muted"
-                      }`}>
-                        {isSelected ? "✓" : ""}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 能力标签 */}
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {agent.capabilities.slice(0, 6).map((cap) => (
-                      <span
-                        key={cap}
-                        className="inline-block rounded-md border border-border bg-bg px-1.5 py-0.5 text-[10px] text-muted leading-tight"
-                      >
-                        {cap}
-                      </span>
-                    ))}
-                  </div>
+                  )}
                 </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {/* ===== 对话列表 ===== */}
-      {tab === "chats" && (
-        <ul className="flex-1 overflow-y-auto p-2 space-y-1">
-          {conversations.map((conv) => (
-            <li key={conv.id}>
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => selectConversation(conv.id)}
-                onKeyDown={(e) => { if (e.key === "Enter") selectConversation(conv.id); }}
-                className={`group relative w-full text-left p-3 rounded-md border transition cursor-pointer ${
-                  currentId === conv.id
-                    ? "border-accent bg-accent/10"
-                    : "border-border hover:border-accent/60"
-                }`}
-              >
-                <div className="font-medium text-sm text-fg truncate pr-8">
-                  {conv.title}
+                <div className="flex shrink-0 items-center gap-1">
+                  {agent.is_system && (
+                    <span className="rounded border border-accent/30 bg-accent/5 px-1 py-0.5 text-[9px] text-accent/70">system</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void startAgentChat(agent.id);
+                    }}
+                    className="rounded border border-accent/50 bg-accent/10 px-2 py-0.5 text-[10px] text-accent transition hover:bg-accent/20 hover:border-accent"
+                    title={`与 ${agent.name} 开始对话`}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void togglePrompt(agent.id);
+                    }}
+                    className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted transition hover:border-accent/60 hover:text-fg"
+                    title="View prompt"
+                  >
+                    Prompt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingAgent(agent)}
+                    className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted transition hover:border-accent/60 hover:text-fg"
+                  >
+                    Edit
+                  </button>
                 </div>
-                {conv.last_msg_preview && (
-                  <div className="text-xs text-muted truncate mt-1">
-                    {conv.last_msg_preview}
+              </div>
+
+              {promptAgentId === agent.id && (
+                <div className="mt-2 rounded border border-border bg-bg/80">
+                  {promptLoading ? (
+                    <div className="px-2 py-2 text-[10px] italic text-muted">Loading prompt...</div>
+                  ) : promptText ? (
+                    <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap px-2 py-2 font-mono text-[10px] leading-relaxed text-muted">
+                      {promptText.slice(0, 800)}
+                      {promptText.length > 800 && <span className="text-accent/60"> ... (truncated)</span>}
+                    </pre>
+                  ) : (
+                    <div className="px-2 py-2 text-[10px] italic text-muted">No prompt available.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <ul className="flex-1 space-y-1 overflow-y-auto p-2">
+        {filtered.length === 0 && (
+          <li className="px-3 py-5 text-center text-xs text-muted">
+            {mode === "archived" ? "没有归档会话" : "没有匹配的会话"}
+          </li>
+        )}
+        {filtered.map((c) => {
+          const active = c.id === current;
+          return (
+            <li key={c.id}>
+              <div className={`rounded-md border transition ${active ? "border-accent bg-accent/10" : "border-border hover:border-accent/60"}`}>
+                <button type="button" onClick={() => void select(c.id)} className="w-full p-3 text-left">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        {c.pinned && <span className="text-[10px] text-accent">置顶</span>}
+                        <span className="truncate text-sm font-medium text-fg">{c.title}</span>
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted">{c.last_msg_preview || "暂无消息"}</div>
+                    </div>
+                    <span className="shrink-0 text-[10px] text-muted">{formatTime(c.updated_at)}</span>
                   </div>
-                )}
-                <div className="text-[10.5px] text-muted mt-1 truncate">
-                  {conv.type}
-                  {" · "}
-                  {conv.members.length} 成员
-                  {" · "}
-                  {conv.id.slice(0, 16)}
-                </div>
-
-                {/* 删除按钮 */}
-                <button
-                  type="button"
-                  onClick={(e) => handleDelete(e, conv.id)}
-                  className={`absolute top-2 right-2 p-1 rounded-md text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity ${
-                    confirmDelete === conv.id
-                      ? "bg-red-500 text-white px-2 py-0.5 opacity-100"
-                      : "bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600"
-                  }`}
-                  title={confirmDelete === conv.id ? "确认删除？" : "删除对话"}
-                >
-                  {confirmDelete === conv.id ? "✓ 确认" : "✕"}
+                  <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px] text-muted">
+                    <span>
+                      {c.type === "group" ? "群聊" : "单聊"} · {c.members.length} 成员
+                    </span>
+                    <span className="truncate">{c.id}</span>
+                  </div>
                 </button>
+                <div className="flex items-center gap-1 border-t border-border px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => void updateConversationMeta(c.id, { pinned: !c.pinned })}
+                    className="rounded px-2 py-1 text-[10px] text-muted transition hover:bg-bg hover:text-fg"
+                  >
+                    {c.pinned ? "取消置顶" : "置顶"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void updateConversationMeta(c.id, { archived: !c.archived })}
+                    className="rounded px-2 py-1 text-[10px] text-muted transition hover:bg-bg hover:text-fg"
+                  >
+                    {c.archived ? "恢复" : "归档"}
+                  </button>
+                </div>
               </div>
             </li>
-          ))}
-        </ul>
-      )}
-    </div>
+          );
+        })}
+      </ul>
+    </aside>
   );
 }

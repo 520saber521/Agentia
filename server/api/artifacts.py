@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
+from urllib import request
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, field_validator
 
 from db import DEFAULT_USER_ID
@@ -30,6 +33,70 @@ from difflib import unified_diff
 from ws import event, hub
 
 router = APIRouter()
+DEBUG_ENV_PATH = Path(__file__).resolve().parents[2] / ".dbg" / "html-preview-truncation.env"
+
+
+def _debug_event(hypothesis_id: str, point: str, payload: dict[str, Any]) -> None:
+    #region debug-point html-preview-truncation
+    try:
+        if not DEBUG_ENV_PATH.exists():
+            return
+        env = dict(
+            line.split("=", 1)
+            for line in DEBUG_ENV_PATH.read_text(encoding="utf-8").splitlines()
+            if "=" in line
+        )
+        url = env.get("DEBUG_SERVER_URL")
+        if not url:
+            return
+        body = json.dumps({
+            "sessionId": env.get("DEBUG_SESSION_ID", "html-preview-truncation"),
+            "runId": "pre",
+            "hypothesisId": hypothesis_id,
+            "point": point,
+            "payload": payload,
+            "ts": int(time.time() * 1000),
+        }, ensure_ascii=False).encode("utf-8")
+        req = request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        request.urlopen(req, timeout=0.2).close()
+    except Exception:
+        pass
+    #endregion debug-point html-preview-truncation
+
+
+def _content_probe(content: str | None) -> dict[str, Any]:
+    #region debug-point html-preview-truncation
+    value = content or ""
+    lower = value.lower()
+    return {
+        "length": len(value),
+        "starts_with_doctype": lower.lstrip().startswith("<!doctype html"),
+        "doctype_pos": lower.find("<!doctype html"),
+        "html_pos": lower.find("<html"),
+        "closing_html_pos": lower.rfind("</html>"),
+        "has_fence": "```" in value,
+        "head": value[:180],
+        "tail": value[-180:],
+    }
+    #endregion debug-point html-preview-truncation
+
+
+def _is_complete_html(content: str | None) -> bool:
+    value = content or ""
+    lower = value.lower()
+    return (
+        ("<!doctype html" in lower or "<html" in lower)
+        and "<body" in lower
+        and "</body>" in lower
+        and "</html>" in lower
+        and not lower.lstrip().startswith("<!doctype html>\n```")
+    )
+
+
+def _invalid_preview_html(artifact_id: str) -> str:
+    safe_id = artifact_id.replace("<", "").replace(">", "")
+    return f"""<!doctype html>
+<html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>预览内容不完整</title><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif}}main{{max-width:680px;padding:32px;border-radius:24px;background:#1f2937;box-shadow:0 24px 80px rgba(0,0,0,.35)}}h1{{margin:0 0 12px;font-size:28px}}p{{line-height:1.8;color:#d1d5db}}code{{color:#93c5fd}}</style></head><body><main><h1>预览内容不完整</h1><p>该历史产物的 HTML 在生成时被截断，已阻止直接渲染残缺源码。</p><p>Artifact：<code>{safe_id}</code></p><p>请重新让 Orchestrator/Frontend Agent 生成一次；新生成的预览会校验完整 HTML 后再保存。</p></main></body></html>"""
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +166,13 @@ async def api_create_artifact(body: CreateArtifactRequest) -> dict[str, Any]:
             parent_id=body.parent_id,
             meta=body.meta,
         )
+        _debug_event("H1", "artifact_created", {
+            "artifact_id": result["id"],
+            "kind": body.kind,
+            "mime_type": body.mime_type,
+            "file_name": body.file_name,
+            **_content_probe(body.content),
+        })
 
         if not body.parent_id:
             msg = await create_message(
@@ -221,8 +295,8 @@ def _version_message_content(
         "fileName": file_name,
         "summary": meta.get("diff_summary") or "产物版本变更",
         "diff": diff,
+        "base_artifact_id": parent["id"],
         "applied_artifact_id": artifact["id"],
-        "parent_artifact_id": parent["id"],
     }
 
 
@@ -251,6 +325,7 @@ def _message_content_for_artifact(artifact: dict[str, Any], content: str = "") -
             **base,
             "fileName": artifact["file_name"] or artifact["title"],
             "summary": meta.get("diff_summary") or "产物版本变更",
+            "base_artifact_id": artifact.get("parent_id"),
             "applied_artifact_id": artifact["id"],
         }
     return {
@@ -304,7 +379,7 @@ async def api_apply_diff(
             conversation_id=base["conversation_id"],
             sender_id=DEFAULT_USER_ID,
             sender_type="user",
-            content=_message_content_for_artifact(new_artifact, body.after),
+            content=_version_message_content(base, new_artifact, current, body.after),
             artifact_id=new_artifact["id"],
         )
         message = message_to_dict(msg)
@@ -387,8 +462,6 @@ async def api_upload(
 @router.get("/preview/{artifact_id}")
 async def api_preview(artifact_id: str) -> Any:
     """Serve artifact content as-is for iframe embedding."""
-    from fastapi.responses import HTMLResponse, Response
-
     Session = get_sessionmaker()
     async with Session() as s:
         a = await get_artifact(s, artifact_id)
@@ -399,84 +472,29 @@ async def api_preview(artifact_id: str) -> Any:
         if content is None:
             raise HTTPException(404, "content not found")
 
+        _debug_event("H3", "preview_served", {
+            "artifact_id": artifact_id,
+            "kind": a.get("kind"),
+            "mime_type": a.get("mime_type"),
+            "file_size": a.get("file_size"),
+            **_content_probe(content),
+        })
+        media_type = a.get("mime_type", "text/plain")
+        if "html" in str(media_type).lower() and not _is_complete_html(content):
+            _debug_event("H3", "preview_blocked_incomplete_html", {
+                "artifact_id": artifact_id,
+                "kind": a.get("kind"),
+                "mime_type": media_type,
+                **_content_probe(content),
+            })
+            content = _invalid_preview_html(artifact_id)
+            media_type = "text/html"
         return Response(
             content=content,
-            media_type=a.get("mime_type", "text/plain"),
+            media_type=media_type,
             headers={
                 "X-Artifact-Id": a["id"],
                 "X-Artifact-Version": str(a.get("version", 1)),
                 "Cache-Control": "no-store",
             },
-        )
-
-
-@router.get("/preview/{artifact_id}/viewer")
-async def api_viewer(artifact_id: str) -> Any:
-    """Serve artifact content converted to HTML for rich preview (PPT, Markdown, etc.)."""
-    from fastapi.responses import HTMLResponse
-
-    Session = get_sessionmaker()
-    async with Session() as s:
-        a = await get_artifact(s, artifact_id)
-        if a is None:
-            raise HTTPException(404, "artifact not found")
-
-        content = await read_artifact_content_with_session(s, artifact_id)
-        if content is None:
-            raise HTTPException(404, "content not found")
-
-        mime_type = a.get("mime_type", "text/plain")
-        if mime_type == "text/html":
-            # HTML is already previewable directly
-            return HTMLResponse(
-                content=content,
-                headers={
-                    "X-Artifact-Id": a["id"],
-                    "Cache-Control": "no-store",
-                },
-            )
-
-        from services.viewer import can_preview, render_preview_html
-
-        # For non-HTML: write temp file for viewer
-        import tempfile
-
-        ext = (a.get("file_name") or "").rsplit(".", 1)[-1] if a.get("file_name") else "txt"
-        # Walk the artifact version directory to find the actual file
-        from services.artifact import ARTIFACTS_DIR
-
-        file_path = None
-        for version_dir in sorted(
-            (ARTIFACTS_DIR / a["conversation_id"] / artifact_id).glob("v*"),
-            reverse=True,
-        ):
-            for f in version_dir.iterdir():
-                if f.is_file():
-                    file_path = f
-                    break
-            if file_path:
-                break
-
-        if file_path and can_preview(file_path.suffix, mime_type):
-            html = render_preview_html(file_path, mime_type)
-            if html:
-                return HTMLResponse(
-                    content=html,
-                    headers={
-                        "X-Artifact-Id": a["id"],
-                        "Cache-Control": "no-store",
-                    },
-                )
-
-        # Fallback: plain text viewer
-        escaped = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        fallback = (
-            f"<!doctype html><html><head><meta charset=utf-8>"
-            f"<title>{a.get('title', 'Preview')}</title></head>"
-            f"<body style=\"background:#1e1e2e;color:#cdd6f4;font-family:monospace;"
-            f"padding:24px;white-space:pre-wrap;line-height:1.7\">{escaped}</body></html>"
-        )
-        return HTMLResponse(
-            content=fallback,
-            headers={"X-Artifact-Id": a["id"], "Cache-Control": "no-store"},
         )

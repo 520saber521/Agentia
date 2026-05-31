@@ -79,8 +79,8 @@ export function MentionPopover({ open, filter, agents, onSelect, onClose }: Prop
               : "text-fg hover:bg-bg/60"
           }`}
         >
-          <span className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs font-medium text-accent shrink-0">
-            {a.name.charAt(0).toUpperCase()}
+          <span className="w-6 h-6 rounded-lg bg-accent/20 flex items-center justify-center text-xs shrink-0 select-none">
+            {a.avatar || a.name.charAt(0).toUpperCase()}
           </span>
           <span className="font-medium truncate">{a.name}</span>
           <span className="ml-auto text-[10px] text-muted truncate shrink-0">

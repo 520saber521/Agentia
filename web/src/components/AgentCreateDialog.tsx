@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { describeApiError } from "../api/client";
+import { describeApiError, fetchAgentPrompt, type SaveAgentInput } from "../api/client";
 import { useChatStore } from "../stores/useChatStore";
 import type { Agent } from "../types";
 
@@ -10,25 +10,26 @@ interface Props {
   onClose: () => void;
 }
 
-const DEFAULT_TOOLS = ["code", "terminal", "files", "web_search"];
 const MODEL_PROVIDERS = [
   { value: "codex", label: "OpenAI / Codex" },
   { value: "claude_code", label: "Claude Code" },
   { value: "opencode", label: "OpenCode" },
-  { value: "deepseek", label: "DeepSeek" },
   { value: "mock", label: "Mock" },
 ];
 
-function splitTags(value: string): string[] {
-  return value
-    .split(/[,，]/)
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
+const TOOL_OPTIONS = [
+  { id: "code_editor", label: "Code editor", desc: "Read and revise code artifacts." },
+  { id: "artifact_read", label: "Artifact read", desc: "Open generated files and previews." },
+  { id: "artifact_write", label: "Artifact write", desc: "Create files, previews, and new versions." },
+  { id: "web_preview", label: "Web preview", desc: "Render HTML and web artifacts." },
+  { id: "deploy", label: "Deploy", desc: "Prepare deployment status and preview URLs." },
+];
 
-function joinEditableTags(agent?: Agent | null): string {
-  if (!agent) return "code, backend";
-  return agent.capabilities.filter((cap) => !DEFAULT_TOOLS.includes(cap)).join(", ");
+function parseCsv(value: string): string[] {
+  return value
+    .split(/[,，/]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export function AgentCreateDialog({ open, agent, onClose }: Props) {
@@ -37,7 +38,9 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
   const startAgentChat = useChatStore((s) => s.startAgentChat);
 
   const editing = Boolean(agent);
-  const lockedPrompt = Boolean(agent?.locked_prompt);
+  const lockedPrompt = Boolean(agent?.locked_prompt || agent?.is_system);
+  const isSystem = Boolean(agent?.is_system);
+  const isOrchestrator = agent?.id === "agent_orchestrator";
 
   const [name, setName] = useState("");
   const [adapterType, setAdapterType] = useState("codex");
@@ -45,12 +48,17 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [capabilities, setCapabilities] = useState("code, backend");
-  const [toolset, setToolset] = useState<Set<string>>(new Set(["code", "files"]));
+  const [capabilitiesText, setCapabilitiesText] = useState("");
+  const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Prompt preview
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [promptText, setPromptText] = useState("");
+  const [promptLoading, setPromptLoading] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -60,17 +68,36 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
     setBaseUrl(agent?.base_url ?? "");
     setApiKey("");
     setSystemPrompt(agent?.system_prompt ?? "");
-    setCapabilities(joinEditableTags(agent));
-    setToolset(new Set((agent?.capabilities ?? ["code", "files"]).filter((cap) => DEFAULT_TOOLS.includes(cap))));
+    setCapabilitiesText((agent?.capabilities ?? []).join(", "));
+    setSelectedTools(new Set(agent?.tools ?? []));
     setError(null);
     setNotice(null);
+    setShowPrompt(false);
+    setPromptText("");
   }, [agent, open]);
 
-  const capabilityTags = useMemo(() => {
-    const tags = new Set(splitTags(capabilities));
-    for (const tool of toolset) tags.add(tool);
-    return Array.from(tags);
-  }, [capabilities, toolset]);
+  async function loadPrompt() {
+    if (!agent) return;
+    if (showPrompt) {
+      setShowPrompt(false);
+      return;
+    }
+    if (promptText) {
+      setShowPrompt(true);
+      return;
+    }
+    setPromptLoading(true);
+    try {
+      const res = await fetchAgentPrompt(agent.id);
+      setPromptText(res.prompt);
+      setShowPrompt(true);
+    } catch {
+      setPromptText(agent.system_prompt || "");
+      setShowPrompt(true);
+    } finally {
+      setPromptLoading(false);
+    }
+  }
 
   if (!open) return null;
 
@@ -84,21 +111,18 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
       setError("Model is required");
       return;
     }
-    if (!lockedPrompt && !systemPrompt.trim()) {
-      setError("System prompt is required");
-      return;
-    }
     setSubmitting(true);
     setError(null);
     setNotice(null);
     try {
-      const payload: Record<string, unknown> = {
+      const payload: SaveAgentInput = {
         name: name.trim(),
         adapter_type: adapterType,
         model: model.trim(),
         base_url: baseUrl.trim(),
         system_prompt: lockedPrompt ? undefined : systemPrompt.trim(),
-        capabilities: capabilityTags,
+        capabilities: parseCsv(capabilitiesText),
+        tools: Array.from(selectedTools),
       };
       if (apiKey.trim()) {
         payload.api_key = apiKey.trim();
@@ -135,6 +159,15 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
     }
   }
 
+  function toggleTool(toolId: string) {
+    setSelectedTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(toolId)) next.delete(toolId);
+      else next.add(toolId);
+      return next;
+    });
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
@@ -144,16 +177,24 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        className="w-full max-w-3xl rounded-2xl border border-border bg-panel p-5 shadow-2xl"
+        className="w-full max-w-2xl rounded-2xl border border-border bg-panel p-5 shadow-2xl max-h-[90vh] overflow-y-auto"
       >
+        {/* Header */}
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-base font-semibold text-fg">
-              {editing ? "Edit Agent" : "Create custom Agent"}
-            </h3>
-            <p className="mt-1 text-xs text-muted">
-              Configure provider, encrypted API key, model, role prompt, and capability tags.
-            </p>
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-lg">
+              {agent?.avatar || "🤖"}
+            </span>
+            <div>
+              <h3 className="text-base font-semibold text-fg">
+                {editing ? name : "Create custom Agent"}
+              </h3>
+              <p className="mt-0.5 text-xs text-muted">
+                {isSystem
+                  ? "System agent — configure provider, encrypted API key, and model."
+                  : "Configure provider, encrypted API key, and model."}
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -164,13 +205,24 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
           </button>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-4">
+        {/* System badge */}
+        {isSystem && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2">
+            <span className="text-xs text-accent font-medium">🔒 System Agent</span>
+            <span className="text-[10px] text-muted">
+              Prompt locked · Configuration restricted
+            </span>
+          </div>
+        )}
+
+        {/* Config fields */}
+        <div className="mt-4 grid grid-cols-2 gap-4">
           <label className="text-xs text-muted">
             Name
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              disabled={agent?.id === "agent_orchestrator"}
+              disabled={isOrchestrator || isSystem}
               className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-60"
               placeholder="Review Engineer"
             />
@@ -180,7 +232,8 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
             <select
               value={adapterType}
               onChange={(e) => setAdapterType(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
+              disabled={isOrchestrator}
+              className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-60"
             >
               {MODEL_PROVIDERS.map((provider) => (
                 <option key={provider.value} value={provider.value}>{provider.label}</option>
@@ -193,7 +246,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
               value={model}
               onChange={(e) => setModel(e.target.value)}
               className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
-              placeholder="gpt-4o, claude-sonnet, opencode-default"
+              placeholder="gpt-4o, claude-sonnet, deepseek-chat"
             />
           </label>
           <label className="text-xs text-muted">
@@ -219,62 +272,134 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
         </label>
 
         <label className="mt-4 block text-xs text-muted">
-          Role prompt {lockedPrompt ? "(locked by system)" : ""}
+          System Prompt
           <textarea
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
             disabled={lockedPrompt}
-            className="mt-1 h-28 w-full resize-none rounded-lg border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-70"
-            placeholder="You are a careful implementation agent focused on..."
+            className="mt-1 min-h-28 w-full resize-y rounded-lg border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-60"
+            placeholder="Describe the role, boundaries, output style, and task responsibilities for this Agent."
           />
         </label>
 
         <label className="mt-4 block text-xs text-muted">
-          Capability tags
+          Capabilities
           <input
-            value={capabilities}
-            onChange={(e) => setCapabilities(e.target.value)}
-            disabled={agent?.id === "agent_orchestrator"}
+            value={capabilitiesText}
+            onChange={(e) => setCapabilitiesText(e.target.value)}
+            disabled={isOrchestrator}
             className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-60"
-            placeholder="frontend, code, tests"
+            placeholder="frontend, react, code"
           />
         </label>
 
         <div className="mt-4">
-          <div className="text-xs text-muted">Toolset</div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {DEFAULT_TOOLS.map((tool) => {
-              const active = toolset.has(tool);
+          <div className="mb-1.5 text-xs text-muted">Tools</div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {TOOL_OPTIONS.map((tool) => {
+              const checked = selectedTools.has(tool.id);
               return (
                 <button
-                  key={tool}
+                  key={tool.id}
                   type="button"
-                  disabled={agent?.id === "agent_orchestrator"}
-                  onClick={() =>
-                    setToolset((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(tool)) next.delete(tool);
-                      else next.add(tool);
-                      return next;
-                    })
-                  }
-                  className={`rounded-lg border px-3 py-1.5 text-xs transition disabled:opacity-50 ${
-                    active
-                      ? "border-accent bg-accent/15 text-fg"
-                      : "border-border text-muted hover:text-fg"
+                  onClick={() => toggleTool(tool.id)}
+                  disabled={isOrchestrator}
+                  className={`rounded-lg border px-3 py-2 text-left transition disabled:opacity-60 ${
+                    checked
+                      ? "border-accent bg-accent/10 text-fg"
+                      : "border-border bg-bg/50 text-muted hover:border-accent/60 hover:text-fg"
                   }`}
                 >
-                  {tool}
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium">{tool.label}</span>
+                    <span className={`h-3 w-3 rounded-sm border ${checked ? "border-accent bg-accent" : "border-border"}`} />
+                  </span>
+                  <span className="mt-1 block text-[10px] leading-relaxed text-muted">{tool.desc}</span>
                 </button>
               );
             })}
           </div>
         </div>
 
+        {/* Prompt preview section */}
+        {editing && (
+          <div className="mt-4 rounded-lg border border-border bg-bg/50 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => void loadPrompt()}
+              className="flex w-full items-center justify-between px-3 py-2.5 text-xs text-muted hover:text-fg transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                <span>{lockedPrompt ? "🔒" : "📝"} System Prompt</span>
+                {lockedPrompt && (
+                  <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400">
+                    🛜 read-only
+                  </span>
+                )}
+              </span>
+              <span className="text-[10px]">
+                {promptLoading ? "Loading..." : showPrompt ? "▲ Hide" : "▼ View"}
+              </span>
+            </button>
+            {showPrompt && promptText && (
+              <div className="border-t border-border px-3 py-3 max-h-64 overflow-y-auto">
+                {lockedPrompt && (
+                  <div className="mb-2 rounded border border-accent/20 bg-accent/5 px-2 py-1.5 text-[10px] text-accent leading-relaxed">
+                    系统提示词 · 只读（内容来自项目代码，不可修改）
+                  </div>
+                )}
+                <pre className="text-[11px] text-muted leading-relaxed whitespace-pre-wrap font-mono">
+                  {promptText}
+                </pre>
+              </div>
+            )}
+            {showPrompt && !promptText && !promptLoading && (
+              <div className="border-t border-border px-3 py-2 text-[11px] text-muted italic">
+                No prompt configured.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Capabilities display */}
+        {agent && agent.tools.length > 0 && (
+          <div className="mt-4">
+            <div className="text-xs text-muted mb-1.5">Enabled tools</div>
+            <div className="flex flex-wrap gap-1">
+              {agent.tools.map((tool) => (
+                <span
+                  key={tool}
+                  className="rounded-md border border-accent/30 bg-accent/5 px-2 py-0.5 text-[10px] text-accent"
+                >
+                  {tool}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {agent && agent.capabilities.length > 0 && (
+          <div className="mt-4">
+            <div className="text-xs text-muted mb-1.5">Capabilities</div>
+            <div className="flex flex-wrap gap-1">
+              {agent.capabilities.map((cap) => (
+                <span
+                  key={cap}
+                  className="rounded-md border border-border bg-bg/50 px-2 py-0.5 text-[10px] text-fg/70"
+                >
+                  {cap}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Notices */}
         {notice && <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">{notice}</p>}
         {error && <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</p>}
 
-        <div className="mt-6 flex items-center justify-between">
+        {/* Actions */}
+        <div className="mt-5 flex items-center justify-between">
           {editing && agent?.can_delete ? (
             <button
               type="button"
@@ -284,14 +409,25 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
             >
               {deleting ? "Deleting..." : "Delete Agent"}
             </button>
-          ) : <span />}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-lg bg-accent px-4 py-2 text-xs font-medium text-white transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting ? "Saving..." : editing ? "Save Agent" : "Create Agent"}
-          </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-border px-3 py-2 text-xs text-muted transition hover:text-fg"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="rounded-lg bg-accent px-4 py-2 text-xs font-medium text-white transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? "Saving..." : editing ? "Save" : "Create"}
+            </button>
+          </div>
         </div>
       </form>
     </div>

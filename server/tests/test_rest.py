@@ -122,6 +122,25 @@ async def test_list_agents_endpoint(client) -> None:
     assert "config" not in sample, "敏感字段 config 不应通过 REST 暴露"
 
 
+async def test_create_agent_with_tools_endpoint(client) -> None:
+    r = await client.post(
+        "/api/agents",
+        json={
+            "name": "Tool Agent",
+            "adapter_type": "mock",
+            "model": "mock",
+            "system_prompt": "Use selected tools only.",
+            "capabilities": ["frontend", "code"],
+            "tools": ["code_editor", "artifact_read", "web_preview"],
+        },
+    )
+    assert r.status_code == 201
+    agent = r.json()["agent"]
+    assert agent["name"] == "Tool Agent"
+    assert agent["system_prompt"] == "Use selected tools only."
+    assert agent["tools"] == ["code_editor", "artifact_read", "web_preview"]
+
+
 async def test_create_conversation_group_requires_agents_endpoint(client) -> None:
     """SPEC F-W2-5：type=group + agent_ids=[] 必须 422 detail=group_requires_agents。"""
     r = await client.post(
@@ -163,9 +182,9 @@ async def test_create_conversation_dedupes_agent_ids_endpoint(client) -> None:
     assert r.status_code == 201
     conv = r.json()["conversation"]
     member_ids = [m["member_id"] for m in conv["members"]]
-    # owner + 2 agents + auto-added orchestrator（去重后），共 4
-    assert len(member_ids) == 4
-    assert set(member_ids) == {"user_demo", "agent_mock", "agent_mock_2", "agent_orchestrator"}
+    # owner + 2 agents（去重后），共 3
+    assert len(member_ids) == 3
+    assert set(member_ids) == {"user_demo", "agent_mock", "agent_mock_2"}
 
 
 async def test_create_conversation_single_with_agent_ok(client) -> None:

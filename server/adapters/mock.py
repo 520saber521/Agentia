@@ -183,7 +183,8 @@ class MockAdapter(AgentAdapter):
             full = _DOMAIN_REPLIES.get(domain, f"Subtask for {domain} completed.\n\n{subtask.get('description', '')}")
         else:
             echo = _last_user_text(messages) or "<empty>"
-            full = self.reply_template.format(echo=echo)
+            role_intro = f"（我是 {self.role}）\n" if self.role and self.role != "通用助手" else ""
+            full = role_intro + self.reply_template.format(echo=echo)
 
         tokens = _tokenize(full) if stream else [full]
         delay = max(0.0, self.delay_ms / 1000.0)

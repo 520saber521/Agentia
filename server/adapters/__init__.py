@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Type
 
+import logging
+
 from .base import (
     AgentAdapter,
     Chunk,
@@ -25,25 +27,43 @@ from .base import (
 )
 from .claude_code import ClaudeCodeAdapter
 from .codex import CodexAdapter, OpenCodeAdapter
-from .deepseek import DeepSeekAdapter
 from .mock import MockAdapter
+
+_logger = logging.getLogger(__name__)
 
 ADAPTER_REGISTRY: dict[str, Type[AgentAdapter]] = {
     "mock": MockAdapter,
     "claude_code": ClaudeCodeAdapter,
     "codex": CodexAdapter,
     "opencode": OpenCodeAdapter,
-    "deepseek": DeepSeekAdapter,
 }
+
+try:
+    from .claude_agent_sdk import ClaudeAgentSDKAdapter
+    ADAPTER_REGISTRY["claude_agent_sdk"] = ClaudeAgentSDKAdapter
+except ImportError:
+    _logger.warning("claude_agent_sdk not installed; 'claude_agent_sdk' adapter disabled")
 
 
 def build_adapter(adapter_type: str, config: dict[str, Any] | None = None) -> AgentAdapter:
-    """按 ``adapter_type`` 构造一个 Adapter 实例。未知类型直接抛 ``ValueError``。"""
+    """按 ``adapter_type`` 构造一个 Adapter 实例。未知类型直接抛 ``ValueError``。
+
+    Auto-upgrade: 如果 ``mock`` 类型的 adapter 配置了 ``api_key``，
+    自动升级为 ``codex`` (OpenAI 兼容 API)，使其具备真实大模型调用能力。
+    Agent 的角色行为完全由 DB 中的 ``system_prompt`` 驱动，无需修改代码。
+    """
+    cfg = config or {}
+
+    # 有 API key 的 mock adapter → 自动升级为真实 adapter
+    if adapter_type == "mock" and bool(cfg.get("api_key")):
+        adapter_type = "codex"
+
     cls = ADAPTER_REGISTRY.get(adapter_type)
     if cls is None:
         known = ", ".join(sorted(ADAPTER_REGISTRY))
         raise ValueError(f"unknown adapter_type: {adapter_type!r}; known: [{known}]")
-    return cls(config or {})
+    return cls(cfg)
+
 
 __all__ = [
     "ADAPTER_REGISTRY",
@@ -57,8 +77,10 @@ __all__ = [
     "ChunkUsage",
     "ClaudeCodeAdapter",
     "CodexAdapter",
-    "DeepSeekAdapter",
     "OpenCodeAdapter",
     "MockAdapter",
     "build_adapter",
 ]
+
+if "ClaudeAgentSDKAdapter" in ADAPTER_REGISTRY:
+    __all__.insert(8, "ClaudeAgentSDKAdapter")  # after ChunkUsage

@@ -54,6 +54,14 @@ def _find_event(events: list[dict[str, Any]], typ: str) -> list[dict[str, Any]]:
     return [e for e in events if e.get("type") == typ]
 
 
+def _last_done_text(events: list[dict[str, Any]]) -> str:
+    done = _find_event(events, "message_done")
+    assert done
+    content = done[-1]["final_content"]
+    assert content["type"] == "text"
+    return content["text"]
+
+
 async def _create_group_conv(conv_id: str, agent_ids: list[str]) -> None:
     Session = get_sessionmaker()
     async with Session() as s:
@@ -75,6 +83,46 @@ async def _create_group_conv(conv_id: str, agent_ids: list[str]) -> None:
                 member_type="agent",
             ))
         await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_agent_create_chat_wizard_collects_tools(db_env):
+    await seed_defaults()
+    conn = FakeConnection()
+
+    await handle(conn, {
+        "type": "send_message",
+        "conversation_id": "conv_demo",
+        "content": {"type": "text", "text": "/agent create"},
+    })
+    assert "System Prompt" in _last_done_text(conn.sent)
+
+    await handle(conn, {
+        "type": "send_message",
+        "conversation_id": "conv_demo",
+        "content": {
+            "type": "text",
+            "text": (
+                "name: Tool PM\n"
+                "system_prompt: 你是产品经理 Agent，负责需求澄清和验收标准。\n"
+                "tools: code_editor, artifact_read, deploy\n"
+                "capabilities: prd, planning"
+            ),
+        },
+    })
+    assert "请确认创建" in _last_done_text(conn.sent)
+
+    await handle(conn, {
+        "type": "send_message",
+        "conversation_id": "conv_demo",
+        "content": {"type": "text", "text": "确认"},
+    })
+
+    agents_events = _find_event(conn.sent, "agents")
+    assert agents_events
+    created = next(a for a in agents_events[-1]["agents"] if a["name"] == "Tool PM")
+    assert created["tools"] == ["code_editor", "artifact_read", "deploy"]
+    assert created["capabilities"] == ["prd", "planning"]
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +196,9 @@ async def test_resolve_targets_no_target(db_env):
     await _create_group_conv(conv_id, ["agent_mock", "agent_mock_2"])
 
     agent_ids, err = await resolve_targets(conv_id, [], "plain text no at")
-    # W2: group convs with 2+ agents now fan out to all available agents by default
-    assert len(agent_ids) >= 1
-    assert err is None
+    assert agent_ids == []
+    assert err is not None
+    assert err["code"] == "no_target"
 
 
 @pytest.mark.asyncio
@@ -364,12 +412,12 @@ async def test_fan_out_errors_on_no_target(db_env):
         "mentions": [],
     })
 
-    # W2: group convs with 2+ agents now fan out to all available agents by default
     errors = [e for e in conn.sent if e.get("type") == "error"]
-    assert len(errors) == 0
+    assert len(errors) == 1
+    assert errors[0]["code"] == "no_target"
 
     msg_created = _find_event(conn.sent, "message_created")
-    assert len(msg_created) >= 2  # user msg + at least 1 agent msg
+    assert len(msg_created) == 0
 
 
 @pytest.mark.asyncio

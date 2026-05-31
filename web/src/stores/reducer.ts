@@ -12,8 +12,11 @@
 
 import type {
   Agent,
+  AgentGraphBeam,
+  AgentGraphEvent,
+  AgentGraphNode,
+  AgentGraphStatus,
   Conversation,
-  EditContext,
   Message,
   MessageContent,
   ServerEvent,
@@ -44,7 +47,10 @@ export interface ChatSlice {
     estimatedTokens?: number;
     strategy?: string;
   } | null;
-  editContext: EditContext | null;
+  agentGraphNodes: Record<string, AgentGraphNode>;
+  agentGraphBeams: AgentGraphBeam[];
+  agentGraphEvents: AgentGraphEvent[];
+  agentGraphStatuses: Record<string, AgentGraphStatus>;
 }
 
 function addStreaming(arr: string[], id: string): string[] {
@@ -79,19 +85,28 @@ function getText(content: MessageContent | undefined | null): string {
   return "";
 }
 
+function dedupConsecutiveChars(text: string): string {
+  return text.replace(/([\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af])\1+/g, "$1")
+    .replace(/([A-Za-z_][A-Za-z0-9_]{1,32})\1{2,}/g, "$1");
+}
+
 function appendStreamDelta(currentText: string, delta: string): string {
   if (!delta) return currentText;
-  if (!currentText) return delta;
-  if (currentText.endsWith(delta)) return currentText;
+  const cleanDelta = dedupConsecutiveChars(delta);
+  if (!currentText) return cleanDelta;
+  if (currentText.endsWith(cleanDelta)) return currentText;
+  if (cleanDelta.length > 12 && currentText.includes(cleanDelta)) return currentText;
 
-  const maxOverlap = Math.min(currentText.length, delta.length);
+  const suffixLen = Math.min(256, currentText.length);
+  const suffix = currentText.slice(-suffixLen);
+  const maxOverlap = Math.min(suffixLen, cleanDelta.length);
   for (let size = maxOverlap; size > 0; size -= 1) {
-    if (currentText.endsWith(delta.slice(0, size))) {
-      return currentText + delta.slice(size);
+    if (suffix.endsWith(cleanDelta.slice(0, size))) {
+      return dedupConsecutiveChars(currentText + cleanDelta.slice(size));
     }
   }
 
-  return currentText + delta;
+  return dedupConsecutiveChars(currentText + cleanDelta);
 }
 
 function visibleErrorText(code: string, message: string): string {
@@ -123,9 +138,17 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       if (state.messages.some((x) => x.id === m.id)) {
         return { next: state, effects };
       }
-      // 清理乐观 pending 消息（替换为服务端真实消息）
-      const filtered = state.messages.filter((x) => !x.id.startsWith("pending_"));
-      const messages = [...filtered, m];
+      if (m.sender_type === "user") {
+        const tempIdx = state.messages.findIndex(
+          (x) => x.id.startsWith("temp-") && x.sender_type === "user",
+        );
+        if (tempIdx >= 0) {
+          const messages = state.messages.slice();
+          messages[tempIdx] = m;
+          return { next: { ...state, messages }, effects };
+        }
+      }
+      const messages = [...state.messages, m];
       const next: ChatSlice =
         m.sender_type === "agent"
           ? {
@@ -182,13 +205,11 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       let messages = state.messages;
       if (idx >= 0) {
         messages = state.messages.slice();
-        const finalContent = evt.final_content;
-        // 空响应兜底
-        const text = getText(finalContent);
-        const patched = (!text || !text.trim())
-          ? { ...finalContent, type: "text" as const, text: "（Agent 未返回任何内容）" }
-          : finalContent;
-        messages[idx] = { ...messages[idx], content: patched };
+        const cleanFinal = { ...evt.final_content };
+        if (cleanFinal && typeof cleanFinal === "object" && "text" in cleanFinal && typeof cleanFinal.text === "string") {
+          cleanFinal.text = dedupConsecutiveChars(cleanFinal.text);
+        }
+        messages[idx] = { ...messages[idx], content: cleanFinal };
       }
       const nextStreaming = removeStreaming(
         state.streamingMessageIds,
@@ -299,9 +320,130 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       };
     }
 
-    case "fan_out_done":
-      // 群聊 fan-out 全部完成，无需更新 UI
+    case "deploy_status": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const content = evt.content as MessageContent;
+      // Update existing deploy message by deploy_id lookup
+      const existingIdx = state.messages.findIndex(
+        (m) =>
+          m.content.type === "deploy_status" &&
+          m.content.deploy_id === evt.deploy_id
+      );
+      if (existingIdx >= 0) {
+        const messages = state.messages.slice();
+        messages[existingIdx] = {
+          ...messages[existingIdx],
+          content: { ...messages[existingIdx].content, ...content },
+        } as Message;
+        return { next: { ...state, messages }, effects };
+      }
       return { next: state, effects };
+    }
+
+    case "tool_call": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+      if (idx < 0) return { next: state, effects };
+      const messages = state.messages.slice();
+      const current = messages[idx];
+      const nextCall = {
+        toolName: evt.tool_name,
+        status: evt.status,
+        resultSummary: evt.result_summary,
+      };
+      const existing = current.toolCalls ?? [];
+      const foundIdx = existing.findIndex((call) => call.toolName === evt.tool_name);
+      const toolCalls = existing.slice();
+      if (foundIdx >= 0) {
+        toolCalls[foundIdx] = { ...toolCalls[foundIdx], ...nextCall };
+      } else {
+        toolCalls.push(nextCall);
+      }
+      messages[idx] = { ...current, toolCalls };
+      return { next: { ...state, messages }, effects };
+    }
+
+    case "anim_agent_created": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const existing = state.agentGraphNodes[evt.agent.id];
+      const status = state.agentGraphStatuses[evt.agent.id] ?? existing?.status ?? "IDLE";
+      const node: AgentGraphNode = {
+        id: evt.agent.id,
+        role: evt.agent.role,
+        parentId: evt.agent.parentId,
+        status,
+        domain: evt.agent.domain || undefined,
+        agentName: evt.agent.agentName || undefined,
+      };
+      return {
+        next: {
+          ...state,
+          agentGraphNodes: { ...state.agentGraphNodes, [node.id]: node },
+        },
+        effects,
+      };
+    }
+
+    case "anim_agent_status": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const existing = state.agentGraphNodes[evt.agentId];
+      const nodes = existing
+        ? {
+            ...state.agentGraphNodes,
+            [evt.agentId]: { ...existing, status: evt.status },
+          }
+        : state.agentGraphNodes;
+      return {
+        next: {
+          ...state,
+          agentGraphStatuses: { ...state.agentGraphStatuses, [evt.agentId]: evt.status },
+          agentGraphNodes: nodes,
+        },
+        effects,
+      };
+    }
+
+    case "anim_beam": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const beam: AgentGraphBeam = {
+        id: evt.beam.id,
+        fromId: evt.beam.fromId,
+        toId: evt.beam.toId,
+        kind: evt.beam.kind,
+        label: evt.beam.label || undefined,
+        createdAt: evt.ts,
+      };
+      return {
+        next: {
+          ...state,
+          agentGraphBeams: [...state.agentGraphBeams.filter((b) => b.id !== beam.id), beam].slice(-100),
+        },
+        effects,
+      };
+    }
+
+    case "anim_event": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const item: AgentGraphEvent = {
+        id: evt.event.id,
+        kind: evt.event.kind,
+        label: evt.event.label,
+        at: evt.ts,
+      };
+      return {
+        next: {
+          ...state,
+          agentGraphEvents: [item, ...state.agentGraphEvents.filter((e) => e.id !== item.id)].slice(0, 80),
+        },
+        effects,
+      };
+    }
+
+    case "workspace_file_changed": {
+      // File changed in workspace — no state mutation needed,
+      // the WorkspacePanel listens for new messages to auto-refresh.
+      return { next: state, effects };
+    }
 
     default:
       // pong / echo / usage 等不更新 UI 状态。
@@ -321,6 +463,9 @@ export function emptySlice(): ChatSlice {
     agents: [],
     tasks: {},
     contextStats: null,
-    editContext: null,
+    agentGraphNodes: {},
+    agentGraphBeams: [],
+    agentGraphEvents: [],
+    agentGraphStatuses: {},
   };
 }

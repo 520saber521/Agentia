@@ -5,15 +5,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "#0f1115",
-        panel: "#1a1d24",
-        border: "#2a2e38",
-        muted: "#98a2b3",
-        fg: "#e6e6e6",
-        accent: "#3b82f6",
-        "accent-hover": "#2563eb",
-        user: "#1e3a8a",
-        agent: "#1f2937",
+        bg: "#05070a",
+        panel: "#0b0f16",
+        border: "#222936",
+        muted: "#8b95a7",
+        fg: "#e7edf7",
+        accent: "#38bdf8",
+        "accent-hover": "#0ea5e9",
+        user: "#0f3f46",
+        agent: "#101722",
       },
       fontFamily: {
         sans: [

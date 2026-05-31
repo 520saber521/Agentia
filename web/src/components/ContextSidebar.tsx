@@ -1,6 +1,17 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useChatStore } from "../stores/useChatStore";
-import type { Agent, Member, Message } from "../types";
+import type { Agent, Member, Message, ToolCallInfo } from "../types";
+import { WorkspacePanel } from "./WorkspacePanel";
+
+type PanelId = "context" | "workspace" | "tools" | "members" | "pinned";
+
+const PANELS: Array<{ id: PanelId; title: string }> = [
+  { id: "context", title: "Context" },
+  { id: "workspace", title: "Workspace" },
+  { id: "tools", title: "Realtime tools" },
+  { id: "members", title: "Members" },
+  { id: "pinned", title: "Pinned" },
+];
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -12,12 +23,41 @@ function textOf(msg: Message): string {
   return msg.content.type;
 }
 
+function ToolStatus({ call }: { call: ToolCallInfo }) {
+  const cls =
+    call.status === "running"
+      ? "border-sky-500/40 text-sky-200"
+      : call.status === "done"
+        ? "border-emerald-500/35 text-emerald-200"
+        : "border-rose-500/40 text-rose-200";
+  return (
+    <div className={`rounded-md border bg-bg px-2 py-1.5 ${cls}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-mono text-[10px]">{call.toolName}</span>
+        <span className="shrink-0 text-[9px] uppercase">{call.status}</span>
+      </div>
+      {call.resultSummary && (
+        <div className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-muted">
+          {call.resultSummary}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ContextSidebar() {
   const messages = useChatStore((s) => s.messages);
   const conversations = useChatStore((s) => s.conversations);
   const agents = useChatStore((s) => s.agents);
   const contextStats = useChatStore((s) => s.contextStats);
   const currentConvId = useChatStore((s) => s.currentConvId);
+  const [open, setOpen] = useState<Record<PanelId, boolean>>({
+    context: true,
+    workspace: true,
+    tools: true,
+    members: true,
+    pinned: false,
+  });
 
   const currentConv = conversations.find((c) => c.id === currentConvId);
   const members = currentConv?.members ?? [];
@@ -30,8 +70,6 @@ export function ContextSidebar() {
     }))
     .filter((m): m is Member & { agent: Agent } => m.agent != null);
 
-  const userMembers = members.filter((m) => m.member_type === "user");
-
   const pinnedMessages = useMemo(
     () => messages
       .filter((m) => m.pinned && m.content.type === "text")
@@ -40,200 +78,144 @@ export function ContextSidebar() {
     [messages],
   );
 
-  const statsDisplay = contextStats
-    ? `已携带 ${contextStats.total} 条历史消息 / ${contextStats.pinned} 条 Pin 消息`
-    : pinnedMessages.length > 0
-      ? `${pinnedMessages.length} 条 Pin 消息`
-      : "暂无 Pin 消息";
+  const toolCalls = useMemo(
+    () => messages
+      .flatMap((message) => (message.toolCalls ?? []).map((call) => ({ ...call, message })))
+      .slice(-18)
+      .reverse(),
+    [messages],
+  );
 
-  const strategyLabel =
-    contextStats?.strategy === "sliding" ? "滑窗"
-    : contextStats?.strategy === "token" ? "Token 裁剪"
-    : contextStats?.strategy === "hybrid" ? "混合"
-    : null;
+  function toggle(id: PanelId) {
+    setOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
 
   return (
-    <aside className="w-64 min-w-64 max-w-64 flex flex-col bg-panel border-l border-border shrink-0 overflow-hidden">
-      <div className="px-4 py-3 border-b border-border">
-        <h3 className="text-sm font-medium text-fg">上下文</h3>
-        <p className="text-xs text-muted mt-0.5">{members.length} 位成员</p>
+    <aside className="flex w-72 min-w-72 max-w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-panel">
+      <div className="border-b border-border px-4 py-3">
+        <h3 className="text-sm font-semibold text-fg">Runtime panels</h3>
+        <p className="mt-0.5 text-xs text-muted">
+          {members.length} members / {messages.length} messages
+        </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        {/* Context Stats */}
-        <div className="border-b border-border">
-          <div className="px-3 py-2">
-            <h4 className="text-[10px] font-semibold uppercase text-muted tracking-wider mb-1.5">
-              上下文信息
-            </h4>
-            <div className="rounded-md border border-border bg-bg p-2">
-              <div className="flex items-center gap-1.5 text-[11px] text-fg">
-                <span className="text-accent">📊</span>
-                <span className="font-medium">
-                  {contextStats ? (
-                    <>
-                      {contextStats.total} 条历史
-                      {contextStats.pinned > 0 && (
-                        <span className="text-amber-400"> · {contextStats.pinned} 条 Pin</span>
-                      )}
-                    </>
-                  ) : (
-                    "加载中…"
-                  )}
-                </span>
-              </div>
-              {contextStats && (
-                <div className="mt-1.5 space-y-0.5">
-                  {contextStats.historyCount != null && (
-                    <div className="flex items-center gap-1 text-[10px] text-muted">
-                      <span>Agent 携带</span>
-                      <span className="rounded bg-bg-secondary px-1 font-mono text-[9px]">
-                        {contextStats.historyCount}
-                      </span>
-                      <span>条消息</span>
-                    </div>
-                  )}
-                  {contextStats.estimatedTokens != null && (
-                    <div className="flex items-center gap-1 text-[10px] text-muted">
-                      <span>约</span>
-                      <span className="rounded bg-bg-secondary px-1 font-mono text-[9px]">
-                        {contextStats.estimatedTokens.toLocaleString()}
-                      </span>
-                      <span>tokens</span>
-                    </div>
-                  )}
-                  {strategyLabel && (
-                    <div className="flex items-center gap-1 text-[10px] text-muted">
-                      <span>策略:</span>
-                      <span className="rounded border border-border px-1 font-mono text-[9px]">
-                        {strategyLabel}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-1 text-[10px] text-muted/60">
-                    <span>每次 Agent 请求自动携带 Pin 上下文</span>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {PANELS.map((panel) => (
+          <section key={panel.id} className="mb-2 overflow-hidden rounded-md border border-border bg-bg/70">
+            <button
+              type="button"
+              onClick={() => toggle(panel.id)}
+              className="flex h-9 w-full items-center justify-between border-b border-border px-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-muted hover:text-fg"
+            >
+              <span>{panel.title}</span>
+              <span className="font-mono text-[10px]">{open[panel.id] ? "-" : "+"}</span>
+            </button>
+
+            {open[panel.id] && panel.id === "context" && (
+              <div className="space-y-2 p-3 text-xs">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded border border-border bg-panel/50 p-2">
+                    <div className="text-[10px] text-muted">History</div>
+                    <div className="mt-1 font-mono text-sm text-fg">{contextStats?.total ?? messages.length}</div>
+                  </div>
+                  <div className="rounded border border-border bg-panel/50 p-2">
+                    <div className="text-[10px] text-muted">Pinned</div>
+                    <div className="mt-1 font-mono text-sm text-fg">{contextStats?.pinned ?? pinnedMessages.length}</div>
                   </div>
                 </div>
-              )}
-              {!contextStats && pinnedMessages.length > 0 && (
-                <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
-                  <span>每次 Agent 请求自动携带 Pin 上下文</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Pinned Messages */}
-        <div className="border-b border-border">
-          <div className="px-3 py-2">
-            <h4 className="text-[10px] font-semibold uppercase text-muted tracking-wider mb-1.5">
-              📌 Pin 消息 ({pinnedMessages.length})
-            </h4>
-            {pinnedMessages.length === 0 ? (
-              <div className="rounded-md border border-dashed border-border bg-bg/50 px-2 py-3 text-center">
-                <div className="text-[10px] text-muted">
-                  将消息悬停 → 点击 📌 Pin 即可固定到上下文
-                </div>
-                <div className="mt-1 text-[10px] text-muted/60">
-                  Pin 消息会优先带入 Agent 的对话上下文
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {pinnedMessages.map((msg) => {
-                  const agent = agents.find((a) => a.id === msg.sender_id);
-                  const text = textOf(msg);
-                  return (
-                    <div
-                      key={msg.id}
-                      className="rounded-md border border-amber-500/15 bg-amber-500/5 px-2 py-1.5"
-                    >
-                      <div className="flex items-center gap-1 text-[10px] text-amber-400/80 mb-0.5">
-                        <span className="font-medium">
-                          {msg.sender_type === "user" ? "用户" : agent?.name ?? msg.sender_id}
-                        </span>
-                        <span className="text-muted/50">·</span>
-                        <span className="text-muted/60">
-                          {formatTime(msg.created_at)}
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-fg/80 leading-relaxed line-clamp-3 break-words">
-                        {text.slice(0, 300)}
-                      </div>
+                {contextStats?.estimatedTokens != null && (
+                  <div className="rounded border border-border bg-panel/50 p-2">
+                    <div className="text-[10px] text-muted">Estimated tokens</div>
+                    <div className="mt-1 font-mono text-sm text-fg">
+                      {contextStats.estimatedTokens.toLocaleString()}
                     </div>
-                  );
-                })}
+                  </div>
+                )}
+                <div className="text-[10px] leading-relaxed text-muted">
+                  Pinned messages and recent history are injected into Agent calls.
+                </div>
               </div>
             )}
-          </div>
-        </div>
 
-        {/* Members */}
-        <div className="px-2 py-2">
-          {userMembers.length > 0 && (
-            <div className="space-y-1 mb-3">
-              <div className="px-2 py-1 text-xs font-medium text-muted uppercase tracking-wider">
-                用户
+            {open[panel.id] && panel.id === "workspace" && (
+              <div className="min-h-0 flex-1">
+                <WorkspacePanel />
               </div>
-              {userMembers.map((member) => (
-                <div
-                  key={member.member_id}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/10 transition-colors"
-                >
-                  <span className="w-6 h-6 rounded bg-user flex items-center justify-center text-[10px] text-white shrink-0 select-none">
-                    👤
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-fg truncate">
-                      {member.member_id}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+            )}
 
-          {agentMembers.length > 0 && (
-            <div className="space-y-1">
-              <div className="px-2 py-1 text-xs font-medium text-muted uppercase tracking-wider">
-                Agent ({agentMembers.length})
+            {open[panel.id] && panel.id === "tools" && (
+              <div className="space-y-1.5 p-2">
+                {toolCalls.length === 0 ? (
+                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted">
+                    No tool calls yet
+                  </div>
+                ) : (
+                  toolCalls.map((item, idx) => (
+                    <ToolStatus key={`${item.message.id}-${item.toolName}-${idx}`} call={item} />
+                  ))
+                )}
               </div>
-              {agentMembers.map((member) => (
-                <div
-                  key={member.member_id}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/10 transition-colors"
-                >
-                  <span className="w-7 h-7 rounded-lg bg-accent/20 flex items-center justify-center text-sm shrink-0 select-none">
-                    {member.agent.avatar || member.agent.name.charAt(0).toUpperCase()}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-fg truncate">
-                      {member.agent.name}
-                    </div>
-                    <div className="text-xs text-muted truncate">
-                      {member.agent.adapter_type} · {member.agent.capabilities.slice(0, 3).join(" · ")}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+            )}
 
-          {members.length === 0 && (
-            <div className="px-2 py-4 text-center text-xs text-muted">
-              暂无成员
-            </div>
-          )}
-        </div>
+            {open[panel.id] && panel.id === "members" && (
+              <div className="space-y-1 p-2">
+                {agentMembers.map((member) => (
+                  <div key={member.member_id} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-accent/10">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-accent/15 text-xs text-accent">
+                      {member.agent.avatar || member.agent.name.charAt(0).toUpperCase()}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium text-fg">{member.agent.name}</div>
+                      <div className="truncate text-[10px] text-muted">
+                        {member.agent.adapter_type} / {member.agent.capabilities.slice(0, 2).join(", ")}
+                      </div>
+                    </div>
+                    <span className={`h-1.5 w-1.5 rounded-full ${
+                      member.agent.api_key_configured || member.agent.adapter_type === "mock"
+                        ? "bg-emerald-400"
+                        : "bg-amber-400"
+                    }`} />
+                  </div>
+                ))}
+                {agentMembers.length === 0 && (
+                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted">
+                    No agents in this conversation
+                  </div>
+                )}
+              </div>
+            )}
+
+            {open[panel.id] && panel.id === "pinned" && (
+              <div className="space-y-1.5 p-2">
+                {pinnedMessages.length === 0 ? (
+                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted">
+                    No pinned context
+                  </div>
+                ) : (
+                  pinnedMessages.map((msg) => {
+                    const agent = agents.find((a) => a.id === msg.sender_id);
+                    return (
+                      <div key={msg.id} className="rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1.5">
+                        <div className="mb-0.5 flex items-center gap-1 text-[10px] text-amber-300">
+                          <span className="truncate">{msg.sender_type === "user" ? "User" : agent?.name ?? msg.sender_id}</span>
+                          <span className="text-muted/60">{formatTime(msg.created_at)}</span>
+                        </div>
+                        <div className="line-clamp-3 text-[10px] leading-relaxed text-fg/80">
+                          {textOf(msg).slice(0, 300)}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </section>
+        ))}
       </div>
 
-      <div className="px-4 py-3 border-t border-border">
+      <div className="border-t border-border px-4 py-3">
         <div className="text-xs text-muted">
-          会话类型: {currentConv?.type === "group" ? "群聊" : "单聊"}
-        </div>
-        <div className="text-[10px] text-muted/60 mt-0.5">
-          Pin 消息会在 Agent 调用时作为长期上下文注入
+          Mode: {currentConv?.type === "group" ? "group swarm" : "direct chat"}
         </div>
       </div>
     </aside>

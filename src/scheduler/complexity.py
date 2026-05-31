@@ -42,9 +42,9 @@ DOMAIN_KEYWORDS = {
         ".py", "router", "service", "controller",
     ],
     "database": [
-        "数据库", "数据", "模型", "表", "sql", "存储", "持久化",
+        "数据库", "表", "sql", "存储", "持久化",
         "migration", "schema", "orm", "query", "索引",
-        ".sql", "model", "storage", "repository",
+        ".sql", "storage", "repository", "增删改查",
     ],
     "test": [
         "测试", "test", "单元测试", "集成测试", "e2e", "mock",

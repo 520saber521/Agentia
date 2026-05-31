@@ -6,7 +6,7 @@
  * - `ApiError.code` 让 UI 能展示具体文案（如"群聊需要至少 1 个 Agent"）。
  */
 
-import type { Agent, Artifact, Attachment, Conversation, Message } from "../types";
+import type { Agent, Artifact, Attachment, Conversation, FileTreeNode, Message } from "../types";
 
 /**
  * 后端业务错误的稳定枚举码（与 `server/api/rest.py` 的 detail 一致）。
@@ -150,6 +150,7 @@ export interface SaveAgentInput {
   model?: string;
   base_url?: string;
   system_prompt?: string;
+  tools?: string[];
   capabilities?: string[];
   avatar?: string | null;
 }
@@ -172,6 +173,20 @@ export async function updateAgent(
 
 export async function deleteAgent(agentId: string): Promise<void> {
   await deleteJson(`/api/agents/${encodeURIComponent(agentId)}`);
+}
+
+export interface AgentPromptResponse {
+  agent_id: string;
+  prompt: string;
+  prompt_file: string;
+  is_system: boolean;
+}
+
+export async function fetchAgentPrompt(agentId: string): Promise<AgentPromptResponse> {
+  const body = await getJson<AgentPromptResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/prompt`,
+  );
+  return body;
 }
 
 export interface CreateConversationInput {
@@ -215,10 +230,6 @@ export async function updateConversation(
   if (!r.ok) throw new ApiError(r.status, await parseErrorDetail(r));
   const body = (await r.json()) as { conversation: Conversation };
   return body.conversation;
-}
-
-export async function deleteConversation(conversationId: string): Promise<void> {
-  await deleteJson(`/api/conversations/${encodeURIComponent(conversationId)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,5 +403,52 @@ export async function fetchContextStats(
 ): Promise<ContextStats> {
   return getJson<ContextStats>(
     `/api/conversations/${encodeURIComponent(conversationId)}/context-stats`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Workspace API
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceTreeResponse {
+  conversation_id: string;
+  root_path: string;
+  path: string;
+  tree: FileTreeNode[];
+}
+
+export interface WorkspaceFileResponse {
+  path: string;
+  content: string;
+  size: number;
+  mime_type: string;
+}
+
+export async function fetchWorkspaceTree(
+  conversationId: string,
+  path = "",
+): Promise<WorkspaceTreeResponse> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : "";
+  return getJson<WorkspaceTreeResponse>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/workspace/tree${qs}`,
+  );
+}
+
+export async function fetchWorkspaceFile(
+  conversationId: string,
+  filePath: string,
+): Promise<WorkspaceFileResponse> {
+  return getJson<WorkspaceFileResponse>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/workspace/file?path=${encodeURIComponent(filePath)}`,
+  );
+}
+
+export async function setWorkspacePath(
+  conversationId: string,
+  path: string,
+): Promise<{ conversation_id: string; workspace_path: string; tree: FileTreeNode[] }> {
+  return postJson(
+    `/api/conversations/${encodeURIComponent(conversationId)}/workspace`,
+    { path },
   );
 }

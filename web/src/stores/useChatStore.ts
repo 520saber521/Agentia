@@ -1,9 +1,10 @@
 /**
  * 整个 SPA 的状态机（Zustand）。
  *
- * 为什么把会话列表 + 当前消息 + 连接状态放在同一个 store？
- * - Day4 阶段还没有"多会话同时活跃"的需求，单 store 写起来更直接。
- * - 后续 Day5 引入 task / artifact 后可以拆 useTaskStore / useArtifactStore。
+ * W3 多标签页重构：
+ * - TabState 缓存每个打开会话的 messages / streaming / tasks / graph 状态
+ * - 切换标签页时保存/恢复，不再丢失
+ * - WS 事件同时写入活跃标签（flat fields）和对应 tabStates 缓存
  */
 
 import { create } from "zustand";
@@ -12,17 +13,157 @@ import {
   createAgent,
   createConversation,
   deleteAgent,
-  deleteConversation,
   fetchAgents,
   fetchConversations,
   fetchMessages,
+  updateConversation,
   updateAgent,
+  fetchContextStats,
   type CreateConversationInput,
   type SaveAgentInput,
 } from "../api/client";
-import type { Agent, ConnectionStatus, Conversation, EditContext, Message } from "../types";
+import type {
+  Agent,
+  AgentGraphBeam,
+  AgentGraphEvent,
+  AgentGraphNode,
+  AgentGraphStatus,
+  ConnectionStatus,
+  Conversation,
+  Message,
+  ServerEvent,
+} from "../types";
 import { WSClient } from "../ws/client";
 import { reduceEvent, type ChatSlice } from "./reducer";
+
+/* ------------------------------------------------------------------ */
+/*  Stream-chunk batching: coalesce deltas per animation frame         */
+/* ------------------------------------------------------------------ */
+
+let _streamAcc: Record<string, string> = {};
+let _rafId: number | null = null;
+let _storeGet: (() => ChatState) | null = null;
+let _storeSet: ((partial: any) => void) | null = null;
+
+function _flushStreamAcc() {
+  const acc = _streamAcc;
+  _streamAcc = {};
+  _rafId = null;
+  const get = _storeGet;
+  const set = _storeSet;
+  if (!get || !set) return;
+  const keys = Object.keys(acc);
+  if (keys.length === 0) return;
+
+  const state = get();
+  let messages = state.messages;
+  let changed = false;
+
+  for (const [mid, delta] of Object.entries(acc)) {
+    if (!delta) continue;
+    const idx = messages.findIndex((m) => m.id === mid);
+    if (idx < 0) continue;
+    if (!changed) messages = messages.slice();
+    const prev = messages[idx];
+    const prevText = (prev.content as any)?.text ?? "";
+
+    let newText: string;
+    if (!prevText) {
+      newText = delta;
+    } else if (prevText.endsWith(delta) || (delta.length > 12 && prevText.includes(delta))) {
+      newText = prevText;
+    } else {
+      const suffixLen = Math.min(32, prevText.length);
+      const suffix = prevText.slice(-suffixLen);
+      const maxOverlap = Math.min(suffixLen, delta.length);
+      let overlap = 0;
+      for (let size = maxOverlap; size > 0; size -= 1) {
+        if (suffix.endsWith(delta.slice(0, size))) {
+          overlap = size;
+          break;
+        }
+      }
+      newText = collapseImmediateRepeats(prevText + delta.slice(overlap));
+    }
+
+    messages[idx] = { ...prev, content: { type: "text", text: newText } as any };
+    changed = true;
+  }
+
+  if (changed) set({ messages });
+}
+
+function collapseImmediateRepeats(text: string): string {
+  return text.replace(/([\u4e00-\u9fff]{2,6})\1/g, "$1");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Per-tab cache                                                      */
+/* ------------------------------------------------------------------ */
+
+export interface TabState {
+  messages: Message[];
+  streamingMessageIds: string[];
+  agentTyping: boolean;
+  tasks: Record<string, import("../types").Task>;
+  contextStats: {
+    total: number;
+    pinned: number;
+    historyCount?: number;
+    estimatedTokens?: number;
+    strategy?: string;
+  } | null;
+  agentGraphNodes: Record<string, AgentGraphNode>;
+  agentGraphBeams: AgentGraphBeam[];
+  agentGraphEvents: AgentGraphEvent[];
+  agentGraphStatuses: Record<string, AgentGraphStatus>;
+}
+
+function emptyTabState(): TabState {
+  return {
+    messages: [],
+    streamingMessageIds: [],
+    agentTyping: false,
+    tasks: {},
+    contextStats: null,
+    agentGraphNodes: {},
+    agentGraphBeams: [],
+    agentGraphEvents: [],
+    agentGraphStatuses: {},
+  };
+}
+
+function tabFieldsFromSlice(s: ChatSlice): Partial<TabState> {
+  return {
+    messages: s.messages,
+    streamingMessageIds: s.streamingMessageIds,
+    agentTyping: s.agentTyping,
+    tasks: s.tasks,
+    contextStats: s.contextStats,
+    agentGraphNodes: s.agentGraphNodes,
+    agentGraphBeams: s.agentGraphBeams,
+    agentGraphEvents: s.agentGraphEvents,
+    agentGraphStatuses: s.agentGraphStatuses,
+  };
+}
+
+function flatFieldsFromTab(t: TabState) {
+  return {
+    messages: t.messages,
+    streamingMessageIds: t.streamingMessageIds,
+    agentTyping: t.agentTyping,
+    tasks: t.tasks,
+    contextStats: t.contextStats,
+    agentGraphNodes: t.agentGraphNodes,
+    agentGraphBeams: t.agentGraphBeams,
+    agentGraphEvents: t.agentGraphEvents,
+    agentGraphStatuses: t.agentGraphStatuses,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Store                                                              */
+/* ------------------------------------------------------------------ */
 
 export interface ChatState extends ChatSlice {
   status: ConnectionStatus;
@@ -30,31 +171,37 @@ export interface ChatState extends ChatSlice {
   conversations: Conversation[];
   currentConvId: string | null;
   messages: Message[];
-  /** W2 起：可同时多条流式（群聊 fan-out）。空数组 = 无流式。 */
   streamingMessageIds: string[];
   agentTyping: boolean;
   agents: Agent[];
-  editContext: EditContext | null;
-  sendError: string | null;
-  errorToast: string | null;
+  agentGraphNodes: Record<string, AgentGraphNode>;
+  agentGraphBeams: AgentGraphBeam[];
+  agentGraphEvents: AgentGraphEvent[];
+  agentGraphStatuses: Record<string, AgentGraphStatus>;
 
+  /** Multi-tab state */
+  activeTabId: string | null;
+  openTabIds: string[];
+  tabStates: Record<string, TabState>;
+
+  applyServerEvent: (evt: ServerEvent) => void;
   init: () => void;
   refreshConversations: () => Promise<void>;
   selectConversation: (id: string) => Promise<void>;
+  openTab: (id: string) => Promise<void>;
+  closeTab: (id: string) => void;
+  switchTab: (id: string) => void;
   createAndSelect: (input: CreateConversationInput) => Promise<Conversation>;
   createAgentContact: (input: SaveAgentInput) => Promise<Agent>;
   updateAgentContact: (agentId: string, input: Partial<SaveAgentInput>) => Promise<Agent>;
   deleteAgentContact: (agentId: string) => Promise<void>;
-  removeConversation: (conversationId: string) => Promise<void>;
   startAgentChat: (agentId: string) => Promise<Conversation>;
+  updateConversationMeta: (
+    conversationId: string,
+    input: { title?: string; pinned?: boolean; archived?: boolean },
+  ) => Promise<Conversation>;
   sendText: (text: string, mentions?: string[]) => void;
-  setEditContext: (ctx: EditContext | null) => void;
-  clearEditContext: () => void;
-  clearSendError: () => void;
-  clearErrorToast: () => void;
-  /** 取消单条流式消息。 */
   cancelMessage: (messageId: string) => void;
-  /** 取消当前所有流式（群聊场景下一次取消所有正在流的 agent）。 */
   cancelAll: () => void;
 }
 
@@ -70,26 +217,101 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   agentTyping: false,
   agents: [],
   tasks: {},
-  editContext: null,
-  sendError: null,
-  errorToast: null,
+  contextStats: null,
+  agentGraphNodes: {},
+  agentGraphBeams: [],
+  agentGraphEvents: [],
+  agentGraphStatuses: {},
+
+  activeTabId: null,
+  openTabIds: [],
+  tabStates: {},
+
+  /* ---- event dispatch (tab-aware) ---- */
+
+  applyServerEvent(evt) {
+    // Cache get/set for RAF stream-chunk batching
+    _storeGet = get as any;
+    _storeSet = set as any;
+
+    // Batch stream_chunk events per animation frame to reduce renders
+    if (evt.type === "stream_chunk" && (evt as any).message_id) {
+      const s = get();
+      const cid = _eventConversationId(evt);
+      if (cid && cid === s.currentConvId) {
+        _streamAcc[(evt as any).message_id] =
+          (_streamAcc[(evt as any).message_id] || "") + ((evt as any).delta || "");
+        if (_rafId === null) {
+          _rafId = requestAnimationFrame(() => _flushStreamAcc());
+        }
+        return;
+      }
+    }
+
+    const state = get();
+    const cid = _eventConversationId(evt);
+
+    if (cid && cid !== state.currentConvId) {
+      // Event for a background tab — update its TabState cache only
+      const tab = state.tabStates[cid];
+      if (!tab) return;
+      const slice: ChatSlice = {
+        serverInfo: state.serverInfo,
+        currentConvId: cid,
+        conversations: state.conversations,
+        agents: state.agents,
+        ...flatFieldsFromTab(tab),
+      };
+      const { next } = reduceEvent(slice, evt);
+      if (next !== slice) {
+        set({
+          tabStates: {
+            ...state.tabStates,
+            [cid]: { ...tab, ...tabFieldsFromSlice(next) },
+          },
+        });
+      }
+      return;
+    }
+
+    // Event for active tab (or global event)
+    const cur = sliceFromState(state);
+    const { next, effects } = reduceEvent(cur, evt);
+    if (next !== cur) {
+      set(next);
+    }
+    if (evt.type === "error") console.error("[server error]", evt);
+    for (const ef of effects) {
+      if (ef === "refresh_conversations") void get().refreshConversations();
+    }
+
+    // Mirror active-tab changes into tabStates cache
+    if (cid) {
+      const activeTab = state.tabStates[cid] ?? emptyTabState();
+      const updated = sliceFromState(get());
+      set({
+        tabStates: {
+          ...get().tabStates,
+          [cid]: { ...activeTab, ...tabFieldsFromSlice(updated) },
+        },
+      });
+    }
+  },
+
+  /* ---- lifecycle ---- */
 
   init() {
     ws.onStatus((s) => set({ status: s }));
+
+    ws.onConnected(() => {
+      const { openTabIds } = get();
+      for (const cid of openTabIds) {
+        ws.send({ type: "join", conversation_id: cid, limit: 200 });
+      }
+    });
+
     ws.onEvent((evt) => {
-      const cur = sliceFromState(get());
-      const { next, effects } = reduceEvent(cur, evt);
-      if (next !== cur) set(next);
-      if (evt.type === "error") {
-        console.error("[server error]", evt);
-        // 非流式错误（无 message_id）→ Toast 提示
-        if (!evt.message_id) {
-          set({ errorToast: `[${evt.code}] ${evt.message}` });
-        }
-      }
-      for (const ef of effects) {
-        if (ef === "refresh_conversations") void get().refreshConversations();
-      }
+      get().applyServerEvent(evt);
     });
     ws.connect();
     void get().refreshConversations();
@@ -100,24 +322,148 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   async refreshConversations() {
     try {
-      const convs = await fetchConversations();
+      const convs = await fetchConversations({ includeArchived: true });
       set({ conversations: convs });
       const current = get().currentConvId;
       if (!current && convs.length > 0) {
-        await get().selectConversation(convs[0].id);
+        const firstActive = convs.find((c) => !c.archived) ?? convs[0];
+        await get().openTab(firstActive.id);
       }
     } catch (err) {
       console.error("refreshConversations failed", err);
     }
   },
 
+  /* ---- tab management ---- */
+
+  async openTab(id) {
+    const { openTabIds, currentConvId } = get();
+
+    // Already open: just switch
+    if (openTabIds.includes(id)) {
+      if (id !== currentConvId) get().switchTab(id);
+      return;
+    }
+
+    // Save current tab state before opening new one
+    const curState = get();
+    const saveTabStates: Record<string, TabState> = { ...curState.tabStates };
+    if (curState.currentConvId) {
+      saveTabStates[curState.currentConvId] = {
+        ...(saveTabStates[curState.currentConvId] ?? emptyTabState()),
+        ...tabFieldsFromSlice(sliceFromState(curState)),
+      };
+    }
+
+    // Use cached or empty state for target
+    const cached = saveTabStates[id] ?? emptyTabState();
+    saveTabStates[id] = cached;
+
+    set({
+      activeTabId: id,
+      currentConvId: id,
+      openTabIds: [...openTabIds, id],
+      tabStates: saveTabStates,
+      ...flatFieldsFromTab(cached),
+    } as any);
+
+    // Fetch fresh if not cached
+    if (cached.messages.length === 0) {
+      try {
+        const [msgs, stats] = await Promise.all([
+          fetchMessages(id, 200),
+          fetchContextStats(id).catch(() => null),
+        ]);
+        set((s) => ({
+          messages: msgs,
+          contextStats: stats
+            ? { total: stats.total_messages, pinned: stats.pinned_messages }
+            : null,
+          tabStates: {
+            ...s.tabStates,
+            [id]: {
+              ...s.tabStates[id],
+              messages: msgs,
+              contextStats: stats
+                ? { total: stats.total_messages, pinned: stats.pinned_messages }
+                : null,
+            },
+          },
+        }));
+      } catch (err) {
+        console.error("fetchMessages failed", err);
+      }
+    }
+
+    ws.send({ type: "join", conversation_id: id, limit: 200 });
+  },
+
+  closeTab(id) {
+    const { openTabIds, tabStates, activeTabId } = get();
+    const idx = openTabIds.indexOf(id);
+    if (idx < 0) return;
+
+    const nextIds = openTabIds.filter((x) => x !== id);
+    const nextStates = { ...tabStates };
+    delete nextStates[id];
+
+    let nextActive = activeTabId;
+    if (activeTabId === id) {
+      nextActive = nextIds.length > 0 ? nextIds[Math.min(idx, nextIds.length - 1)] : null;
+    }
+
+    const update: Record<string, any> = {
+      openTabIds: nextIds,
+      tabStates: nextStates,
+      activeTabId: nextActive,
+      currentConvId: nextActive,
+    };
+
+    if (nextActive && nextStates[nextActive]) {
+      Object.assign(update, flatFieldsFromTab(nextStates[nextActive]));
+    } else {
+      Object.assign(update, flatFieldsFromTab(emptyTabState()));
+    }
+
+    set(update as any);
+  },
+
+  switchTab(id) {
+    const { openTabIds, tabStates, currentConvId } = get();
+    if (!openTabIds.includes(id) || id === currentConvId) return;
+
+    // Save current state into cache
+    const curState = sliceFromState(get());
+    const saveTabStates = { ...tabStates };
+    if (currentConvId) {
+      saveTabStates[currentConvId] = {
+        ...(saveTabStates[currentConvId] ?? emptyTabState()),
+        ...tabFieldsFromSlice(curState),
+      };
+    }
+
+    // Restore target
+    const target = saveTabStates[id] ?? emptyTabState();
+    set({
+      activeTabId: id,
+      currentConvId: id,
+      tabStates: saveTabStates,
+      ...flatFieldsFromTab(target),
+    } as any);
+  },
+
+  /* ---- conversation CRUD ---- */
+
+  async selectConversation(id) {
+    await get().openTab(id);
+  },
+
   async createAndSelect(input) {
     const conv = await createConversation(input);
-    // 先把新会话塞进列表头，避免等下一次刷新出现"空白期"
     set((s) => ({
       conversations: [conv, ...s.conversations.filter((x) => x.id !== conv.id)],
     }));
-    await get().selectConversation(conv.id);
+    await get().openTab(conv.id);
     return conv;
   },
 
@@ -144,29 +490,6 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }));
   },
 
-  async removeConversation(conversationId) {
-    try {
-      await deleteConversation(conversationId);
-    } catch (err) {
-      console.warn("deleteConversation failed", err);
-    }
-    set((s) => {
-      const next = {
-        conversations: s.conversations.filter((c) => c.id !== conversationId),
-      };
-      if (s.currentConvId === conversationId) {
-        const remaining = next.conversations;
-        Object.assign(next, {
-          currentConvId: remaining.length > 0 ? remaining[0].id : null,
-          messages: [],
-          streamingMessageIds: [],
-          agentTyping: false,
-        });
-      }
-      return next;
-    });
-  },
-
   async startAgentChat(agentId) {
     const agent = get().agents.find((a) => a.id === agentId);
     return get().createAndSelect({
@@ -176,31 +499,25 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     });
   },
 
-  async selectConversation(id) {
-    set({
-      currentConvId: id,
-      messages: [],
-      streamingMessageIds: [],
-      agentTyping: false,
-    });
-    try {
-      const msgs = await fetchMessages(id, 200);
-      set({ messages: msgs });
-    } catch (err) {
-      console.error("fetchMessages failed", err);
-    }
-    ws.send({ type: "join", conversation_id: id, limit: 200 });
+  async updateConversationMeta(conversationId, input) {
+    const conv = await updateConversation(conversationId, input);
+    set((s) => ({
+      conversations: s.conversations.map((x) => (x.id === conv.id ? conv : x)),
+      currentConvId:
+        conv.archived && s.currentConvId === conv.id ? null : s.currentConvId,
+      messages: conv.archived && s.currentConvId === conv.id ? [] : s.messages,
+    }));
+    return conv;
   },
+
+  /* ---- messaging ---- */
 
   sendText(text, mentions) {
     const cid = get().currentConvId;
     if (!cid) return;
-    const editCtx = get().editContext;
-
-    // 乐观插入用户消息
-    const optimisticId = `pending_${Date.now()}`;
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const optimisticMsg: Message = {
-      id: optimisticId,
+      id: tempId,
       conversation_id: cid,
       sender_id: "user",
       sender_type: "user",
@@ -216,59 +533,39 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     set((s) => ({
       messages: [...s.messages, optimisticMsg],
     }));
-
-    const ok = ws.send({
+    ws.send({
       type: "send_message",
       conversation_id: cid,
       content: { type: "text", text },
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
-      ...(editCtx ? { edit_context: editCtx } : {}),
     });
-    if (!ok) {
-      // 发送失败：移除乐观消息，设置错误
-      set((s) => ({
-        messages: s.messages.filter((m) => m.id !== optimisticId),
-        sendError: "消息发送失败，请检查连接后重试",
-      }));
-      return;
-    }
-    if (editCtx) set({ editContext: null });
-  },
-
-  setEditContext(ctx) {
-    set({ editContext: ctx });
-  },
-
-  clearEditContext() {
-    set({ editContext: null });
-  },
-
-  clearSendError() {
-    set({ sendError: null });
-  },
-
-  clearErrorToast() {
-    set({ errorToast: null });
-  },
-
-  cancelMessage(messageId) {
-    const ids = get().streamingMessageIds;
-    if (!ids.includes(messageId)) return;
-    ws.send({ type: "cancel", message_id: messageId });
-    set((s) => ({
-      streamingMessageIds: s.streamingMessageIds.filter((id) => id !== messageId),
-    }));
   },
 
   cancelAll() {
     const ids = get().streamingMessageIds;
     if (ids.length === 0) return;
-    // 每个 message_id 各发一条 cancel；后端按 message_id 索引 in_flight。
     for (const mid of ids) {
       ws.send({ type: "cancel", message_id: mid });
     }
   },
+
+  cancelMessage(messageId) {
+    ws.send({ type: "cancel", message_id: messageId });
+  },
 }));
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+/** Extract conversation_id from a ServerEvent (if any). */
+function _eventConversationId(evt: ServerEvent): string | null {
+  const e = evt as any;
+  if (typeof e.conversation_id === "string") return e.conversation_id;
+  // Some events have it nested (e.g. message_created.message.conversation_id)
+  if (e.message && typeof e.message.conversation_id === "string") return e.message.conversation_id;
+  return null;
+}
 
 function sliceFromState(s: ChatState): ChatSlice {
   return {
@@ -280,5 +577,10 @@ function sliceFromState(s: ChatState): ChatSlice {
     agentTyping: s.agentTyping,
     agents: s.agents,
     tasks: s.tasks ?? {},
+    contextStats: s.contextStats ?? null,
+    agentGraphNodes: s.agentGraphNodes ?? {},
+    agentGraphBeams: s.agentGraphBeams ?? [],
+    agentGraphEvents: s.agentGraphEvents ?? [],
+    agentGraphStatuses: s.agentGraphStatuses ?? {},
   };
 }

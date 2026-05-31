@@ -11,6 +11,7 @@ import type { ClientEvent, ConnectionStatus, ServerEvent } from "../types";
 
 type EventListener = (evt: ServerEvent) => void;
 type StatusListener = (status: ConnectionStatus) => void;
+type ConnectedListener = () => void;
 
 const HEARTBEAT_INTERVAL_MS = 25_000;
 const RECONNECT_MAX_MS = 30_000;
@@ -20,6 +21,7 @@ export class WSClient {
   private ws: WebSocket | null = null;
   private readonly listeners = new Set<EventListener>();
   private readonly statusListeners = new Set<StatusListener>();
+  private readonly connectedListeners = new Set<ConnectedListener>();
   private heartbeatTimer: number | null = null;
   private reconnectTimer: number | null = null;
   private reconnectAttempt = 0;
@@ -87,6 +89,13 @@ export class WSClient {
     };
   }
 
+  onConnected(fn: ConnectedListener): () => void {
+    this.connectedListeners.add(fn);
+    return () => {
+      this.connectedListeners.delete(fn);
+    };
+  }
+
   private setStatus(s: ConnectionStatus): void {
     this.status = s;
     this.statusListeners.forEach((l) => l(s));
@@ -96,6 +105,7 @@ export class WSClient {
     this.reconnectAttempt = 0;
     this.setStatus("connected");
     this.startHeartbeat();
+    this.connectedListeners.forEach((l) => l());
   };
 
   private readonly handleClose = (): void => {

@@ -19,6 +19,8 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from services.animation_bus import AnimationEvent, animation_bus
+
 logger = logging.getLogger("agenthub.ws")
 
 
@@ -50,7 +52,15 @@ class Connection:
     async def send(self, evt: dict[str, Any]) -> None:
         if self._closed:
             return
-        await self.outbound.put(evt)
+        try:
+            self.outbound.put_nowait(evt)
+        except asyncio.QueueFull:
+            # Queue is full — drop low-priority events to avoid blocking producers
+            evt_type = evt.get("type", "")
+            if evt_type in ("stream_chunk", "usage"):
+                return  # Final content arrives via message_done
+            # Critical events (message_done, error, etc.): block until space
+            await self.outbound.put(evt)
 
     async def writer(self) -> None:
         try:
@@ -103,3 +113,23 @@ class WSHub:
 
 
 hub = WSHub()
+
+
+def _forward_animation_event(evt: AnimationEvent) -> None:
+    conversation_id = str(evt.data.get("conversation_id") or "")
+    if not conversation_id:
+        return
+    ws_event = {
+        "type": evt.type,
+        "ts": int(evt.at),
+        "event_id": evt.id,
+        **evt.data,
+    }
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(hub.broadcast_conversation(conversation_id, ws_event))
+
+
+animation_bus.subscribe(_forward_animation_event)

@@ -3,6 +3,11 @@
 | Path | 方法 | 说明 |
 | --- | --- | --- |
 | ``/api/agents`` | GET | 列出全部 Agent（W2 F-W2-5） |
+| ``/api/agents`` | POST | 创建自定义 Agent |
+| ``/api/agents/{id}`` | PUT | 更新 Agent |
+| ``/api/agents/{id}`` | DELETE | 删除 Agent |
+| ``/api/agents/{id}/prompt`` | GET | 获取 Agent 提示词内容（Pipeline 7-Stage） |
+| ``/api/agents/{id}/executions`` | GET | 获取 Agent 执行记录 |
 | ``/api/conversations`` | GET | 列出全部会话（含成员） |
 | ``/api/conversations`` | POST | 新建会话（含群聊 / 多 Agent，W2 F-W2-5 强化校验） |
 | ``/api/conversations/{id}`` | GET | 单个会话详情 |
@@ -13,10 +18,12 @@
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from db import DEFAULT_USER_ID
@@ -38,7 +45,6 @@ from services.message import (
 )
 from services.conversation import (
     create_conversation,
-    delete_conversation,
     get_conversation,
     list_conversations,
     list_messages,
@@ -46,6 +52,9 @@ from services.conversation import (
 )
 
 router = APIRouter(prefix="/api", tags=["bff"])
+
+# 项目根目录（用于读取 prompts 文件）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class CreateConversationBody(BaseModel):
@@ -83,6 +92,7 @@ class CreateAgentBody(BaseModel):
     model: str = ""
     base_url: str = ""
     system_prompt: str = ""
+    tools: list[str] = Field(default_factory=list)
     capabilities: list[str] = ["text"]
     avatar: str | None = None
 
@@ -94,6 +104,7 @@ class UpdateAgentBody(BaseModel):
     model: str | None = None
     base_url: str | None = None
     system_prompt: str | None = None
+    tools: list[str] | None = None
     capabilities: list[str] | None = None
     avatar: str | None = None
 
@@ -111,6 +122,8 @@ async def api_create_agent(body: CreateAgentBody) -> dict:
         config["base_url"] = body.base_url
     if body.system_prompt:
         config["system_prompt"] = body.system_prompt
+    if body.tools:
+        config["tools"] = body.tools
     async with Session() as s:
         agent = await create_agent(
             s,
@@ -129,14 +142,24 @@ async def api_update_agent(agent_id: str, body: UpdateAgentBody) -> dict:
     """更新 Agent 的可配置字段。"""
     Session = get_sessionmaker()
     config: dict[str, Any] = {}
+
+    # 检查 agent 是否是 locked_prompt — 是则忽略前端传来的 system_prompt
+    async with Session() as s:
+        from db.models import Agent as AgentModel
+        from sqlalchemy import select
+        row = await s.scalar(select(AgentModel).where(AgentModel.id == agent_id))
+        prompt_locked = bool(row and (row.locked_prompt or row.id == "agent_orchestrator")) if row else False
+
     if body.api_key:
         config["api_key"] = body.api_key
     if body.model is not None:
         config["model"] = body.model
     if body.base_url is not None:
         config["base_url"] = body.base_url
-    if body.system_prompt is not None:
+    if body.system_prompt is not None and not prompt_locked:
         config["system_prompt"] = body.system_prompt
+    if body.tools is not None:
+        config["tools"] = body.tools
     async with Session() as s:
         agent = await update_agent(
             s,
@@ -152,8 +175,8 @@ async def api_update_agent(agent_id: str, body: UpdateAgentBody) -> dict:
     return {"agent": agent}
 
 
-@router.delete("/agents/{agent_id}", status_code=204, response_class=Response)
-async def api_delete_agent(agent_id: str) -> Response:
+@router.delete("/agents/{agent_id}", status_code=204)
+async def api_delete_agent(agent_id: str) -> None:
     Session = get_sessionmaker()
     async with Session() as s:
         result = await delete_agent(s, agent_id)
@@ -161,7 +184,6 @@ async def api_delete_agent(agent_id: str) -> Response:
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
     if result == "protected":
         raise HTTPException(status_code=409, detail="orchestrator_protected")
-    return Response(status_code=204)
 
 
 @router.get("/agents/{agent_id}/executions")
@@ -169,6 +191,60 @@ async def api_list_agent_executions(agent_id: str, limit: int = Query(default=50
     Session = get_sessionmaker()
     async with Session() as s:
         return {"executions": await list_agent_executions(s, agent_id, limit=limit)}
+
+
+@router.get("/agents/{agent_id}/prompt")
+async def api_get_agent_prompt(agent_id: str) -> dict:
+    """获取 Agent 的系统提示词内容。
+
+    对于 Pipeline 系统 Agent（config 中含 ``prompt_file`` 字段），
+    从 prompts/ 目录读取实际提示词文件内容。
+    对于自定义 Agent，返回 config 中的 system_prompt。
+    """
+    Session = get_sessionmaker()
+    async with Session() as s:
+        agents = await list_agents(s)
+    
+    agent_info = None
+    for a in agents:
+        if a["id"] == agent_id:
+            agent_info = a
+            break
+
+    if agent_info is None:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
+
+    prompt_text = agent_info.get("system_prompt", "")
+    prompt_file = ""
+
+    # 尝试获取 prompt_file 路径
+    try:
+        row = None
+        async with Session() as s:
+            from sqlalchemy import select
+            from db.models import Agent
+            row = await s.scalar(select(Agent).where(Agent.id == agent_id))
+        if row and row.config:
+            cfg = json.loads(row.config) if isinstance(row.config, str) else row.config
+            prompt_file = cfg.get("prompt_file", "")
+    except Exception:
+        pass
+
+    if prompt_file:
+        prompt_path = _PROJECT_ROOT / prompt_file
+        try:
+            if prompt_path.exists():
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    prompt_text = f.read()
+        except Exception:
+            pass
+
+    return {
+        "agent_id": agent_id,
+        "prompt": prompt_text,
+        "prompt_file": prompt_file,
+        "is_system": agent_info.get("is_system", False),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -259,16 +335,6 @@ async def api_update_conversation(
     if conv is None:
         raise HTTPException(status_code=404, detail=f"conversation not found: {conversation_id}")
     return {"conversation": conv}
-
-
-@router.delete("/conversations/{conversation_id}", status_code=204, response_class=Response)
-async def api_delete_conversation(conversation_id: str) -> Response:
-    Session = get_sessionmaker()
-    async with Session() as s:
-        ok = await delete_conversation(s, conversation_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"conversation not found: {conversation_id}")
-    return Response(status_code=204)
 
 
 @router.get("/conversations/{conversation_id}/messages")

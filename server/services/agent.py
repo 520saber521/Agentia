@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from typing import Any, Optional
 
@@ -12,13 +11,15 @@ from db.models import Agent, AgentExecution, new_id
 from services.secrets import decrypt_secret, encrypt_secret, mask_secret
 
 ORCHESTRATOR_AGENT_ID = "agent_orchestrator"
-ORCHESTRATOR_SYSTEM_PROMPT = (
-    "你是一个任务编排器（Orchestrator）。"
-    "你负责理解用户的复杂需求，将任务拆解为可并行或串行的子任务，"
-    "并根据各个 Agent 的能力标签分派给最合适的执行者。"
-    "在所有子任务完成后，你需要聚合结果并生成汇总报告。"
-    "如果子任务失败，你需要决定是否重试、降级或请求用户决策。"
-)
+ORCHESTRATOR_SYSTEM_PROMPT = """你是 Agentia 的 Orchestrator，负责在群聊中理解用户意图、拆解复杂任务、选择合适的子 Agent 并行执行、聚合结果、识别失败与代码冲突并给出降级方案。你必须保持协调者身份，不直接伪造子 Agent 的专业结论。
+
+【协调规则】
+- 拆解任务后，每个子任务必须指定一个明确的单一领域：frontend/backend/database/test/docs/devops
+- 向子 Agent 分派任务时，明确告知只做其领域内的工作，不要越界
+- 汇总时不要逐条重复子任务列表，直接说明完成情况和关键产出
+- 不要重复输出已由子 Agent 输出的内容
+
+当用户请求"部署"或"deploy"时，检测项目类型并创建 devops 子任务来构建项目（npm install && npm run build），构建完成后返回预览 URL。"""
 
 SENSITIVE_CONFIG_KEYS = {"api_key"}
 
@@ -44,28 +45,13 @@ def _normalize_config(config: Optional[dict[str, Any]], *, existing: Optional[di
     return merged
 
 
-def adapter_config_for_runtime(agent: Agent) -> dict[str, Any]:
-    """Resolve runtime config from Agent row, merging DB config with env vars."""
-    try:
-        cfg = json.loads(agent.config) if agent.config else {}
-    except (TypeError, ValueError):
-        cfg = {}
-
-    if not isinstance(cfg, dict):
+def adapter_config_for_runtime(a: Agent) -> dict[str, Any]:
+    config = _loads_json(a.config, {})
+    if not isinstance(config, dict):
         return {}
-
-    runtime = dict(cfg)
+    runtime = dict(config)
     if "api_key" in runtime:
         runtime["api_key"] = decrypt_secret(str(runtime.get("api_key") or ""))
-
-    # Fallback to env vars if no api_key configured
-    if not runtime.get("api_key"):
-        adapter_type = (agent.adapter_type or "").strip().lower()
-        if adapter_type in ("codex", "claude_code"):
-            runtime["api_key"] = os.environ.get("OPENAI_API_KEY", "")
-        elif adapter_type == "deepseek":
-            runtime["api_key"] = os.environ.get("DEEPSEEK_API_KEY", "")
-
     return runtime
 
 
@@ -82,7 +68,9 @@ def agent_to_dict(a: Agent) -> dict[str, Any]:
     locked_prompt = bool(a.locked_prompt or is_orchestrator)
     system_prompt = ORCHESTRATOR_SYSTEM_PROMPT if is_orchestrator else str(config.get("system_prompt") or "")
     api_key_value = str(config.get("api_key") or "")
-
+    tools = config.get("tools") or []
+    if not isinstance(tools, list):
+        tools = []
     return {
         "id": a.id,
         "name": a.name,
@@ -91,6 +79,7 @@ def agent_to_dict(a: Agent) -> dict[str, Any]:
         "model": str(config.get("model") or ""),
         "base_url": str(config.get("base_url") or ""),
         "system_prompt": system_prompt,
+        "tools": [str(tool) for tool in tools],
         "capabilities": [str(cap) for cap in capabilities],
         "api_key_configured": bool(decrypt_secret(api_key_value)),
         "api_key_mask": mask_secret(api_key_value),
@@ -173,12 +162,13 @@ async def update_agent(
         agent.avatar = avatar
     if adapter_type is not None:
         agent.adapter_type = adapter_type.strip() or agent.adapter_type
+    prompt_locked = bool(is_orchestrator or agent.locked_prompt)
     if config is not None:
         existing_cfg = _loads_json(agent.config, {})
         if not isinstance(existing_cfg, dict):
             existing_cfg = {}
         next_config = dict(config)
-        if is_orchestrator:
+        if prompt_locked:
             next_config.pop("system_prompt", None)
         existing_cfg = _normalize_config(next_config, existing=existing_cfg)
         if is_orchestrator:

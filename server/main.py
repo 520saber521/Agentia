@@ -17,13 +17,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Ensure server/ is on sys.path BEFORE any other paths to avoid import conflicts with src/api
+# Ensure server/ is on sys.path before src/ to avoid import conflicts
 _HERE = Path(__file__).resolve().parent
-# Remove any parent dirs that might shadow server/api
-new_path = [p for p in sys.path if not (Path(p) / "api").exists() or str(_HERE) in p]
-if str(_HERE) not in new_path:
-    new_path.insert(0, str(_HERE))
-sys.path[:] = new_path
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
 
 import asyncio
 import logging
@@ -36,8 +33,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api import router as rest_router
+from api.animation import router as animation_router
 from api.artifacts import router as artifacts_router
 from api.trace import router as trace_router
+from api.deploy import router as deploy_router
+from api.workspace import router as workspace_router
 from db import dispose, init_db, seed_defaults
 from handlers import dispatch
 from router_client import get_router_client
@@ -55,6 +55,18 @@ STATIC_DIR = ROOT / "static"
 
 SERVER_NAME = "agenthub-bff"
 SERVER_VERSION = "0.0.5"
+
+
+def windows_proactor_loop_factory(*, use_subprocess: bool = False) -> asyncio.AbstractEventLoop:
+    """Return a Windows event loop that supports subprocesses.
+
+    Claude Agent SDK starts the Claude Code CLI with asyncio subprocess APIs.
+    Uvicorn's reload mode can otherwise choose WindowsSelectorEventLoop, which
+    raises NotImplementedError when the SDK tries to spawn claude.exe.
+    """
+    if sys.platform == "win32":
+        return asyncio.ProactorEventLoop()
+    return asyncio.SelectorEventLoop()
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +113,11 @@ app.add_middleware(
 )
 
 app.include_router(rest_router)
+app.include_router(animation_router)
 app.include_router(artifacts_router)
 app.include_router(trace_router)
+app.include_router(deploy_router)
+app.include_router(workspace_router)
 
 
 @app.get("/health")

@@ -29,7 +29,16 @@ from db.seed import (
 from services.agent import list_agents
 from services.conversation import list_conversations, list_messages
 from services.message import create_message, update_message_content
-from handlers.artifact_utils import persist_artifact_chunk
+from handlers.send_message import persist_artifact_chunk, _try_create_artifact
+from services.artifact import read_artifact_content_with_session
+
+
+class FakeArtifactConn:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send(self, evt: dict) -> None:
+        self.sent.append(evt)
 
 
 async def test_init_db_is_idempotent(db_env) -> None:
@@ -235,6 +244,109 @@ async def test_artifact_chunk_persists_metadata_only(db_env) -> None:
         assert "code" not in content
 
 
+async def test_markdown_document_with_code_fences_persists_full_document(db_env) -> None:
+    await seed_defaults()
+    Session = get_sessionmaker()
+    async with Session() as s:
+        msg = await create_message(
+            s,
+            conversation_id=DEFAULT_CONV_ID,
+            sender_id=DEFAULT_AGENT_ID,
+            sender_type="agent",
+            content={"type": "text", "text": ""},
+        )
+
+    doc = """# Java 内存管理
+
+## 1. 堆内存
+
+示例命令：
+
+```bash
+jmap -dump:format=b,file=heap.hprof <pid>
+```
+
+## 2. GC Roots
+
+完整文档正文必须保留，而不是只保存代码块。
+"""
+    conn = FakeArtifactConn()
+    content = await _try_create_artifact(
+        Session,
+        conn,  # type: ignore[arg-type]
+        msg.id,
+        DEFAULT_CONV_ID,
+        DEFAULT_AGENT_ID,
+        doc,
+    )
+    assert content is not None
+    assert content["type"] == "file"
+    assert content["fileName"] == "document.md"
+
+    async with Session() as s:
+        stored = await s.get(Message, msg.id)
+        assert stored is not None
+        assert stored.artifact_id
+        saved = await read_artifact_content_with_session(s, stored.artifact_id)
+    assert saved == doc.strip()
+    assert "jmap -dump" in saved
+    assert "完整文档正文必须保留" in saved
+    assert conn.sent and conn.sent[-1]["type"] == "artifact_ready"
+
+
+async def test_composite_sql_examples_persist_as_full_markdown_document(db_env) -> None:
+    await seed_defaults()
+    Session = get_sessionmaker()
+    async with Session() as s:
+        msg = await create_message(
+            s,
+            conversation_id=DEFAULT_CONV_ID,
+            sender_id=DEFAULT_AGENT_ID,
+            sender_type="agent",
+            content={"type": "text", "text": ""},
+        )
+
+    doc = """下面是一组常用 SQL 示例合集。
+
+## 1. 创建数据库
+
+```sql
+-- 创建数据库
+CREATE DATABASE IF NOT EXISTS shop_demo;
+```
+
+## 2. 创建用户表
+
+```sql
+-- 创建用户表
+CREATE TABLE users (
+  id BIGINT PRIMARY KEY,
+  name VARCHAR(64) NOT NULL
+);
+```
+"""
+    conn = FakeArtifactConn()
+    content = await _try_create_artifact(
+        Session,
+        conn,  # type: ignore[arg-type]
+        msg.id,
+        DEFAULT_CONV_ID,
+        DEFAULT_AGENT_ID,
+        doc,
+    )
+    assert content is not None
+    assert content["type"] == "file"
+    assert content["fileName"] == "document.md"
+
+    async with Session() as s:
+        stored = await s.get(Message, msg.id)
+        assert stored is not None and stored.artifact_id
+        saved = await read_artifact_content_with_session(s, stored.artifact_id)
+    assert saved == doc.strip()
+    assert "CREATE DATABASE" in saved
+    assert "CREATE TABLE users" in saved
+
+
 async def test_create_conversation_with_members(db_env) -> None:
     """W2 F-W2-5：用真实存在的两个 seeded agent 建群。"""
     from services.conversation import create_conversation
@@ -253,7 +365,7 @@ async def test_create_conversation_with_members(db_env) -> None:
     assert conv["type"] == "group"
     assert conv["owner_user_id"] == DEFAULT_USER_ID
     member_ids = {m["member_id"] for m in conv["members"]}
-    assert member_ids == {DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_AGENT_ID_2, "agent_orchestrator"}
+    assert member_ids == {DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_AGENT_ID_2}
 
     Session = get_sessionmaker()
     async with Session() as s:
@@ -296,6 +408,33 @@ async def test_list_agents_returns_seeded(db_env) -> None:
     assert names == sorted(names), "list_agents 必须按 name 升序"
     # 不应在出参里泄漏 ``config`` 等敏感字段（W5 起承载 api_key）
     assert "config" not in agents[0]
+
+
+async def test_seed_repairs_sdk_agent_adapter_type(db_env) -> None:
+    """The built-in Claude Code SDK agent must not drift to raw HTTP Claude."""
+    await seed_defaults()
+    Session = get_sessionmaker()
+    async with Session() as s:
+        sdk = await s.get(Agent, "agent_sdk")
+        assert sdk is not None
+        cfg = json.loads(sdk.config)
+        assert "cwd" not in cfg
+        assert "cli_path" not in cfg
+        sdk.adapter_type = "claude_code"
+        cfg["cwd"] = "D:/Agentia/Agentia"
+        cfg["cli_path"] = "C:/Users/fan/.local/bin/claude.exe"
+        sdk.config = json.dumps(cfg, ensure_ascii=False)
+        await s.commit()
+
+    await seed_defaults()
+
+    async with Session() as s:
+        sdk = await s.get(Agent, "agent_sdk")
+        assert sdk is not None
+        assert sdk.adapter_type == "claude_agent_sdk"
+        cfg = json.loads(sdk.config)
+        assert "cwd" not in cfg
+        assert "cli_path" not in cfg
 
 
 async def test_create_conversation_group_requires_agents(db_env) -> None:
@@ -359,6 +498,6 @@ async def test_create_conversation_dedupes_agent_ids(db_env) -> None:
             ],
         )
     member_ids = [m["member_id"] for m in conv["members"]]
-    # owner + 2 agents + auto-added orchestrator（去重后），共 4 条
-    assert len(member_ids) == 4
-    assert set(member_ids) == {DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_AGENT_ID_2, "agent_orchestrator"}
+    # owner + 2 agents（去重后），共 3 条
+    assert len(member_ids) == 3
+    assert set(member_ids) == {DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_AGENT_ID_2}
