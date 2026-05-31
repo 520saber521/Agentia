@@ -1,18 +1,19 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useChatStore } from "../stores/useChatStore";
 import type { Agent, Member } from "../types";
 import { AgentCreateDialog } from "./AgentCreateDialog";
+import { Palette, Server, Database, Wrench, ClipboardList, Bot, Settings } from "./icons";
 
-/** 领域 → 适配器代码映射表（与 server/orchestrator.py AGENT_CODE_MAP 和 server/db/seed.py 对齐） */
-const AGENT_DOMAIN_MAP: Record<string, { label: string; icon: string }> = {
-  agent_mock:     { label: "前端专家", icon: "🎨" },
-  agent_mock_2:   { label: "后端专家", icon: "⚙️" },
-  agent_claude:   { label: "数据专家", icon: "🗄️" },
-  agent_deepseek: { label: "辅助Agent", icon: "🛠️" },
-  agent_opencode: { label: "产品需求分析",  icon: "📋" },
+/** 领域 → 适配器图标映射表（与 server/orchestrator.py AGENT_CODE_MAP 和 server/db/seed.py 对齐） */
+const AGENT_DOMAIN_MAP: Record<string, { label: string; icon: React.ReactNode }> = {
+  agent_mock:     { label: "前端专家", icon: <Palette className="h-4 w-4" /> },
+  agent_mock_2:   { label: "后端专家", icon: <Server className="h-4 w-4" /> },
+  agent_claude:   { label: "数据专家", icon: <Database className="h-4 w-4" /> },
+  agent_deepseek: { label: "辅助Agent", icon: <Wrench className="h-4 w-4" /> },
+  agent_opencode: { label: "产品需求分析",  icon: <ClipboardList className="h-4 w-4" /> },
 };
 
-function resolveDomain(agent: Agent): { label: string; icon: string } | null {
+function resolveDomain(agent: Agent): { label: string; icon: React.ReactNode } | null {
   return AGENT_DOMAIN_MAP[agent.id] ?? null;
 }
 
@@ -80,13 +81,17 @@ export function MemberPanel() {
                     className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/10 transition-colors group"
                   >
                     <span className="w-7 h-7 rounded-lg bg-accent/20 flex items-center justify-center text-sm shrink-0 select-none">
-                      {domain?.icon || member.agent.avatar || member.agent.name.charAt(0).toUpperCase()}
+                      {domain ? domain.icon : member.agent.avatar ? (
+                        <span>{member.agent.avatar}</span>
+                      ) : (
+                        <Bot className="h-4 w-4 text-fg/70" />
+                      )}
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm text-fg truncate flex items-center gap-1.5">
                         {member.agent.name}
                         {domain && (
-                          <span className="text-[10px] text-accent font-medium bg-accent/10 rounded px-1 py-0.5">
+                          <span className="text-3xs text-accent font-medium bg-accent/10 rounded px-1 py-0.5">
                             {domain.label}
                           </span>
                         )}
@@ -104,10 +109,7 @@ export function MemberPanel() {
                       className="shrink-0 w-6 h-6 rounded-md opacity-0 group-hover:opacity-100 hover:bg-accent/20 flex items-center justify-center transition-all"
                       title={`Configure ${member.agent.name}`}
                     >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted">
-                        <circle cx="12" cy="12" r="3" />
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                      </svg>
+                      <Settings className="h-3 w-3 text-muted" />
                     </button>
                   </div>
                 );

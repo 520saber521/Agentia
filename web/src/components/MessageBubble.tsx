@@ -3,6 +3,7 @@ import { ContentRenderer } from "./ContentRenderer";
 import { useChatStore } from "../stores/useChatStore";
 import { pinMessage, unpinMessage } from "../api/client";
 import type { Message } from "../types";
+import { Bot, Copy, Quote, RefreshCw, Pin, PinOff, X } from "./icons";
 
 interface Props {
   msg: Message;
@@ -57,22 +58,22 @@ function looksLikeQuestion(text: string): boolean {
   return questionPatterns.some((p) => p.test(lastTwoSentences));
 }
 
-function ConfirmationCard({ msg, onContinue, onStop }: { msg: Message; onContinue: () => void; onStop: () => void }) {
+function ConfirmationCard({ msg: _msg, onContinue, onStop }: { msg: Message; onContinue: () => void; onStop: () => void }) {
   return (
-    <div className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
-      <p className="mb-2 text-xs text-amber-300/80">Agent 正在等待您的确认，是否继续生成？</p>
+    <div className="mt-2 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5">
+      <p className="mb-2 text-xs text-warning/80">Agent 正在等待您的确认，是否继续生成？</p>
       <div className="flex gap-2">
         <button
           type="button"
           onClick={onContinue}
-          className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/30 border border-emerald-500/30"
+          className="rounded-lg bg-success/20 px-3 py-1.5 text-xs font-medium text-success/80 transition hover:bg-success/30 border border-success/30"
         >
           继续生成
         </button>
         <button
           type="button"
           onClick={onStop}
-          className="rounded-lg bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-300 transition hover:bg-rose-500/20 border border-rose-500/30"
+          className="rounded-lg bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger/80 transition hover:bg-danger/20 border border-danger/30"
         >
           停止
         </button>
@@ -114,33 +115,36 @@ function MessageActions({ msg, streaming, canCancel }: { msg: Message; streaming
 
   return (
     <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100">
-      <button type="button" onClick={copy} className="rounded border border-border px-2 py-0.5 text-[10px] text-muted hover:text-fg">
-        复制
+      <button type="button" onClick={copy} className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-2xs text-muted hover:text-fg cursor-pointer" aria-label="复制">
+        <Copy className="h-3 w-3" /> 复制
       </button>
-      <button type="button" onClick={quote} className="rounded border border-border px-2 py-0.5 text-[10px] text-muted hover:text-fg">
-        引用
+      <button type="button" onClick={quote} className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-2xs text-muted hover:text-fg" aria-label="引用">
+        <Quote className="h-3 w-3" /> 引用
       </button>
-      <button type="button" onClick={regenerate} className="rounded border border-border px-2 py-0.5 text-[10px] text-muted hover:text-fg">
-        {label}
+      <button type="button" onClick={regenerate} className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-2xs text-muted hover:text-fg" aria-label={label}>
+        <RefreshCw className="h-3 w-3" /> {label}
       </button>
       <button
         type="button"
         onClick={handlePin}
-        className={`rounded border px-2 py-0.5 text-[10px] transition ${
+        className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-2xs transition ${
           msg.pinned
             ? "border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
             : "border-border text-muted hover:border-amber-500/30 hover:text-amber-400"
         }`}
+        aria-label={msg.pinned ? "取消 Pin" : "Pin"}
       >
+        {msg.pinned ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
         {msg.pinned ? "取消 Pin" : "Pin"}
       </button>
       {streaming && canCancel && (
         <button
           type="button"
           onClick={() => cancelMessage(msg.id)}
-          className="rounded border border-rose-500/30 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/10"
+          className="inline-flex items-center gap-1 rounded border border-danger/30 px-2 py-0.5 text-2xs text-danger/80 hover:bg-danger/10"
+          aria-label="取消"
         >
-          取消
+          <X className="h-3 w-3" /> 取消
         </button>
       )}
     </div>
@@ -149,18 +153,18 @@ function MessageActions({ msg, streaming, canCancel }: { msg: Message; streaming
 
 function StatusBadge({ streaming, text }: { streaming?: boolean; text: string }) {
   if (streaming) {
-    return <span className="rounded border border-sky-500/30 px-1.5 py-0.5 text-[10px] text-sky-300">生成中</span>;
+    return <span className="rounded border border-info/30 px-1.5 py-0.5 text-2xs text-info/80">生成中</span>;
   }
   if (text.includes("输出达到模型长度上限")) {
-    return <span className="rounded border border-amber-500/30 px-1.5 py-0.5 text-[10px] text-amber-300">已截断</span>;
+    return <span className="rounded border border-warning/30 px-1.5 py-0.5 text-2xs text-warning/80">已截断</span>;
   }
   if (text.includes("Retrying") || text.includes("重试")) {
-    return <span className="rounded border border-amber-500/30 px-1.5 py-0.5 text-[10px] text-amber-300">已重试</span>;
+    return <span className="rounded border border-warning/30 px-1.5 py-0.5 text-2xs text-warning/80">已重试</span>;
   }
   if (isProblemText(text)) {
-    return <span className="rounded border border-rose-500/30 px-1.5 py-0.5 text-[10px] text-rose-300">失败</span>;
+    return <span className="rounded border border-danger/30 px-1.5 py-0.5 text-2xs text-danger/80">失败</span>;
   }
-  return <span className="rounded border border-emerald-500/25 px-1.5 py-0.5 text-[10px] text-emerald-300">完成</span>;
+  return <span className="rounded border border-success/25 px-1.5 py-0.5 text-2xs text-success/80">完成</span>;
 }
 
 export const MessageBubble = React.memo(function MessageBubble({ msg, streaming, onEditArtifact }: Props) {
@@ -194,10 +198,10 @@ export const MessageBubble = React.memo(function MessageBubble({ msg, streaming,
     return (
       <div className="group/message flex animate-fade-in justify-end">
         <div className="flex max-w-[min(78%,56rem)] flex-col items-end">
-          <div className="w-fit rounded-2xl rounded-br-md bg-user px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm break-words">
+          <div className="w-fit rounded-2xl rounded-br-md bg-user px-4 py-2.5 text-sm leading-relaxed text-white shadow-bubble-user break-words">
             <ContentRenderer content={msg.content} artifactId={msg.artifact_id} onEditArtifact={onEditArtifact} />
           </div>
-          <div className="mt-1 flex items-center gap-2 px-1 text-[10.5px] text-muted">
+          <div className="mt-1 flex items-center gap-2 px-1 text-2xs text-muted">
             <span>{time}</span>
             <span>已发送</span>
           </div>
@@ -212,25 +216,29 @@ export const MessageBubble = React.memo(function MessageBubble({ msg, streaming,
   return (
     <div className="group/message flex animate-fade-in items-start gap-2.5">
       <div
-        className={`mt-0.5 flex h-9 w-9 shrink-0 select-none items-center justify-center rounded-xl ${color.avatar} text-base`}
+        className={`mt-0.5 flex h-9 w-9 shrink-0 select-none items-center justify-center rounded-xl ${color.avatar}`}
         title={agentName}
       >
-        {agentAvatar || agentName.charAt(0).toUpperCase()}
+        {agentAvatar ? (
+          <span className="text-base">{agentAvatar}</span>
+        ) : (
+          <Bot className="h-5 w-5 text-fg/70" />
+        )}
       </div>
 
       <div className="min-w-0 max-w-[min(72%,56rem)]">
         <div className="mb-1 flex items-center gap-2 pl-0.5">
           {isGroup && <span className={`max-w-[20ch] truncate text-xs font-semibold ${color.text}`}>{agentName}</span>}
-          <span className="text-[10px] text-muted/60">{time}</span>
+          <span className="text-2xs text-muted/60">{time}</span>
           <StatusBadge streaming={streaming} text={text} />
           {msg.pinned && (
-            <span className="inline-flex items-center gap-0.5 rounded border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-400">
+            <span className="inline-flex items-center gap-0.5 rounded border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-2xs text-amber-400">
               已 Pin
             </span>
           )}
         </div>
 
-        <div className={`w-fit rounded-2xl rounded-tl-sm border px-4 py-2.5 text-sm leading-relaxed shadow-sm break-words ${color.bg} ${color.border}`}>
+        <div className={`w-fit rounded-2xl rounded-tl-sm border px-4 py-2.5 text-sm leading-relaxed shadow-bubble-agent break-words ${color.bg} ${color.border}`}>
           <ContentRenderer content={msg.content} artifactId={msg.artifact_id} onEditArtifact={onEditArtifact} />
           {streaming && msg.content.type === "text" && <span className="ml-1 inline-block animate-blink text-fg/70">▌</span>}
         </div>

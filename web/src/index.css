@@ -1,3 +1,56 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+/* ---- Theme CSS Variables (RGB channels for Tailwind opacity modifiers) ---- */
+:root {
+  --color-bg: 5 7 10;
+  --color-panel: 11 15 22;
+  --color-border: 34 41 54;
+  --color-muted: 148 163 184;
+  --color-muted-fg: 176 185 198;
+  --color-fg: 231 237 247;
+  --color-accent: 56 189 248;
+  --color-accent-hover: 14 165 233;
+  --color-surface-hover: 19 27 40;
+  --color-user: 15 63 70;
+  --color-agent: 16 23 34;
+  --color-danger: 239 68 68;
+  --color-success: 34 197 94;
+  --color-warning: 245 158 11;
+  --color-info: 56 189 248;
+  --glass-bg: rgba(11, 15, 22, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --body-bg-start: rgba(56, 189, 248, 0.08);
+  --body-bg-end: rgba(34, 197, 94, 0.06);
+  --body-bg-base: #05070a;
+  --scrollbar-thumb: #222936;
+  --scrollbar-thumb-hover: #3a3f4b;
+}
+
+.light {
+  --color-bg: 248 250 252;
+  --color-panel: 255 255 255;
+  --color-border: 226 232 240;
+  --color-muted: 100 116 139;
+  --color-muted-fg: 71 85 105;
+  --color-fg: 15 23 42;
+  --color-accent: 2 132 199;
+  --color-accent-hover: 3 105 161;
+  --color-surface-hover: 241 245 249;
+  --color-user: 13 148 136;
+  --color-agent: 241 245 249;
+  --color-danger: 220 38 38;
+  --color-success: 22 163 74;
+  --color-warning: 217 119 6;
+  --color-info: 2 132 199;
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(0, 0, 0, 0.06);
+  --body-bg-start: rgba(56, 189, 248, 0.04);
+  --body-bg-end: rgba(34, 197, 94, 0.03);
+  --body-bg-base: #f8fafc;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -12,9 +65,33 @@ body,
 body {
   font-family: theme("fontFamily.sans");
   background:
-    radial-gradient(circle at 18% 12%, rgba(56, 189, 248, 0.08), transparent 30%),
-    radial-gradient(circle at 82% 86%, rgba(34, 197, 94, 0.06), transparent 32%),
-    #05070a;
+    radial-gradient(circle at 18% 12%, var(--body-bg-start), transparent 30%),
+    radial-gradient(circle at 82% 86%, var(--body-bg-end), transparent 32%),
+    var(--body-bg-base);
+}
+
+/* Global button / interactive element defaults */
+button,
+[role="button"],
+a {
+  cursor: pointer;
+}
+
+/* Focus ring — visible replacement for outline-none */
+*:focus-visible {
+  outline: 2px solid theme("colors.accent");
+  outline-offset: 2px;
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -25,11 +102,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: theme("colors.border");
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3f4b;
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Markdown rendered content */
@@ -145,21 +222,36 @@ pre[class*="language-"] {
 .token.italic { font-style: italic; }
 .token.entity { cursor: help; }
 
-/* Markdown heading tokens */
 .token.title .token.punctuation { color: #64748b; }
 
-/* JSON specific */
 .language-json .token.property { color: #7dd3fc; }
 .language-json .token.string { color: #86efac; }
 .language-json .token.number { color: #fbbf24; }
 .language-json .token.boolean { color: #c084fc; }
 
-/* Python specific */
 .language-python .token.decorator { color: #fbbf24; }
 .language-python .token.interpolation-punctuation { color: #c084fc; }
 
-/* TypeScript/JSX specific */
 .language-tsx .token.tag,
 .language-jsx .token.tag { color: #c084fc; }
 .language-tsx .token.attr-name,
 .language-jsx .token.attr-name { color: #7dd3fc; }
+
+@layer components {
+  .glass-panel {
+    background: var(--glass-bg);
+    @apply backdrop-blur-lg border;
+    border-color: var(--glass-border);
+  }
+  .glass-hover {
+    @apply hover:bg-white/[0.03] transition-colors;
+  }
+}
+
+@layer base {
+  button,
+  a,
+  [role="button"] {
+    @apply transition-colors duration-150;
+  }
+}

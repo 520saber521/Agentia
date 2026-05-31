@@ -27,6 +27,7 @@ from .base import (
 )
 from .claude_code import ClaudeCodeAdapter
 from .codex import CodexAdapter, OpenCodeAdapter
+from .deepseek import DeepSeekAdapter
 from .mock import MockAdapter
 
 _logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ ADAPTER_REGISTRY: dict[str, Type[AgentAdapter]] = {
     "mock": MockAdapter,
     "claude_code": ClaudeCodeAdapter,
     "codex": CodexAdapter,
+    "deepseek": DeepSeekAdapter,
     "opencode": OpenCodeAdapter,
 }
 

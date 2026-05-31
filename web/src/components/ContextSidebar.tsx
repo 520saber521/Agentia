@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useChatStore } from "../stores/useChatStore";
 import type { Agent, Member, Message, ToolCallInfo } from "../types";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { Bot } from "./icons";
 
 type PanelId = "context" | "workspace" | "tools" | "members" | "pinned";
 
@@ -33,11 +34,11 @@ function ToolStatus({ call }: { call: ToolCallInfo }) {
   return (
     <div className={`rounded-md border bg-bg px-2 py-1.5 ${cls}`}>
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-[10px]">{call.toolName}</span>
-        <span className="shrink-0 text-[9px] uppercase">{call.status}</span>
+        <span className="truncate font-mono text-2xs">{call.toolName}</span>
+        <span className="shrink-0 text-2xs uppercase">{call.status}</span>
       </div>
       {call.resultSummary && (
-        <div className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-muted">
+        <div className="mt-1 line-clamp-2 text-2xs leading-relaxed text-muted">
           {call.resultSummary}
         </div>
       )}
@@ -91,7 +92,7 @@ export function ContextSidebar() {
   }
 
   return (
-    <aside className="flex w-72 min-w-72 max-w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-panel">
+    <aside className="flex w-full shrink-0 flex-col overflow-hidden border-l border-border bg-panel">
       <div className="border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-fg">Runtime panels</h3>
         <p className="mt-0.5 text-xs text-muted">
@@ -105,33 +106,33 @@ export function ContextSidebar() {
             <button
               type="button"
               onClick={() => toggle(panel.id)}
-              className="flex h-9 w-full items-center justify-between border-b border-border px-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-muted hover:text-fg"
+              className="flex h-9 w-full items-center justify-between border-b border-border px-3 text-left text-2xs font-semibold uppercase tracking-[0.14em] text-muted hover:text-fg"
             >
               <span>{panel.title}</span>
-              <span className="font-mono text-[10px]">{open[panel.id] ? "-" : "+"}</span>
+              <span className="font-mono text-2xs">{open[panel.id] ? "-" : "+"}</span>
             </button>
 
             {open[panel.id] && panel.id === "context" && (
               <div className="space-y-2 p-3 text-xs">
                 <div className="grid grid-cols-2 gap-2">
                   <div className="rounded border border-border bg-panel/50 p-2">
-                    <div className="text-[10px] text-muted">History</div>
+                    <div className="text-2xs text-muted">History</div>
                     <div className="mt-1 font-mono text-sm text-fg">{contextStats?.total ?? messages.length}</div>
                   </div>
                   <div className="rounded border border-border bg-panel/50 p-2">
-                    <div className="text-[10px] text-muted">Pinned</div>
+                    <div className="text-2xs text-muted">Pinned</div>
                     <div className="mt-1 font-mono text-sm text-fg">{contextStats?.pinned ?? pinnedMessages.length}</div>
                   </div>
                 </div>
                 {contextStats?.estimatedTokens != null && (
                   <div className="rounded border border-border bg-panel/50 p-2">
-                    <div className="text-[10px] text-muted">Estimated tokens</div>
+                    <div className="text-2xs text-muted">Estimated tokens</div>
                     <div className="mt-1 font-mono text-sm text-fg">
                       {contextStats.estimatedTokens.toLocaleString()}
                     </div>
                   </div>
                 )}
-                <div className="text-[10px] leading-relaxed text-muted">
+                <div className="text-2xs leading-relaxed text-muted">
                   Pinned messages and recent history are injected into Agent calls.
                 </div>
               </div>
@@ -146,7 +147,7 @@ export function ContextSidebar() {
             {open[panel.id] && panel.id === "tools" && (
               <div className="space-y-1.5 p-2">
                 {toolCalls.length === 0 ? (
-                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted">
+                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-2xs text-muted">
                     No tool calls yet
                   </div>
                 ) : (
@@ -161,12 +162,16 @@ export function ContextSidebar() {
               <div className="space-y-1 p-2">
                 {agentMembers.map((member) => (
                   <div key={member.member_id} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-accent/10">
-                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-accent/15 text-xs text-accent">
-                      {member.agent.avatar || member.agent.name.charAt(0).toUpperCase()}
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-accent/15 text-accent">
+                      {member.agent.avatar ? (
+                        <span className="text-xs">{member.agent.avatar}</span>
+                      ) : (
+                        <Bot className="h-4 w-4" />
+                      )}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-medium text-fg">{member.agent.name}</div>
-                      <div className="truncate text-[10px] text-muted">
+                      <div className="truncate text-2xs text-muted">
                         {member.agent.adapter_type} / {member.agent.capabilities.slice(0, 2).join(", ")}
                       </div>
                     </div>
@@ -178,7 +183,7 @@ export function ContextSidebar() {
                   </div>
                 ))}
                 {agentMembers.length === 0 && (
-                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted">
+                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-2xs text-muted">
                     No agents in this conversation
                   </div>
                 )}
@@ -188,7 +193,7 @@ export function ContextSidebar() {
             {open[panel.id] && panel.id === "pinned" && (
               <div className="space-y-1.5 p-2">
                 {pinnedMessages.length === 0 ? (
-                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted">
+                  <div className="rounded border border-dashed border-border px-3 py-4 text-center text-2xs text-muted">
                     No pinned context
                   </div>
                 ) : (
@@ -196,11 +201,11 @@ export function ContextSidebar() {
                     const agent = agents.find((a) => a.id === msg.sender_id);
                     return (
                       <div key={msg.id} className="rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1.5">
-                        <div className="mb-0.5 flex items-center gap-1 text-[10px] text-amber-300">
+                        <div className="mb-0.5 flex items-center gap-1 text-2xs text-amber-300">
                           <span className="truncate">{msg.sender_type === "user" ? "User" : agent?.name ?? msg.sender_id}</span>
                           <span className="text-muted/60">{formatTime(msg.created_at)}</span>
                         </div>
-                        <div className="line-clamp-3 text-[10px] leading-relaxed text-fg/80">
+                        <div className="line-clamp-3 text-2xs leading-relaxed text-fg/80">
                           {textOf(msg).slice(0, 300)}
                         </div>
                       </div>

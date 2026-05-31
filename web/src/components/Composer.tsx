@@ -204,12 +204,12 @@ export function Composer() {
       )}
 
       {pendingCode && (
-        <div className="mb-2 flex items-center gap-2 rounded-md border border-sky-500/20 bg-sky-500/10 px-2 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-[11px] text-sky-300">
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-info/20 bg-info/10 px-2 py-1.5">
+          <span className="min-w-0 flex-1 truncate text-2xs text-info/80">
             代码上下文：{pendingCode.title}
           </span>
-          <span className="text-[10px] text-muted/60">发送时会附加到消息中</span>
-          <button type="button" onClick={clearPendingCode} className="shrink-0 text-muted transition-colors hover:text-fg">
+          <span className="text-2xs text-muted/60">发送时会附加到消息中</span>
+          <button type="button" onClick={clearPendingCode} aria-label="清除代码上下文" className="shrink-0 text-muted transition-colors hover:text-fg cursor-pointer">
             ×
           </button>
         </div>
@@ -224,7 +224,7 @@ export function Composer() {
           >
             登录页协作 Demo
           </button>
-          <span className="truncate text-[10.5px] text-muted">
+          <span className="truncate text-2xs text-muted">
             Orchestrator 会分派给 Frontend / Backend / Database / Test Agent
           </span>
         </div>
@@ -248,7 +248,7 @@ export function Composer() {
                   ? "输入消息，使用 @ 提及 Agent，Enter 发送"
                   : "输入消息，Enter 发送，Shift+Enter 换行"
           }
-          className="max-h-32 min-h-[40px] flex-1 resize-none rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
+          className="max-h-32 min-h-[40px] flex-1 resize-none rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
           rows={1}
           disabled={!currentConvId}
         />

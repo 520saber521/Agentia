@@ -35,6 +35,7 @@ import type {
 } from "../types";
 import { WSClient } from "../ws/client";
 import { reduceEvent, type ChatSlice } from "./reducer";
+import { useToastStore } from "./useToastStore";
 
 /* ------------------------------------------------------------------ */
 /*  Stream-chunk batching: coalesce deltas per animation frame         */
@@ -184,6 +185,12 @@ export interface ChatState extends ChatSlice {
   openTabIds: string[];
   tabStates: Record<string, TabState>;
 
+  /** Responsive sidebar state */
+  sidebarOpen: boolean;
+  rightSidebarOpen: boolean;
+  toggleSidebar: () => void;
+  toggleRightSidebar: () => void;
+
   applyServerEvent: (evt: ServerEvent) => void;
   init: () => void;
   refreshConversations: () => Promise<void>;
@@ -226,6 +233,16 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   activeTabId: null,
   openTabIds: [],
   tabStates: {},
+
+  sidebarOpen: false,
+  rightSidebarOpen: false,
+
+  toggleSidebar() {
+    set((s) => ({ sidebarOpen: !s.sidebarOpen }));
+  },
+  toggleRightSidebar() {
+    set((s) => ({ rightSidebarOpen: !s.rightSidebarOpen }));
+  },
 
   /* ---- event dispatch (tab-aware) ---- */
 
@@ -280,7 +297,12 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     if (next !== cur) {
       set(next);
     }
-    if (evt.type === "error") console.error("[server error]", evt);
+    if (evt.type === "error") {
+      console.error("[server error]", evt);
+      const err = evt as any;
+      const msg = typeof err.message === "string" ? err.message : "服务器发生错误";
+      useToastStore.getState().addToast({ type: "error", message: msg });
+    }
     for (const ef of effects) {
       if (ef === "refresh_conversations") void get().refreshConversations();
     }
