@@ -112,6 +112,23 @@ SPECIALIZED_AGENTS: Dict[str, AgentProfile] = {
         priority_domains=["test", "docs"],
         description="辅助Agent，负责测试、文档、部署等支援工作。在其他Agent忙碌时可协助处理任务。",
     ),
+    "E": AgentProfile(
+        role="E",
+        name="专用Agent 5 - 产品专家",
+        specialty="product",
+        domains=["product"],
+        focus_patterns=[
+            "docs/prd/*",
+            "docs/requirements/*",
+            "docs/design/*",
+            "*.prd.md",
+            "specs/*",
+            "requirements/*",
+        ],
+        skills=["需求分析", "PRD撰写", "功能规划", "用户故事", "竞品分析", "原型设计", "流程图"],
+        priority_domains=["product"],
+        description="负责所有产品需求相关工作，包括PRD撰写、功能规划、用户故事、竞品分析等。",
+    ),
 }
 
 # 领域到Agent的默认映射
@@ -122,6 +139,7 @@ DOMAIN_TO_AGENT: Dict[str, str] = {
     "test": "D",
     "docs": "D",
     "devops": "D",
+    "product": "E",
 }
 
 

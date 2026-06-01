@@ -1,13 +1,11 @@
 import { useMemo, useState } from "react";
 import { useChatStore } from "../stores/useChatStore";
 import type { Agent, Member, Message, ToolCallInfo } from "../types";
-import { WorkspacePanel } from "./WorkspacePanel";
 
-type PanelId = "context" | "workspace" | "tools" | "members" | "pinned";
+type PanelId = "context" | "tools" | "members" | "pinned";
 
 const PANELS: Array<{ id: PanelId; title: string }> = [
   { id: "context", title: "Context" },
-  { id: "workspace", title: "Workspace" },
   { id: "tools", title: "Realtime tools" },
   { id: "members", title: "Members" },
   { id: "pinned", title: "Pinned" },
@@ -91,7 +89,7 @@ export function ContextSidebar() {
   }
 
   return (
-    <aside className="flex w-72 min-w-72 max-w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-panel">
+    <aside className="flex w-full min-w-0 flex-col overflow-hidden border-l border-border bg-panel">
       <div className="border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-fg">Runtime panels</h3>
         <p className="mt-0.5 text-xs text-muted">
@@ -134,12 +132,6 @@ export function ContextSidebar() {
                 <div className="text-[10px] leading-relaxed text-muted">
                   Pinned messages and recent history are injected into Agent calls.
                 </div>
-              </div>
-            )}
-
-            {open[panel.id] && panel.id === "workspace" && (
-              <div className="min-h-0 flex-1">
-                <WorkspacePanel />
               </div>
             )}
 

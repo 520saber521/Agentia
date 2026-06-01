@@ -25,7 +25,7 @@ from .base import AgentAdapter, Chunk
 ANTHROPIC_API_BASE = "https://api.anthropic.com/v1"
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_MAX_TOKENS = 12000
+DEFAULT_MAX_TOKENS = 60000
 REQUEST_TIMEOUT_S = 60.0
 
 # For slicing non-streaming response into token-like chunks

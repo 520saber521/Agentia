@@ -147,6 +147,52 @@ function MessageActions({ msg, streaming, canCancel }: { msg: Message; streaming
   );
 }
 
+function ToolCallBadge({ toolCalls }: { toolCalls?: import("../types").ToolCallInfo[] }) {
+  if (!toolCalls || toolCalls.length === 0) return null;
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      {toolCalls.map((call, i) => {
+        const isRunning = call.status === "running";
+        const isError = call.status === "error";
+        const icon = isRunning ? "⏳" : isError ? "⚠️" : "✓";
+        const borderClass = isRunning
+          ? "border-sky-500/20 bg-sky-500/5"
+          : isError
+            ? "border-rose-500/20 bg-rose-500/5"
+            : "border-emerald-500/20 bg-emerald-500/5";
+
+        return (
+          <div
+            key={`${call.toolName}-${i}`}
+            className={`flex items-start gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${borderClass}`}
+          >
+            <span className="mt-0.5 shrink-0">{icon}</span>
+            <div className="min-w-0">
+              <span className="font-medium text-fg/80">
+                {isRunning ? "调用工具: " : isError ? "工具失败: " : "工具完成: "}
+              </span>
+              <span className="text-muted font-mono">{call.toolName}</span>
+              {isRunning && (
+                <span className="ml-1.5 inline-flex gap-0.5 align-middle">
+                  <span className="inline-block h-0.5 w-0.5 animate-bounce rounded-full bg-sky-400 [animation-delay:0ms]" />
+                  <span className="inline-block h-0.5 w-0.5 animate-bounce rounded-full bg-sky-400 [animation-delay:120ms]" />
+                  <span className="inline-block h-0.5 w-0.5 animate-bounce rounded-full bg-sky-400 [animation-delay:240ms]" />
+                </span>
+              )}
+              {call.resultSummary && (
+                <p className="mt-0.5 text-[10px] text-muted/70 leading-relaxed line-clamp-2">
+                  {call.resultSummary}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function StatusBadge({ streaming, text }: { streaming?: boolean; text: string }) {
   if (streaming) {
     return <span className="rounded border border-sky-500/30 px-1.5 py-0.5 text-[10px] text-sky-300">生成中</span>;
@@ -218,7 +264,7 @@ export const MessageBubble = React.memo(function MessageBubble({ msg, streaming,
         {agentAvatar || agentName.charAt(0).toUpperCase()}
       </div>
 
-      <div className="min-w-0 max-w-[min(72%,56rem)]">
+      <div className="min-w-0 w-[80%]">
         <div className="mb-1 flex items-center gap-2 pl-0.5">
           {isGroup && <span className={`max-w-[20ch] truncate text-xs font-semibold ${color.text}`}>{agentName}</span>}
           <span className="text-[10px] text-muted/60">{time}</span>
@@ -230,10 +276,11 @@ export const MessageBubble = React.memo(function MessageBubble({ msg, streaming,
           )}
         </div>
 
-        <div className={`w-fit rounded-2xl rounded-tl-sm border px-4 py-2.5 text-sm leading-relaxed shadow-sm break-words ${color.bg} ${color.border}`}>
+        <div className={`w-full rounded-2xl rounded-tl-sm border px-4 py-2.5 text-sm leading-relaxed shadow-sm break-words ${color.bg} ${color.border}`}>
           <ContentRenderer content={msg.content} artifactId={msg.artifact_id} onEditArtifact={onEditArtifact} />
           {streaming && msg.content.type === "text" && <span className="ml-1 inline-block animate-blink text-fg/70">▌</span>}
         </div>
+        <ToolCallBadge toolCalls={msg.toolCalls} />
         {showConfirm && <ConfirmationCard msg={msg} onContinue={handleContinue} onStop={handleStop} />}
         <MessageActions msg={msg} streaming={streaming} canCancel />
       </div>

@@ -523,17 +523,39 @@ async def _create_agent_tool(
     return json.dumps({"ok": True, "agentId": created["id"], "role": clean_role}, ensure_ascii=False)
 
 
+def _format_html(text: str) -> str:
+    return text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"").replace("\\'", "'")
+
+
 def _normalize_generated_content(content: str, mime_type: str = "") -> str:
     text = content.strip()
     if text.startswith("_call"):
         text = text[5:].strip()
-    if text.startswith("{") and ('"name"' in text or '"arguments"' in text):
+    if text.startswith("```tool_call"):
+        text = re.sub(r"^```tool_call\s*", "", text).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+    if text.startswith("{") and ('"name"' in text or '"arguments"' in text or '"content"' in text):
         try:
             parsed = json.loads(text)
-            if isinstance(parsed, dict) and "content" in parsed:
-                text = parsed["content"]
-            elif isinstance(parsed, str):
-                text = parsed
+
+            def extract(value: Any) -> str | None:
+                if isinstance(value, str):
+                    return value if value.strip() else None
+                if not isinstance(value, dict):
+                    return None
+                for key in ("content", "text", "result"):
+                    item = value.get(key)
+                    if isinstance(item, str) and item.strip():
+                        return item
+                for key in ("arguments", "args", "parameters", "input", "data", "payload"):
+                    item = extract(value.get(key))
+                    if item:
+                        return item
+                return None
+
+            extracted = extract(parsed)
+            if extracted:
+                text = extracted
         except (json.JSONDecodeError, TypeError):
             pass
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
@@ -543,8 +565,8 @@ def _normalize_generated_content(content: str, mime_type: str = "") -> str:
                 text = parsed
         except (json.JSONDecodeError, TypeError):
             pass
-    if "\\n" in text or "\\t" in text or "\\r" in text:
-        text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+    if "\\n" in text or "\\t" in text or "\\r" in text or "\\\"" in text or "\\'" in text:
+        text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"").replace("\\'", "'")
     if "markdown" in (mime_type or "").lower():
         markers = ["# ", "## ", "---\n", "```"]
         first_positions = [text.find(marker) for marker in markers if text.find(marker) >= 0]
@@ -555,6 +577,8 @@ def _normalize_generated_content(content: str, mime_type: str = "") -> str:
                 if any(k in prefix for k in ("当然", "我来", "以下", "好的", "已为你", "Agent")):
                     text = text[start:].lstrip()
         text = re.sub(r"\n{4,}", "\n\n\n", text)
+    if "html" in (mime_type or "").lower():
+        text = _format_html(text)
     return text
 
 
@@ -587,6 +611,8 @@ async def _create_artifact_tool(
         return "Error: conversation_id unavailable"
     if kind not in ("file", "code", "preview", "diff"):
         return "Error: kind must be one of: file, code, preview, diff"
+    if kind == "preview" and (not mime_type or mime_type.strip() == "text/plain"):
+        mime_type = "text/html"
     if not title or not title.strip():
         return "Error: title required"
     if not content or not content.strip():
@@ -768,7 +794,7 @@ _BUILTIN_TOOLS: list[dict[str, Any]] = [
                     "description": "Artifact kind: 'file' for generic files (reports, docs), 'code' for source code, 'preview' for HTML pages, 'diff' for code changes.",
                 },
                 "title": {"type": "string", "description": "Human-readable title for the artifact."},
-                "mime_type": {"type": "string", "description": "MIME type, e.g. 'text/markdown', 'application/json', 'text/x-python'.", "default": "text/plain"},
+                "mime_type": {"type": "string", "description": "MIME type. 'kind=preview' must use 'text/html'. Other examples: 'text/markdown', 'application/json', 'text/x-python'.", "default": "text/plain"},
                 "file_name": {"type": "string", "description": "File name with extension, e.g. 'test_report.md', 'config.yml'.", "default": ""},
                 "content": {"type": "string", "description": "The complete file content."},
             },
@@ -1040,8 +1066,15 @@ class ToolRegistry:
             '}\n'
             '```\n\n'
             '执行完工具获取结果后，继续分析结果并给出下一步行动或最终回复。\n'
-            '重要：当调用 create_artifact 时，arguments.content 只能包含要展示/下载的纯正文，不要把“好的/我来/以下是”等聊天回复放进 content。\n'
-            '重要：当前不要把生成内容写入 workspace。优先直接回复用户；如果需要预览或下载，请使用 create_artifact，不要使用 write_file。'
+            '\n'
+            '【create_artifact 专项规则】\n'
+            '- 每次回复最多调用一次 create_artifact，将所有内容合并到一个文件中\n'
+            '- 生成文档/报告/代码审查时使用 kind="file", mime_type="text/markdown"\n'
+            '- content 参数只放要提交的纯正文，不要把聊天语句混进去\n'
+            '- 调用 create_artifact 的 JSON 必须放在 ```tool_call 代码块内，不能作为裸文本输出\n'
+            '- ❌ 绝对不要输出裸 JSON（不带 ```tool_call 代码块的 JSON）\n'
+            '- ❌ 绝对不要在一个回复中输出多个 ```tool_call 代码块——只允许一个\n'
+            '- 调用后简短回复"已生成 文件名"即可，不要重复输出内容'
         )
         return "\n".join(lines)
 
@@ -1058,6 +1091,15 @@ class ToolRegistry:
             arguments.setdefault("project_root", self.project_root)
         for key, value in self.runtime_context.items():
             arguments.setdefault(key, value)
+
+        required = tool.parameters.get("required", [])
+        if isinstance(required, list):
+            missing = [p for p in required if p not in arguments or not arguments[p]]
+            if missing:
+                return (
+                    f"Error: missing required arguments for {name}: {', '.join(missing)}. "
+                    f"Available args: {list(arguments.keys()) or 'none'}"
+                )
 
         try:
             handler = tool.handler

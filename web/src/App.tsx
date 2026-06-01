@@ -64,7 +64,7 @@ export default function App() {
       <Header />
       <main className="flex-1 grid grid-cols-[18rem_minmax(0,1fr)_16rem] min-h-0 overflow-hidden">
         <ConversationListPanel />
-        <section className="min-w-0 flex flex-col min-h-0 bg-panel border-l border-border overflow-hidden">
+        <section className="min-w-0 flex flex-col min-h-0 bg-panel overflow-hidden">
           <TabBar />
           <MessagePanel onEditArtifact={handleEditArtifact} />
           <Composer />

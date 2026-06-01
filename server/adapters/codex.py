@@ -20,7 +20,7 @@ from .base import AgentAdapter, Chunk
 
 OPENAI_API_BASE = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-4o-2024-11-20"
-DEFAULT_MAX_TOKENS = 12000
+DEFAULT_MAX_TOKENS = 60000
 REQUEST_TIMEOUT_S = 60.0
 REASONING_CONTENT_ERROR = "reasoning_content"
 

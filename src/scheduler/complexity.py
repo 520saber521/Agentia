@@ -59,6 +59,11 @@ DOMAIN_KEYWORDS = {
         "部署", "ci", "cd", "docker", "kubernetes", "配置",
         "dockerfile", ".yaml", ".yml", "pipeline",
     ],
+    "product": [
+        "产品", "需求", "prd", "用户故事", "功能规划", "竞品",
+        "原型", "user_story", "requirement", "优先级", "roadmap",
+        "用例", "流程", "规划",
+    ],
 }
 
 # 复杂度关键词

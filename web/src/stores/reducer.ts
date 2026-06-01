@@ -35,7 +35,8 @@ export interface ChatSlice {
   conversations: Conversation[];
   messages: Message[];
   streamingMessageIds: string[];
-  agentTyping: boolean;
+  /** Per-agent typing indicator: agent_id → is typing */
+  agentTyping: Record<string, boolean>;
   agents: Agent[];
   /** W3 F-W3-3: task_id → Task map for the current conversation. */
   tasks: Record<string, Task>;
@@ -151,12 +152,16 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
       const messages = [...state.messages, m];
       const next: ChatSlice =
         m.sender_type === "agent"
-          ? {
-              ...state,
-              messages,
-              streamingMessageIds: addStreaming(state.streamingMessageIds, m.id),
-              agentTyping: false,
-            }
+          ? (() => {
+              const nextTyping = { ...state.agentTyping };
+              delete nextTyping[m.sender_id];
+              return {
+                ...state,
+                messages,
+                streamingMessageIds: addStreaming(state.streamingMessageIds, m.id),
+                agentTyping: nextTyping,
+              };
+            })()
           : { ...state, messages };
       return { next, effects };
     }
@@ -180,7 +185,8 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
 
     case "agent_typing": {
       if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
-      return { next: { ...state, agentTyping: true }, effects };
+      const typing = { ...state.agentTyping, [evt.agent_id]: true };
+      return { next: { ...state, agentTyping: typing }, effects };
     }
 
     case "stream_chunk": {
@@ -221,8 +227,6 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
           ...state,
           messages,
           streamingMessageIds: nextStreaming,
-          // 还有兄弟在流时不清 typing 标志；全部完成才清
-          agentTyping: nextStreaming.length > 0 ? state.agentTyping : false,
         },
         effects,
       };
@@ -258,7 +262,6 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
             ...state,
             messages,
             streamingMessageIds: nextStreaming,
-            agentTyping: nextStreaming.length > 0 ? state.agentTyping : false,
           },
           effects,
         };
@@ -459,7 +462,7 @@ export function emptySlice(): ChatSlice {
     conversations: [],
     messages: [],
     streamingMessageIds: [],
-    agentTyping: false,
+    agentTyping: {},
     agents: [],
     tasks: {},
     contextStats: null,

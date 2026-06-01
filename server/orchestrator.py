@@ -179,6 +179,7 @@ AGENT_CODE_MAP: dict[str, str] = {
     "B": "agent_mock_2",
     "C": "agent_claude",
     "D": "agent_deepseek",
+    "E": "agent_opencode",
 }
 
 RETRY_LIMIT = 1
@@ -300,6 +301,7 @@ def _agent_code_to_display_name(code: str) -> str:
         "B": "CustomAgentAdapter",
         "C": "ClaudeCodeAdapter",
         "D": "CodexAdapter",
+        "E": "Product Agent (opencode)",
     }
     return AGENT_DISPLAY_NAMES.get(code, code)
 
@@ -332,6 +334,7 @@ def _agent_capability_score(agent: Agent, domain: str) -> int:
         "test": ["test", "testing", "qa", "verify", "quality", "acceptance"],
         "docs": ["docs", "doc", "readme", "writer"],
         "devops": ["devops", "ci", "deploy", "ops", "docker"],
+        "product": ["product", "prd", "需求", "user_story", "planning", "requirements", "竞品", "原型"],
     }
 
     # Role prompt is the primary signal
@@ -400,6 +403,7 @@ async def _pick_agent_for_domain(
             "test": "D",
             "docs": "D",
             "devops": "D",
+            "product": "E",
         }.get(domain, "B")
         return _agent_code_to_agent_id(fallback_code), _agent_code_to_display_name(fallback_code)
 
@@ -526,15 +530,140 @@ def _is_frontend_preview_subtask(st: Any, user_text: str) -> bool:
     return domain == "frontend" and _should_create_w4_preview(haystack)
 
 
+_RAW_ARTIFACT_JSON_RE = re.compile(
+    r'\{\s*"name"\s*:\s*"create_artifact"\s*,\s*"arguments"\s*:\s*\{',
+    re.MULTILINE,
+)
+
+
+def _find_json_braces(text: str, start: int) -> int:
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+async def _recover_raw_artifact_json(
+    text: str,
+    conversation_id: str,
+    agent_id: str,
+    conn: Any,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Scan raw text for bare create_artifact JSON and create actual artifacts.
+
+    DeepSeek models occasionally output {"name":"create_artifact",...} as plain
+    text instead of wrapping it in a ```tool_call code block. The ReAct engine
+    can't detect these, so we recover them here.
+    """
+    import json as _json
+
+    from services.tool_registry import _create_artifact_tool
+
+    artifacts: list[dict[str, Any]] = []
+    cleaned = text
+    search_from = 0
+
+    while search_from < len(cleaned):
+        m = _RAW_ARTIFACT_JSON_RE.search(cleaned, search_from)
+        if not m:
+            break
+
+        brace_start = m.start()
+        brace_end = _find_json_braces(cleaned, brace_start)
+        if brace_end == -1:
+            search_from += 1
+            continue
+
+        json_str = cleaned[brace_start:brace_end + 1]
+        try:
+            obj = _json.loads(json_str)
+        except (_json.JSONDecodeError, ValueError):
+            search_from = brace_end + 1
+            continue
+
+        args = obj.get("arguments")
+        if not isinstance(args, dict):
+            search_from = brace_end + 1
+            continue
+
+        kind = args.get("kind", "")
+        title = args.get("title", "")
+        content = args.get("content", "")
+        mime_type = args.get("mime_type", "text/plain")
+        file_name = args.get("file_name", "")
+
+        if not content or not title or kind not in ("file", "preview", "code"):
+            search_from = brace_end + 1
+            continue
+
+        try:
+            await _create_artifact_tool(
+                kind=kind,
+                title=title,
+                content=content,
+                mime_type=mime_type or "text/plain",
+                file_name=file_name or "",
+                conversation_id=conversation_id,
+                current_agent_id=agent_id,
+                project_root="",
+                conn=conn,
+                _artifacts=artifacts,
+                disable_workspace_writes=True,
+            )
+        except Exception:
+            search_from = brace_end + 1
+            continue
+
+        suffix = cleaned[brace_end + 1:]
+        cleaned = cleaned[:brace_start].rstrip()
+        if cleaned:
+            cleaned += "\n\n"
+        cleaned += f"已生成 {file_name or title}"
+        if suffix.strip():
+            cleaned += "\n" + suffix
+
+        search_from = brace_start
+
+    return cleaned, artifacts
+
+
+
 def _compact_frontend_prompt(agent_prompt: str) -> str:
     return (
         f"{agent_prompt}\n\n"
         "[Frontend output contract]\n"
-        "Return exactly one complete single-file HTML document.\n"
-        "Start with <!doctype html> and end with </html>.\n"
-        "Do not include markdown fences, explanation, install steps, or backend code.\n"
-        "Keep it concise: one screen-focused demo, compact CSS, inline JS only if necessary.\n"
-        "Use placeholder gradients/blocks instead of long asset URLs. Target under 450 lines.\n"
+        "ONLY output: HTML preview via ```tool_call create_artifact block, then one brief sentence.\n"
+        "\n🔴 HTML REQUIREMENTS:\n"
+        "- MINIMUM 1500 lines (HTML+CSS+JS).\n"
+        "- COMPLETE HTML: <!doctype html>, <html>, <head>, <body>, </html> all required.\n"
+        "- Use \\\\n for line breaks inside JSON content string.\n"
+        "- All CSS in <style>, all JS in <script>, NO external files.\n"
+        "- All images: https://picsum.photos/seed/UNIQUE-WORD/WIDTH/HEIGHT.\n"
+        "- Animations: @keyframes + IntersectionObserver + hover cubic-bezier.\n"
+        "- CSS: 500+ lines, CSS variables, Grid+Flexbox.\n"
+        "- JS: hamburger menu, back-to-top, carousel/tabs (4+ features).\n"
+        "- Design: modern (glassmorphism/gradients), NOT plain/bootstrap.\n"
+        "- tool_call format: ```tool_call\\n{\"name\":\"create_artifact\",...}\\n```\n"
+        "- Content: pure HTML <!doctype html> to </html>, no wrapper."
     )
 
 
@@ -639,10 +768,8 @@ def _im_chat_preview_html(user_text: str) -> str:
     <main>
       <header><h2>Orchestrator 群聊</h2><p class="muted">需求：{requirement}</p></header>
       <div class="messages">
-        <div class="msg user">@Orchestrator 璇峰府鎴戝疄鐜拌繖涓渶姹?/div>
         <div class="msg agent">Orchestrator 已理解需求，正在拆解并分派给合适的 Agent</div>
-        <div class="msg agent">Frontend Agent 已生成前端页面，预览如下：<div class="card">页面渲染中 · 右侧点击全屏查看</div></div>
-        <div class="msg agent">Review Agent 浠ｇ爜瀹℃煡閫氳繃锛孌iff 宸插簲鐢?/div>
+        <div class="msg agent">Frontend Agent 已生成前端页面，预览如下：<div class="card">页面渲染中 · 右侧点击全屏查看</div></div>   
       </div>
       <div class="composer"><textarea>@Frontend 再优化一下样式</textarea><button>发送</button></div>
     </main>
@@ -1097,9 +1224,9 @@ async def _generate_preview_html_with_model(
     adapter, _display_name, _agent_meta = loaded
     if hasattr(adapter, "max_tokens"):
         try:
-            adapter.max_tokens = max(int(getattr(adapter, "max_tokens", 0)), 12000)
+            adapter.max_tokens = max(int(getattr(adapter, "max_tokens", 0)), 60000)
         except (TypeError, ValueError):
-            adapter.max_tokens = 12000
+            adapter.max_tokens = 60000
 
     # Enrich prompt with workspace file contents when available
     workspace_file_contents = await _read_workspace_files_for_preview(conversation_id)
@@ -1237,6 +1364,167 @@ async def _llm_analyze_task(user_text: str) -> tuple[str | None, set[str]]:
     except Exception as exc:
         logger.warning("LLM task analysis failed: %s", exc)
         return None, set()
+
+
+async def _llm_analyze_and_decompose(
+    user_text: str,
+    context_str: str = "",
+) -> tuple[str | None, set[str], Any | None]:
+    """Combined LLM task analysis + decomposition in a single call.
+
+    Replaces the two-step process ``_llm_analyze_task`` + ``decomposer.decompose_with_llm()``
+    with one LLM call that returns task_type, domains, and subtask decomposition together.
+
+    Returns ``(task_type, domains, decompose_result_or_None)``.
+    On any failure returns ``(None, set(), None)`` so the caller falls back to keyword-based.
+    """
+    Session = get_sessionmaker()
+    async with Session() as s:
+        agents = (
+            await s.scalars(
+                select(Agent).where(
+                    Agent.id != ORCHESTRATOR_AGENT_ID,
+                    Agent.adapter_type != "mock",
+                )
+            )
+        ).all()
+        llm_agent = None
+        for a in agents:
+            try:
+                cfg = json.loads(a.config) if a.config else {}
+            except (TypeError, ValueError):
+                cfg = {}
+            if cfg.get("api_key"):
+                llm_agent = a
+                break
+    if llm_agent is None:
+        return None, set(), None
+
+    from handlers.send_message import load_adapter_for
+
+    loaded = await load_adapter_for(llm_agent.id)
+    if loaded is None:
+        return None, set(), None
+    adapter, _, _agent_meta = loaded
+
+    domain_cn = {
+        "frontend": "\u524d\u7aefUI",
+        "backend": "\u540e\u7aefAPI",
+        "database": "\u6570\u636e\u5e93",
+        "test": "\u6d4b\u8bd5",
+        "docs": "\u6280\u672f\u6587\u6863",
+        "devops": "\u8fd0\u7ef4\u90e8\u7f72",
+        "product": "\u4ea7\u54c1\u9700\u6c42",
+        "code": "\u901a\u7528\u4ee3\u7801",
+    }
+    all_domains_text = "\n".join(f"  - {d} ({domain_cn.get(d, d)})" for d in sorted(domain_cn))
+
+    prompt = (
+        "\u4f60\u662f\u4e00\u4e2a\u8f6f\u4ef6\u4efb\u52a1\u5206\u6790\u548c\u5206\u89e3\u4e13\u5bb6\u3002\u8bf7\u5206\u6790\u4ee5\u4e0b\u7528\u6237\u9700\u6c42\uff0c\u4e00\u6b21\u6027\u5b8c\u6210\uff1a\n"
+        "1. \u4efb\u52a1\u5206\u7c7b\uff08software / non_software\uff09\n"
+        "2. \u8bc6\u522b\u9700\u8981\u7684\u9886\u57df\n"
+        "3. \u5c06\u4efb\u52a1\u62c6\u89e3\u4e3a\u9886\u57df\u7279\u5b9a\u7684\u5b50\u4efb\u52a1\n\n"
+        f"\u7528\u6237\u9700\u6c42\uff1a\n{user_text[:3000]}\n\n"
+        + (f"\u4e0a\u4e0b\u6587\uff1a\n{context_str[:2000]}\n\n" if context_str else "")
+        + "\u53ef\u7528\u9886\u57df\uff1a\n" + all_domains_text + "\n\n"
+        "\u8bf7\u4ee5 JSON \u683c\u5f0f\u8fd4\u56de\uff08\u53ea\u8f93\u51fa JSON\uff0c\u4e0d\u8981\u89e3\u91ca\uff09\uff1a\n\n"
+        "{\n"
+        '  "type": "software" \u6216 "non_software",\n'
+        '  "domains": ["frontend", "backend", ...],\n'
+        '  "entities": [{"name": "...", "table_name": "...", "fields": [{"name": "...", "type": "...", "description": "..."}]}],\n'
+        '  "apis": [{"method": "GET", "path": "/...", "description": "..."}],\n'
+        '  "components": [{"name": "...", "description": "...", "props": [], "events": []}],\n'
+        '  "subtasks": [\n'
+        '    {\n'
+        '      "id": "\u552f\u4e00ID",\n'
+        '      "domain": "\u9886\u57df\u540d",\n'
+        '      "description": "\u5b50\u4efb\u52a1\u5177\u4f53\u63cf\u8ff0\uff08\u7ed9Agent\u7684\u6307\u4ee4\uff09",\n'
+        '      "dependencies": []\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "\u9886\u57df\u5b9a\u4e49\uff1a\n"
+        "- frontend: UI/\u9875\u9762/\u7ec4\u4ef6/\u6837\u5f0f/\u5e03\u5c40/\u4ea4\u4e92\n"
+        "- backend: API/\u4e1a\u52a1\u903b\u8f91/\u8def\u7531/\u4e2d\u95f4\u4ef6/\u8ba4\u8bc1\n"
+        "- database: \u6570\u636e\u6a21\u578b/SQL/\u8fc1\u79fb/\u6a21\u5f0f/\u5b58\u50a8\n"
+        "- test: \u6d4b\u8bd5/\u8d28\u91cf\u4fdd\u8bc1\n"
+        "- docs: \u6587\u6863/README\n"
+        "- devops: CI/CD/Docker/\u90e8\u7f72\n"
+        "- product: \u4ea7\u54c1\u9700\u6c42/PRD/\u7528\u6237\u6545\u4e8b/\u529f\u80fd\u89c4\u5212/\u7ade\u54c1\u5206\u6790\n"
+        "- code: \u901a\u7528\u4ee3\u7801\uff08\u7528\u4e8e\u975e\u8f6f\u4ef6\u7c7b\u4efb\u52a1\uff09\n\n"
+        "software = \u521b\u5efa/\u4fee\u6539\u7f51\u9875\u3001UI\u3001API\u3001\u6570\u636e\u5e93\u3001\u5e94\u7528\u3001\u90e8\u7f72\u3002\n"
+        'non_software = \u6570\u5b66\u5efa\u6a21\u3001\u6570\u636e\u5206\u6790\u3001\u8bba\u6587\u3001\u7814\u7a76\u3001\u5b66\u672f\u95ee\u9898\uff08\u4f7f\u7528domain "code"\uff09\u3002\n\n'
+        "\u5b50\u4efb\u52a1\u62c6\u5206\u89c4\u5219\uff1a\n"
+        "- \u6bcf\u4e2a\u5b50\u4efb\u52a1\u8981\u6709\u5177\u4f53\u7684\u3001\u53ef\u76f4\u63a5\u6267\u884c\u7684\u63cf\u8ff0\n"
+        "- dependencies\u59cb\u7ec8\u4e3a\u7a7a\u6570\u7ec4[]\uff0c\u6240\u6709\u5b50\u4efb\u52a1\u5fc5\u987b\u5e76\u884c\u6267\u884c\uff0c\u4e0d\u6dfb\u52a0\u4efb\u4f55\u4f9d\u8d56\n"
+        "- \u5b50\u4efb\u52a1ID\u4f7f\u7528\u6709\u610f\u4e49\u7684\u82f1\u6587\u6807\u8bc6\n"
+        "- entities/apis/components\u6839\u636e\u9700\u6c42\u5b9e\u9645\u63d0\u53d6\uff0c\u53ef\u4ee5\u4e3a\u7a7a\u6570\u7ec4\n"
+    )
+
+    try:
+        async with asyncio.timeout(45):
+            result = ""
+            async for chunk in adapter.send(
+                messages=[{"role": "user", "content": prompt}]
+            ):
+                if chunk.get("type") == "text":
+                    result += chunk.get("delta", "")
+                elif chunk.get("type") == "error":
+                    logger.warning("LLM analyze+decompose error: %s", chunk.get("message"))
+                    return None, set(), None
+                elif chunk.get("type") == "done":
+                    break
+
+        json_match = re.search(r"\{[\s\S]*\}", result)
+        if not json_match:
+            logger.warning("LLM analyze+decompose: no JSON found in response")
+            return None, set(), None
+
+        try:
+            data = json.loads(json_match.group())
+        except json.JSONDecodeError:
+            logger.warning("LLM analyze+decompose: invalid JSON")
+            return None, set(), None
+
+        task_type = data.get("type", "software")
+        if task_type not in ("software", "non_software"):
+            task_type = "software"
+
+        raw_domains = data.get("domains", [])
+        if not isinstance(raw_domains, list):
+            raw_domains = []
+        valid_domains = {"frontend", "backend", "database", "test", "docs", "devops", "code"}
+        domains = {d for d in raw_domains if isinstance(d, str) and d in valid_domains}
+
+        if task_type == "non_software":
+            domains = {"code"}
+
+        decomposer = EnhancedTaskDecomposer()
+        decompose_result = decomposer._parse_llm_decomposition_response(
+            result, TaskInput(description=user_text, context=context_str or None), domains, "combined"
+        )
+
+        if decompose_result is None:
+            logger.warning("LLM analyze+decompose: failed to parse subtasks, returning analysis only")
+            return task_type, domains, None
+
+        for st in decompose_result.subtasks:
+            st.dependencies = []
+        decompose_result.dependency_graph = {st.id: [] for st in decompose_result.subtasks}
+        decompose_result.execution_order = [[st.id for st in decompose_result.subtasks]]
+
+        logger.info(
+            "LLM analyzed+decomposed: type=%s domains=%s subtasks=%d (all parallel, deps cleared)",
+            task_type, domains, len(decompose_result.subtasks),
+        )
+        return task_type, domains, decompose_result
+
+    except asyncio.TimeoutError:
+        logger.warning("LLM analyze+decompose timed out after 45s")
+        return None, set(), None
+    except Exception as exc:
+        logger.warning("LLM analyze+decompose failed: %s", exc)
+        return None, set(), None
 
 
 async def _resolve_decomposer_deps_with_llm(decomposer, decompose_result) -> Any:
@@ -1446,42 +1734,46 @@ async def handle_orchestrator_mention(
             ))
             return
 
-    # 2. LLM-driven task analysis: classify type AND detect required domains
-    #    Single LLM call replaces both _llm_classify_task and ComplexityJudge
-    llm_type, llm_domains = await _llm_analyze_task(user_text)
+    # 2. Build prompt context for subtask description (needed before combined LLM call)
+    context_str = ""
+    if pinned_context:
+        context_str = "Pinned context:\n" + "\n---\n".join(pinned_context[:5]) + "\n"
 
+    # 3. Combined LLM task analysis + decomposition (single LLM call replaces two-step process)
     if demo_mode:
         llm_type = "software"
         complexity_domains = {"frontend", "backend", "database", "test"}
-    elif llm_type == "non_software":
-        complexity_domains = {"code"}
-    elif llm_domains:
-        complexity_domains = _ensure_preview_collaboration_domains(user_text, llm_domains)
+        decompose_result = None
     else:
-        # LLM unavailable; fall back to keyword-based ComplexityJudge
-        judge = ComplexityJudge()
-        task_input = TaskInput(description=user_text, context=None)
-        complexity = judge.judge(task_input)
-        complexity_domains = set(complexity.domains)
-        complexity_domains = _ensure_preview_collaboration_domains(user_text, complexity_domains)
-        if not complexity_domains:
+        llm_type, llm_domains, decompose_result = await _llm_analyze_and_decompose(
+            user_text, context_str
+        )
+
+        if llm_type == "non_software":
             complexity_domains = {"code"}
+            decompose_result = None
+        elif llm_domains and decompose_result is not None:
+            complexity_domains = _ensure_preview_collaboration_domains(user_text, llm_domains)
+        else:
+            # LLM unavailable; fall back to keyword-based ComplexityJudge
+            judge = ComplexityJudge()
+            task_input = TaskInput(description=user_text, context=None)
+            complexity = judge.judge(task_input)
+            complexity_domains = set(complexity.domains)
+            complexity_domains = _ensure_preview_collaboration_domains(user_text, complexity_domains)
+            if not complexity_domains:
+                complexity_domains = {"code"}
+            decompose_result = None
 
     # Ensure devops is included when deploy is requested
     if is_deploy_request(user_text):
         complexity_domains.add("devops")
-
-    # 3. Build prompt context for subtask description
-    context_str = ""
-    if pinned_context:
-        context_str = "Pinned context:\n" + "\n---\n".join(pinned_context[:5]) + "\n"
 
     # 4. Create subtasks
     if demo_mode:
         decompose_subtasks = _login_collaboration_demo_subtasks(user_text)
         decompose_result = None
     elif llm_type == "non_software":
-        # Single subtask: let one agent handle everything
         decompose_subtasks = [
             type("_", (), {
                 "id": "task_code",
@@ -1491,77 +1783,29 @@ async def handle_orchestrator_mention(
             })()
         ]
         decompose_result = None
+    elif decompose_result is not None:
+        decompose_subtasks = decompose_result.subtasks
+        for st in decompose_subtasks:
+            st.dependencies = []
+        decompose_subtasks = decompose_result.subtasks
     else:
         decomposer = EnhancedTaskDecomposer()
         task_input = TaskInput(description=user_text, context=context_str or None)
-
-        # Try LLM-driven decomposition first; fall back to keyword-based
-        if llm_type == "software" and llm_domains:
-            from handlers.send_message import load_adapter_for
-            Session2 = get_sessionmaker()
-            async with Session2() as s2:
-                agents = (
-                    await s2.scalars(
-                        select(Agent).where(
-                            Agent.id != ORCHESTRATOR_AGENT_ID,
-                            Agent.adapter_type != "mock",
-                        )
-                    )
-                ).all()
-                llm_agent = None
-                for a in agents:
-                    try:
-                        cfg = json.loads(a.config) if a.config else {}
-                    except (TypeError, ValueError):
-                        cfg = {}
-                    if cfg.get("api_key"):
-                        llm_agent = a
-                        break
-
-            if llm_agent is not None:
-                loaded = await load_adapter_for(llm_agent.id)
-                if loaded is not None:
-                    llm_adapter, _, _agent_meta = loaded
-                    logger.info("Using LLM-driven decomposition for task")
-                    decompose_result = await decomposer.decompose_with_llm(
-                        task=task_input,
-                        domains=complexity_domains,
-                        llm_send_fn=llm_adapter.send,
-                        timeout=30.0,
-                    )
-                else:
-                    decompose_result = decomposer.decompose_with_contract(
-                        task=task_input,
-                        domains=complexity_domains,
-                    )
-            else:
-                decompose_result = decomposer.decompose_with_contract(
-                    task=task_input,
-                    domains=complexity_domains,
-                )
-        else:
-            decompose_result = decomposer.decompose_with_contract(
-                task=task_input,
-                domains=complexity_domains,
-            )
+        decompose_result = decomposer.decompose_with_contract(
+            task=task_input,
+            domains=complexity_domains,
+        )
         decompose_subtasks = decompose_result.subtasks
 
-        all_same = len(set(st.description for st in decompose_subtasks)) <= 1
-        if decompose_subtasks and not all_same:
-            decompose_result = await _resolve_decomposer_deps_with_llm(decomposer, decompose_result)
-        else:
-            logger.info("All subtasks share the same description; parallel execution, skipping LLM dep resolution")
-        decompose_subtasks = decompose_result.subtasks
-
-        if not decompose_subtasks:
-            decompose_subtasks = [
-                type("_", (), {
-                    "id": "fallback_1",
-                    "description": _clean_requirement(user_text),
-                    "domain": next(iter(complexity_domains)),
-                    "dependencies": [],
-                })()
-            ]
+    if not decompose_subtasks:
+        decompose_subtasks = [
+            type("_", (), {
+                "id": "fallback_1",
+                "description": _clean_requirement(user_text),
+                "domain": next(iter(complexity_domains)),
+                "dependencies": [],
+            })()
+        ]
 
     # 5. Create parent & subtask records in DB
     async with Session() as s:
@@ -1793,20 +2037,43 @@ async def handle_orchestrator_mention(
     w4_artifact: dict[str, Any] | None = None
 
     if all_done:
-        summary_text = (
-            "**协作完成**\n\n"
-            f"Orchestrator 已汇总 {len(subtask_records)} 个 Agent 子任务产出：\n"
-        )
+        summary_text = "**协作完成**\n\n"
+
+        if demo_mode:
+            summary_text += (
+                "所有子任务已执行完毕，各 Agent 已完成其领域的工作。\n"
+                "最终交付清单：\n"
+                "1. 前端页面：登录页代码与预览卡片\n"
+                "2. 后端接口：登录 API 设计、请求响应和错误处理\n"
+                "3. 数据库：用户表结构、约束和索引建议\n"
+                "4. 测试验收：核心测试用例和验收清单\n"
+            )
 
         if _should_create_w4_preview(user_text):
             try:
-                html_content, preview_title, preview_source = await _generate_preview_html_with_model(
-                    conversation_id=conversation_id,
-                    user_text=user_text,
-                    conversation_history=conversation_history,
-                    subtask_records=subtask_records,
-                    subtask_messages=subtask_messages,
-                )
+                html_content = None
+                preview_title = ""
+                preview_source = ""
+                async with Session() as s:
+                    subtask_outputs = await _collect_subtask_outputs(s, subtask_messages)
+                for st, _agent_name, _aid, _is_, _dep in subtask_records:
+                    if st.domain == "frontend":
+                        text = subtask_outputs.get(st.id, "")
+                        if text:
+                            html_doc = _extract_html_from_text(text)
+                            if html_doc:
+                                html_content = html_doc
+                                preview_title = _html_title(html_doc, _clean_requirement(user_text))
+                                preview_source = "frontend_subtask_html"
+                                break
+                if not html_content:
+                    html_content, preview_title, preview_source = await _generate_preview_html_with_model(
+                        conversation_id=conversation_id,
+                        user_text=user_text,
+                        conversation_history=conversation_history,
+                        subtask_records=subtask_records,
+                        subtask_messages=subtask_messages,
+                    )
                 async with Session() as s:
                     artifact = await create_service_artifact(
                         s,
@@ -1826,19 +2093,13 @@ async def handle_orchestrator_mention(
                         },
                     )
                     w4_artifact = artifact
-                summary_text += f"\n已生成网页预览产物：`{artifact['id']}` ({preview_source})\n"
+                summary_text += f"\n已生成网页预览产物 (来源: {preview_source})\n"
             except Exception as exc:
                 logger.warning("Failed to create W4 preview artifact: %s", exc)
-        for st, agent_name, aid, is_, deps in subtask_records:
-            summary_text += f"- {agent_name}：{st.title[:80]}\n"
-        if demo_mode:
-            summary_text += (
-                "\n最终交付清单：\n"
-                "1. 前端页面：登录页代码与预览卡片\n"
-                "2. 鍚庣鎺ュ彛锛氱櫥褰?API 璁捐銆佽姹傚搷搴斿拰閿欒澶勭悊\n"
-                "3. 数据库：用户表结构、约束和索引建议\n"
-                "4. 娴嬭瘯楠屾敹锛氭牳蹇冩祴璇曠敤渚嬪拰楠屾敹娓呭崟\n"
-            )
+                summary_text += "\n⚠️ 网页预览生成失败，请检查各 Agent 输出。\n"
+        elif not demo_mode:
+            for st, agent_name, aid, is_, deps in subtask_records:
+                summary_text += f"- {agent_name} 已完成：{st.title[:80]}\n"
         summary_text += f"\n{_conflict_resolution_note(subtask_records)}\n"
 
         async with Session() as s:
@@ -1850,13 +2111,29 @@ async def handle_orchestrator_mention(
         recovered_preview = False
         if _should_create_w4_preview(user_text):
             try:
-                html_content, preview_title, preview_source = await _generate_preview_html_with_model(
-                    conversation_id=conversation_id,
-                    user_text=user_text,
-                    conversation_history=conversation_history,
-                    subtask_records=subtask_records,
-                    subtask_messages=subtask_messages,
-                )
+                html_content = None
+                preview_title = ""
+                preview_source = ""
+                async with Session() as s:
+                    subtask_outputs = await _collect_subtask_outputs(s, subtask_messages)
+                for st, _agent_name, _aid, _is_, _dep in subtask_records:
+                    if st.domain == "frontend" and st.id in completed_ids:
+                        text = subtask_outputs.get(st.id, "")
+                        if text:
+                            html_doc = _extract_html_from_text(text)
+                            if html_doc:
+                                html_content = html_doc
+                                preview_title = _html_title(html_doc, _clean_requirement(user_text))
+                                preview_source = "frontend_subtask_html"
+                                break
+                if not html_content:
+                    html_content, preview_title, preview_source = await _generate_preview_html_with_model(
+                        conversation_id=conversation_id,
+                        user_text=user_text,
+                        conversation_history=conversation_history,
+                        subtask_records=subtask_records,
+                        subtask_messages=subtask_messages,
+                    )
                 async with Session() as s:
                     artifact = await create_service_artifact(
                         s,
@@ -1973,38 +2250,25 @@ async def handle_orchestrator_mention(
             parent = await update_task_status(s, parent_id, "failed",
                 result_summary="Some subtasks were blocked by unresolved dependencies")
 
-    # 9. Send summary as a message in chat
-    summary_msg_id = new_id("msg")
-    async with Session() as s:
-        msg_obj = await create_service_message(
-            s,
-            conversation_id=conversation_id,
-            sender_id=ORCHESTRATOR_AGENT_ID,
-            sender_type="agent",
-            content={"type": "text", "text": summary_text},
-            message_id=summary_msg_id,
-        )
-        summary_msg_dict = message_to_dict(msg_obj)
-
-    await conn.send(event("message_created", message=summary_msg_dict))
-
-    async with Session() as s:
-        await update_message_content(s, summary_msg_id, {"type": "text", "text": summary_text})
-
+    # 9. Append summary to the originating orchestrator message instead of creating a duplicate bubble
+    full_text = process_text + dispatch_intro + "\n\n" + summary_text
     await conn.send(event(
-        "message_done",
-        message_id=summary_msg_id,
+        "stream_chunk",
+        message_id=originating_message_id,
         sender_id=ORCHESTRATOR_AGENT_ID,
         conversation_id=conversation_id,
-        final_content={"type": "text", "text": summary_text},
+        seq=999,
+        delta="\n\n" + summary_text,
     ))
+    async with Session() as s:
+        await update_message_content(s, originating_message_id, {"type": "text", "text": full_text})
 
     await conn.send(event(
         "message_done",
         message_id=originating_message_id,
         sender_id=ORCHESTRATOR_AGENT_ID,
         conversation_id=conversation_id,
-        final_content={"type": "text", "text": process_text},
+        final_content={"type": "text", "text": full_text},
     ))
     animation_bus.agent_status(
         conversation_id=conversation_id,
@@ -2066,6 +2330,87 @@ async def handle_orchestrator_mention(
                 parent_id, len(subtask_records), len(completed_ids), len(failed_ids))
 
 
+_DOMAIN_GUARDS = {
+    "frontend": (
+        "IMPORTANT: You are the FRONTEND specialist ONLY.\n"
+        "Do: HTML/CSS/JS, UI/UX, responsive layout, component design, animations, visual polish.\n"
+        "Do NOT: API design, database schemas, SQL, test cases, deployment config, backend logic.\n"
+        "\n[ONLY OUTPUT: HTML PREVIEW via tool_call]\n"
+        "Reply ONLY with ```tool_call block:\n"
+        "```tool_call\\n{\"name\":\"create_artifact\",\"arguments\":{\"kind\":\"preview\",\"mime_type\":\"text/html\",\"title\":\"...\",\"content\":\"<!doctype html>\\\\n<html lang=\\\\\"zh-CN\\\\\">...\"}}\\n```\n"
+        "\n🔴 HTML content MUST have:\n"
+        "- Complete <!doctype html>, <html>, <head>, <body>, </html> tags\n"
+        "- All CSS inside <style>, all JS inside <script>\n"
+        "- Images: https://picsum.photos/seed/WORD/WIDTH/HEIGHT\n"
+        "- 1500+ lines, CSS 500+ lines\n"
+        "- @keyframes + IntersectionObserver + cubic-bezier\n"
+        "- Grid+Flexbox, CSS variables, modern design\n"
+        "- 4+ JS interactions (hamburger, back-to-top, carousel, typewriter)\n"
+        "- Use \\\\n for line breaks inside JSON content string"
+    ),
+    "backend": (
+        "IMPORTANT: You are the BACKEND specialist ONLY.\n"
+        "Do: API design, route handlers, business logic, middleware, auth, service architecture.\n"
+        "Do NOT: HTML pages, CSS styling, frontend UI, database schema design, test writing.\n"
+        "If the user request mentions frontend/UI/database/testing, IGNORE those parts completely.\n"
+        "Output ONLY backend design and code. Nothing else."
+    ),
+    "database": (
+        "IMPORTANT: You are the DATABASE specialist ONLY.\n"
+        "Do: Table schemas, SQL queries, indexes, migrations, data modeling, ORM mapping.\n"
+        "Do NOT: HTML/CSS/JS, API route design, frontend code, test case generation.\n"
+        "\n[OUTPUT: TEXT + SQL CODE BLOCKS]\n"
+        "Output directly in chat as markdown. Do NOT call create_artifact.\n"
+        "Use ```sql code blocks for table DDL. Explain design reasoning first."
+    ),
+    "test": (
+        "IMPORTANT: You are the TESTING specialist ONLY.\n"
+        "Do: Test cases, test plans, QA checklists, acceptance criteria, testing strategy.\n"
+        "Do NOT: Write application code (HTML/CSS/JS/Python), design APIs, create database schemas.\n"
+        "\n[🔴 OUTPUT RULES — SINGLE FILE ONLY]\n"
+        "1. Call create_artifact EXACTLY ONCE. Merge ALL content into ONE .md file.\n"
+        "2. MUST use ```tool_call\\n{\"name\":\"create_artifact\",\"arguments\":{...}}\\n``` block.\n"
+        "3. NEVER output raw JSON as plain text — it must be inside ```tool_call block.\n"
+        "4. kind='file', mime_type='text/markdown', file_name='test_plan.md'.\n"
+    ),
+    "docs": (
+        "IMPORTANT: You are the DOCUMENTATION specialist ONLY.\n"
+        "Do: README, technical docs, API documentation, architecture overviews.\n"
+        "Do NOT: Write implementation code, design databases, deploy infrastructure.\n"
+        "\n[🔴 OUTPUT RULES — SINGLE FILE ONLY]\n"
+        "1. Call create_artifact EXACTLY ONCE. Merge ALL content into ONE .md file.\n"
+        "2. MUST use ```tool_call\\n{\"name\":\"create_artifact\",\"arguments\":{...}}\\n``` block.\n"
+        "3. NEVER output raw JSON as plain text — it must be inside ```tool_call block.\n"
+        "4. kind='file', mime_type='text/markdown', file_name='README.md' or 'doc_xxx.md'.\n"
+    ),
+    "product": (
+        "IMPORTANT: You are the PRODUCT / PLANNING specialist ONLY.\n"
+        "Do: PRD writing, user stories, feature planning, competitive analysis, wireframes.\n"
+        "Do NOT: Write HTML/CSS/JS, design APIs, database schemas, test cases.\n"
+        "\n[OUTPUT: TEXT + STRUCTURED MARKDOWN]\n"
+        "Output directly in chat as markdown. Do NOT call create_artifact.\n"
+        "Use headers, lists, and ```mermaid code blocks. All content inline."
+    ),
+    "devops": (
+        "IMPORTANT: You are the DEVOPS specialist ONLY.\n"
+        "Do: CI/CD pipelines, Docker configs, deployment scripts, build tooling.\n"
+        "Do NOT: Write application code (HTML/CSS/JS/Python), design UI, create test cases.\n"
+        "Output ONLY devops/deployment artifacts. Nothing else."
+    ),
+    "code": (
+        "You are a general coding assistant. Produce the best output for the given task."
+    ),
+}
+
+
+def _extract_domain_instructions(domain: str, description: str) -> str:
+    domain_lower = (domain or "").lower().strip()
+    guard = _DOMAIN_GUARDS.get(domain_lower, "")
+    if not guard:
+        return f"Focus exclusively on {domain_lower or 'the assigned'} domain. Description: {description[:200]}"
+    return guard
+
+
 async def _dispatch_subtask_with_result(
     conn: Connection,
     st: Any,
@@ -2106,10 +2451,11 @@ async def _dispatch_subtask_with_result(
 
     agent_prompt = (
         f"[Orchestrator Subtask Assignment]\n\n"
-        f"**Original Input**: {user_text}\n"
-        f"**Task**: {st.title}\n"
-        f"**Domain**: {st.domain}\n"
-        f"**Description**: {st.description}\n"
+        f"**Original Request**: {user_text}\n"
+        f"**Your Subtask**: {st.title}\n"
+        f"**Your Domain**: {st.domain}\n"
+        f"**What You Should Do**: {_extract_domain_instructions(st.domain, st.description)}\n"
+        f"**Full Description**: {st.description}\n"
         f"{pinned_block}"
     )
 
@@ -2147,7 +2493,7 @@ async def _dispatch_subtask_with_result(
         raise RuntimeError(f"Agent {agent_id} not available")
 
     adapter, _agent_name, _agent_meta = loaded
-    is_frontend_preview = False
+    is_frontend_preview = _is_frontend_preview_subtask(st, user_text)
     # Setup workspace + ToolRegistry
     # All agents in the same conversation share the same workspace directory
     _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -2206,7 +2552,11 @@ async def _dispatch_subtask_with_result(
         messages = [{"role": "user", "content": agent_prompt}]
         has_tools = bool(registry.list_tools())
         if has_tools and ReActEngine.should_use_react(adapter, agent_prompt):
-            engine = ReActEngine(registry=registry, max_steps=10, llm_timeout=180.0)
+            _DOMAIN_STEPS_MAP = {"frontend": 6, "backend": 5, "database": 4, "test": 3, "docs": 3, "devops": 4, "code": 6}
+            _DOMAIN_TIMEOUT_MAP = {"frontend": 600.0, "backend": 600.0, "database": 600.0, "test": 600.0, "docs": 600.0, "devops": 600.0, "code": 600.0}
+            react_max_steps = _DOMAIN_STEPS_MAP.get(domain, 4)
+            react_timeout = _DOMAIN_TIMEOUT_MAP.get(domain, 90.0)
+            engine = ReActEngine(registry=registry, max_steps=react_max_steps, llm_timeout=react_timeout)
             tool_schemas = registry.get_openai_schemas()
             chunk_source = engine.run(adapter, messages, tools=tool_schemas)
         else:
@@ -2395,6 +2745,16 @@ async def _dispatch_subtask_with_result(
         # Check for artifacts created via tool calls (e.g. create_artifact)
         tool_artifacts = registry.pop_pending_artifacts() if registry else []
 
+        # If NO tool artifacts were created but the LLM output raw create_artifact
+        # JSON (common with DeepSeek non-native-FC), recover and create artifacts
+        if not tool_artifacts and raw_text and "create_artifact" in raw_text:
+            cleaned_text, recovered = await _recover_raw_artifact_json(
+                raw_text, conversation_id, agent_id, conn
+            )
+            if recovered:
+                raw_text = cleaned_text
+                tool_artifacts = recovered
+
         # When tool artifacts exist, the raw text often contains leaked tool-call
         # syntax from non-native-FC models (e.g. DeepSeek). Replace with a clean
         # summary so the chat shows the artifact preview card instead of junk text.
@@ -2490,32 +2850,26 @@ async def _dispatch_subtask_with_result(
                         created_by=agent_id,
                         meta={"source": "subtask_html", "language": "html", "task_id": st.id},
                     )
-                    # Create a separate preview message instead of overwriting the text message
-                    preview_msg_id = new_id("msg")
+                    # Replace original message content with preview card (single reply)
                     preview_content = _preview_message_content(artifact_payload, html_doc)
-                    preview_msg = await create_service_message(
-                        s,
-                        conversation_id=conversation_id,
-                        sender_id=agent_id,
-                        sender_type="agent",
-                        content=preview_content,
-                        message_id=preview_msg_id,
-                        artifact_id=artifact_payload["id"],
-                    )
-                    preview_msg_dict = message_to_dict(preview_msg)
-                await conn.send(event("message_created", message=preview_msg_dict))
+                    await update_message_content(s, msg_id, preview_content)
+                    m = await s.scalar(select(MessageModel).where(MessageModel.id == msg_id))
+                    if m:
+                        m.artifact_id = artifact_payload["id"]
+                        await s.commit()
+                    final_content = preview_content
                 await conn.send(event(
                     "artifact_ready",
                     conversation_id=conversation_id,
                     artifact=artifact_payload,
-                    message_id=preview_msg_id,
+                    message_id=msg_id,
                 ))
                 await conn.send(event(
                     "message_done",
-                    message_id=preview_msg_id,
+                    message_id=msg_id,
                     sender_id=agent_id,
                     conversation_id=conversation_id,
-                    final_content=preview_content,
+                    final_content=final_content,
                 ))
                 display_text = f"Generated preview HTML: {artifact_payload['title']}"
 

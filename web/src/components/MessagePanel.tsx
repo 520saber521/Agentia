@@ -28,6 +28,12 @@ export function MessagePanel({ onEditArtifact }: Props) {
     : [];
 
   const currentConv = conversations.find((c) => c.id === currentConvId);
+
+  const typingAgentIds = Object.keys(agentTyping);
+  const typingAgents = typingAgentIds
+    .map((id) => agents.find((a) => a.id === id))
+    .filter((a): a is NonNullable<typeof a> => a != null);
+
   const memberAgents = (currentConv?.members ?? [])
     .filter((m) => m.member_type === "agent")
     .map((m) => agents.find((a) => a.id === m.member_id))
@@ -112,7 +118,7 @@ export function MessagePanel({ onEditArtifact }: Props) {
 
       {showGraph && (
         <div className="shrink-0 border-b border-border bg-bg/80">
-          <AgentGraph height={220} />
+          <AgentGraph height={180} />
         </div>
       )}
 
@@ -139,9 +145,24 @@ export function MessagePanel({ onEditArtifact }: Props) {
             <CollaborationProgressCard tasks={currentTasks} />
           </>
         )}
-        {agentTyping && (
-          <div className="animate-fade-in px-3 text-xs text-muted">
-            Agent 正在思考...
+        {typingAgents.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-3">
+            {typingAgents.map((agent) => (
+              <div
+                key={agent.id}
+                className="animate-fade-in flex items-center gap-1.5 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-xs text-muted"
+              >
+                <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-[10px] text-accent">
+                  {agent.avatar || agent.name.charAt(0).toUpperCase()}
+                </span>
+                <span className="max-w-[12ch] truncate">{agent.name}</span>
+                <span className="inline-flex gap-0.5">
+                  <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:0ms]" />
+                  <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:150ms]" />
+                  <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:300ms]" />
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </div>

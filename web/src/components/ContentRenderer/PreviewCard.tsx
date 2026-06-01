@@ -48,26 +48,25 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
 
   const isHtml = mimeType.toLowerCase().includes("html");
   const isImage = mimeType.startsWith("image/");
-  const resolvedPreviewUrl = previewUrl || (artifactId ? `/preview/${encodeURIComponent(artifactId)}` : "");
   const sourceUrl = url || (artifactId ? `/api/artifacts/${encodeURIComponent(artifactId)}/content` : "");
-  const html = content || fallbackHtml(title);
+  const resolvedPreviewUrl = previewUrl || (artifactId ? `/preview/${encodeURIComponent(artifactId)}` : sourceUrl);
   const highlighted = useMemo(() => highlightHtml(content || ""), [content]);
 
   const loadContent = useCallback(() => {
-    if (!artifactId || !isHtml || content !== null || loading) return;
+    if (!artifactId || content !== null || loading) return;
     setLoading(true);
     setError(null);
     fetchArtifactContent(artifactId)
-      .then((value) => setContent(value.trim() || fallbackHtml(title)))
+      .then((value) => setContent(value.trim() || ""))
       .catch((err) => {
-        setContent(fallbackHtml(title));
-        setError(err instanceof Error ? err.message : "预览内容加载失败");
+        setContent("");
+        setError(err instanceof Error ? err.message : "源码加载失败");
       })
       .finally(() => setLoading(false));
-  }, [artifactId, content, isHtml, loading, title]);
+  }, [artifactId, content, loading]);
 
   useEffect(() => {
-    if (expanded || fullscreen || mode === "code") loadContent();
+    if ((expanded || fullscreen) && mode === "code") loadContent();
   }, [expanded, fullscreen, mode, loadContent]);
 
   function copyCode() {
@@ -85,16 +84,16 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
 
   const previewFrame = (
     <div className="relative h-full min-h-[420px] bg-bg">
-      {loading && (
+      {loading && mode === "code" && (
         <div className="absolute inset-0 z-10 grid place-items-center bg-bg/80">
-          <div className="rounded-full border border-border bg-panel px-4 py-2 text-xs text-muted">加载预览中...</div>
+          <div className="rounded-full border border-border bg-panel px-4 py-2 text-xs text-muted">加载源码中...</div>
         </div>
       )}
       {isImage ? (
         <div className="grid h-full place-items-center p-4">
           <img src={sourceUrl} alt={title} className="max-h-full max-w-full rounded object-contain" />
         </div>
-      ) : mode === "code" && isHtml ? (
+      ) : mode === "code" ? (
         <pre
           className="h-full overflow-auto p-4 text-[11px] leading-relaxed text-fg"
           dangerouslySetInnerHTML={{ __html: highlighted || "暂无源码" }}
@@ -102,8 +101,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
       ) : (
         <iframe
           title={title}
-          src={isHtml ? undefined : resolvedPreviewUrl || sourceUrl}
-          srcDoc={isHtml ? html : undefined}
+          src={resolvedPreviewUrl}
           className="h-full w-full border-0 bg-white"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
         />

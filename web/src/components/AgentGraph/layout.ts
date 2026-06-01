@@ -59,16 +59,16 @@ export function computeTreeLayout(
     dfs(root, 0)
   }
 
-  const paddingX = 78
-  const paddingY = 54
+  const paddingX = 56
+  const paddingY = 38
   const width = Math.max(320, viewport.width)
   const height = Math.max(180, viewport.height)
   const leafCount = Math.max(1, leafIndex)
   const depthCount = Math.max(1, maxDepth + 1)
   const xSpan = Math.max(1, width - paddingX * 2)
   const ySpan = Math.max(1, height - paddingY * 2)
-  const xStep = leafCount === 1 ? 0 : xSpan / (leafCount - 1)
-  const yStep = depthCount === 1 ? 0 : ySpan / (depthCount - 1)
+  const xStep = leafCount === 1 ? 0 : (xSpan / (leafCount - 1)) * 0.58
+  const yStep = depthCount === 1 ? 0 : (ySpan / (depthCount - 1)) * 0.55
   const result: LayoutNode[] = []
 
   for (const node of nodes) {
@@ -101,6 +101,31 @@ export function computeTreeLayout(
     if (off) {
       node.x += off.dx
       node.y += off.dy
+    }
+  }
+
+  const childNodes = result.filter((n) => n.parentId)
+
+  if (childNodes.length === 1) {
+    const rootNode = result.find((n) => !n.parentId)
+    const childNode = childNodes[0]
+    const centerY = paddingY + (ySpan * 0.55) / 2
+    const gap = 80
+    const centerX = width / 2
+    if (rootNode) {
+      rootNode.x = centerX - gap / 2
+      rootNode.y = centerY
+    }
+    childNode.x = centerX + gap / 2
+    childNode.y = centerY
+  } else if (childNodes.length > 1 && childNodes.length <= 4) {
+    const minX = Math.min(...childNodes.map((n) => n.x))
+    const maxX = Math.max(...childNodes.map((n) => n.x))
+    const clusterCenter = (minX + maxX) / 2
+    const viewportCenter = width / 2
+    const offsetX = viewportCenter - clusterCenter
+    for (const node of result) {
+      node.x += offsetX
     }
   }
 

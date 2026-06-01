@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -26,6 +27,300 @@ def _ensure_dir(conv_id: str, artifact_id: str, version: int) -> Path:
     p = ARTIFACTS_DIR / conv_id / artifact_id / f"v{version}"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _format_css(text: str) -> str:
+    """Break single-line CSS into multi-line with proper indentation."""
+    result = []
+    i = 0
+    n = len(text)
+    buf = ""
+    brace_depth = 0
+    in_comment = False
+    while i < n:
+        ch = text[i]
+        if in_comment:
+            buf += ch
+            if ch == "*" and i + 1 < n and text[i + 1] == "/":
+                buf += text[i + 1]
+                i += 2
+                in_comment = False
+                continue
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            in_comment = True
+            buf += ch
+            i += 1
+            continue
+        if ch == "{":
+            buf = buf.rstrip()
+            if buf:
+                result.append("  " * brace_depth + buf)
+            result.append("  " * brace_depth + "{")
+            brace_depth += 1
+            buf = ""
+            i += 1
+            continue
+        if ch == "}":
+            buf = buf.rstrip()
+            if buf:
+                result.append("  " * brace_depth + buf + ";")
+            brace_depth = max(0, brace_depth - 1)
+            result.append("  " * brace_depth + "}")
+            buf = ""
+            i += 1
+            continue
+        if ch == ";":
+            buf = buf.strip()
+            if buf:
+                result.append("  " * brace_depth + buf + ";")
+            buf = ""
+            i += 1
+            continue
+        if ch == "\n" or ch == "\r":
+            buf = buf.strip()
+            if buf:
+                result.append("  " * brace_depth + buf)
+            buf = ""
+            i += 1
+            continue
+        buf += ch
+        i += 1
+    buf = buf.strip()
+    if buf:
+        result.append(buf)
+    return "\n".join(result)
+
+
+def _format_js(text: str) -> str:
+    """Break single-line JS into multi-line with basic formatting."""
+    result = []
+    i = 0
+    n = len(text)
+    buf = ""
+    in_string = False
+    string_char = ""
+    in_tpl = False
+    in_comment_line = False
+    in_comment_block = False
+    brace_depth = 0
+
+    while i < n:
+        ch = text[i]
+        if in_comment_line:
+            buf += ch
+            if ch == "\n":
+                in_comment_line = False
+            i += 1
+            continue
+        if in_comment_block:
+            buf += ch
+            if ch == "*" and i + 1 < n and text[i + 1] == "/":
+                buf += text[i + 1]
+                i += 2
+                in_comment_block = False
+                continue
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n:
+            if text[i + 1] == "/":
+                in_comment_line = True
+                buf += ch
+                i += 1
+                continue
+            if text[i + 1] == "*":
+                in_comment_block = True
+                buf += ch
+                i += 1
+                continue
+        if ch == "`" and not in_string:
+            in_tpl = not in_tpl
+            buf += ch
+            i += 1
+            continue
+        if (ch == '"' or ch == "'") and not in_tpl:
+            if not in_string:
+                in_string = True
+                string_char = ch
+            elif ch == string_char and (i == 0 or text[i - 1] != "\\"):
+                in_string = False
+            buf += ch
+            i += 1
+            continue
+        if in_string or in_tpl:
+            buf += ch
+            i += 1
+            continue
+        if ch == "{":
+            buf = buf.rstrip()
+            if buf:
+                result.append("  " * brace_depth + buf)
+            result.append("  " * brace_depth + "{")
+            brace_depth += 1
+            buf = ""
+            i += 1
+            continue
+        if ch == "}":
+            buf = buf.rstrip()
+            if buf:
+                result.append("  " * brace_depth + buf)
+            brace_depth -= 1
+            result.append("  " * brace_depth + "}")
+            buf = ""
+            i += 1
+            continue
+        if ch == ";":
+            buf = buf.rstrip()
+            if buf:
+                result.append("  " * brace_depth + buf + ";")
+            buf = ""
+            i += 1
+            continue
+        if ch == "\n" or ch == "\r":
+            buf = buf.strip()
+            if buf:
+                result.append("  " * brace_depth + buf)
+            buf = ""
+            i += 1
+            continue
+        buf += ch
+        i += 1
+    buf = buf.strip()
+    if buf:
+        result.append(buf)
+    return "\n".join(result)
+
+
+def _format_html_content(text: str) -> str:
+    if len(text) < 200:
+        return text
+    lower = text.lower()
+    if "<!doctype html" not in lower and "<html" not in lower:
+        return text
+
+    NO_INDENT = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+    INDENT_TAGS = {
+        "html", "head", "body", "div", "section", "article", "header",
+        "footer", "nav", "main", "aside", "ul", "ol", "li", "table",
+        "thead", "tbody", "tr", "th", "td", "form", "fieldset", "select",
+        "option", "details", "summary", "figure", "figcaption", "blockquote",
+        "pre", "code", "video", "audio", "canvas", "svg", "a", "p",
+        "h1", "h2", "h3", "h4", "h5", "h6", "span", "button", "label",
+        "iframe", "dl", "dt", "dd", "menu", "template", "dialog",
+    }
+    result = []
+    indent = 0
+    INDENT_SIZE = 2
+    i = 0
+    n = len(text)
+    in_style = False
+    in_script = False
+    in_pre = False
+    style_buf = ""
+    script_buf = ""
+    line_buffer = ""
+
+    while i < n:
+        ch = text[i]
+        if ch == "<":
+            rest = text[i:]
+            if rest.startswith("<!--"):
+                end = text.find("-->", i)
+                if end == -1:
+                    result.append(text[i:])
+                    break
+                if line_buffer.strip():
+                    result.append(" " * (indent * INDENT_SIZE) + line_buffer.rstrip())
+                result.append(" " * (indent * INDENT_SIZE) + text[i:end + 3])
+                line_buffer = ""
+                i = end + 3
+                continue
+            if rest.startswith("<!doctype") or rest.startswith("<!DOCTYPE"):
+                end = text.find(">", i)
+                if end == -1:
+                    result.append(text[i:])
+                    break
+                result.append(text[i:end + 1])
+                i = end + 1
+                continue
+            if rest.startswith("</"):
+                end = text.find(">", i)
+                if end == -1:
+                    result.append(text[i:])
+                    break
+                tag = text[i:end + 1]
+                tag_name = re.match(r'</(\w+)', tag)
+                name = tag_name.group(1).lower() if tag_name else ""
+                if name == "style":
+                    in_style = False
+                    formatted = _format_css(style_buf)
+                    for line in formatted.split("\n"):
+                        result.append(" " * (indent * INDENT_SIZE) + line)
+                    style_buf = ""
+                elif name == "script":
+                    in_script = False
+                    formatted = _format_js(script_buf)
+                    for line in formatted.split("\n"):
+                        result.append(" " * (indent * INDENT_SIZE) + line)
+                    script_buf = ""
+                elif name == "pre":
+                    in_pre = False
+                if name in INDENT_TAGS and indent > 0:
+                    indent -= 1
+                if line_buffer.strip():
+                    result.append(" " * (indent * INDENT_SIZE) + line_buffer.rstrip())
+                result.append(" " * (indent * INDENT_SIZE) + tag)
+                line_buffer = ""
+                i = end + 1
+                continue
+            end = text.find(">", i)
+            if end == -1:
+                result.append(text[i:])
+                break
+            tag = text[i:end + 1]
+            is_self_closing = tag.endswith("/>")
+            tag_match = re.match(r'<(\w+)', tag)
+            name = tag_match.group(1).lower() if tag_match else ""
+            if name == "style":
+                in_style = True
+                style_buf = ""
+            elif name == "script":
+                in_script = True
+                script_buf = ""
+            elif name == "pre":
+                in_pre = True
+            if line_buffer.strip():
+                result.append(" " * (indent * INDENT_SIZE) + line_buffer.rstrip())
+            if is_self_closing or name in NO_INDENT:
+                result.append(" " * (indent * INDENT_SIZE) + tag)
+            else:
+                result.append(" " * (indent * INDENT_SIZE) + tag)
+                if name in INDENT_TAGS:
+                    indent += 1
+            line_buffer = ""
+            i = end + 1
+        elif in_style:
+            style_buf += ch
+            i += 1
+        elif in_script:
+            script_buf += ch
+            i += 1
+        elif not in_pre and ch == "\n":
+            if line_buffer.strip():
+                result.append(" " * (indent * INDENT_SIZE) + line_buffer.rstrip())
+            line_buffer = ""
+            i += 1
+        else:
+            line_buffer += ch
+            i += 1
+
+    if line_buffer.strip():
+        result.append(" " * (indent * INDENT_SIZE) + line_buffer.rstrip())
+    return "\n".join(line for line in result if line is not None)
 
 
 def artifact_to_dict(a: Artifact) -> dict[str, Any]:
@@ -83,6 +378,10 @@ async def create_artifact(
         storage_file = dir_path / file_name
     else:
         storage_file = dir_path / "content"
+
+    if "html" in (mime_type or "").lower() and content:
+        content = content.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"").replace("\\'", "'")
+
     storage_file.write_text(content, encoding="utf-8")
 
     storage_path = f"{conversation_id}/{artifact_id}/v{version}/{storage_file.name}"

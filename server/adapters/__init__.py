@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Type
 
+import logging
+
 from .base import (
     AgentAdapter,
     Chunk,
@@ -23,18 +25,24 @@ from .base import (
     ChunkToolCall,
     ChunkUsage,
 )
-from .claude_agent_sdk import ClaudeAgentSDKAdapter
 from .claude_code import ClaudeCodeAdapter
 from .codex import CodexAdapter, OpenCodeAdapter
 from .mock import MockAdapter
 
+_logger = logging.getLogger(__name__)
+
 ADAPTER_REGISTRY: dict[str, Type[AgentAdapter]] = {
     "mock": MockAdapter,
     "claude_code": ClaudeCodeAdapter,
-    "claude_agent_sdk": ClaudeAgentSDKAdapter,
     "codex": CodexAdapter,
     "opencode": OpenCodeAdapter,
 }
+
+try:
+    from .claude_agent_sdk import ClaudeAgentSDKAdapter
+    ADAPTER_REGISTRY["claude_agent_sdk"] = ClaudeAgentSDKAdapter
+except ImportError:
+    _logger.warning("claude_agent_sdk not installed; 'claude_agent_sdk' adapter disabled")
 
 
 def build_adapter(adapter_type: str, config: dict[str, Any] | None = None) -> AgentAdapter:
@@ -67,10 +75,12 @@ __all__ = [
     "ChunkText",
     "ChunkToolCall",
     "ChunkUsage",
-    "ClaudeAgentSDKAdapter",
     "ClaudeCodeAdapter",
     "CodexAdapter",
     "OpenCodeAdapter",
     "MockAdapter",
     "build_adapter",
 ]
+
+if "ClaudeAgentSDKAdapter" in ADAPTER_REGISTRY:
+    __all__.insert(8, "ClaudeAgentSDKAdapter")  # after ChunkUsage

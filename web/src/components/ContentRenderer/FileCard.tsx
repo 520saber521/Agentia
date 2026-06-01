@@ -75,6 +75,48 @@ const isCodeLike = (mime: string) =>
 
 const PREVIEW_CHAR_LIMIT = 1200;
 
+function unescapeGeneratedText(text: string): string {
+  return text
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
+}
+
+function extractWrappedContent(text: string): string {
+  let trimmed = text.trim();
+  if (trimmed.startsWith("```tool_call")) {
+    trimmed = trimmed.replace(/^```tool_call\s*/, "").replace(/\s*```$/, "").trim();
+  }
+  if (!trimmed.startsWith("{")) return unescapeGeneratedText(text);
+
+  try {
+    const parsed = JSON.parse(trimmed);
+
+    function dig(value: unknown): string | null {
+      if (typeof value === "string") return value.trim() ? value : null;
+      if (!value || typeof value !== "object") return null;
+      const obj = value as Record<string, unknown>;
+      for (const key of ["content", "text", "result"]) {
+        if (typeof obj[key] === "string" && String(obj[key]).trim()) return String(obj[key]);
+      }
+      for (const key of ["arguments", "args", "parameters", "input", "data", "payload"]) {
+        const inner = dig(obj[key]);
+        if (inner) return inner;
+      }
+      return null;
+    }
+
+    return unescapeGeneratedText(dig(parsed) ?? text);
+  } catch {
+    return unescapeGeneratedText(text);
+  }
+}
+
 export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
   const [imgError, setImgError] = useState(false);
   const [textContent, setTextContent] = useState<string | null>(null);
@@ -92,7 +134,10 @@ export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
       .then(async (res) => {
         if (!res.ok) throw new Error("fetch failed");
         const data = await res.json();
-        if (!cancelled) setTextContent(typeof data.content === "string" ? data.content : String(data.content ?? ""));
+        if (!cancelled) {
+          const raw = typeof data.content === "string" ? data.content : String(data.content ?? "");
+          setTextContent(extractWrappedContent(raw));
+        }
       })
       .catch(() => {
         if (!cancelled) setTextError(true);

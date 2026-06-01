@@ -99,7 +99,7 @@ export function ConversationListPanel() {
   }
 
   return (
-    <aside className="flex min-h-0 w-80 min-w-80 max-w-80 shrink-0 flex-col overflow-hidden border-r border-border bg-panel">
+    <aside className="flex min-h-0 w-full min-w-0 flex-col overflow-hidden border-r border-border bg-panel">
       <div className="shrink-0 border-b border-border px-4 py-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted">Conversations</h2>
