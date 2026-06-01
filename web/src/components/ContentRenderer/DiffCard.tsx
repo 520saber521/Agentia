@@ -101,10 +101,10 @@ function SideBySideView({ before, after }: { before: string; after: string }) {
   }
 
   return (
-    <div className="flex text-[11px] font-mono leading-relaxed">
+    <div className="flex text-3xs font-mono leading-relaxed">
       {/* Before */}
       <div className="flex-1 min-w-0">
-        <div className="sticky top-0 flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium text-danger bg-bg border-b border-border/50">
+        <div className="sticky top-0 flex items-center gap-1 px-3 py-1.5 text-4xs font-medium text-danger bg-bg border-b border-border/50">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12" /></svg>
           原始
         </div>
@@ -132,7 +132,7 @@ function SideBySideView({ before, after }: { before: string; after: string }) {
       </div>
       {/* After */}
       <div className="flex-1 min-w-0 border-l border-border/50">
-        <div className="sticky top-0 flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium text-success bg-bg border-b border-border/50">
+        <div className="sticky top-0 flex items-center gap-1 px-3 py-1.5 text-4xs font-medium text-success bg-bg border-b border-border/50">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
           修改后
         </div>
@@ -170,7 +170,7 @@ function UnifiedDiffView({ diff }: { diff: string }) {
   if (hunks.length === 0) {
     // Fall back to raw line-by-line if no @@ headers found
     return (
-      <pre className="p-3 text-[11px] font-mono leading-relaxed whitespace-pre min-w-max">
+      <pre className="p-3 text-3xs font-mono leading-relaxed whitespace-pre min-w-max">
         {diff.split("\n").map((line, i) => {
           const isAdd = line.startsWith("+") && !line.startsWith("+++");
           const isDel = line.startsWith("-") && !line.startsWith("---");
@@ -195,11 +195,11 @@ function UnifiedDiffView({ diff }: { diff: string }) {
   }
 
   return (
-    <div className="text-[11px] font-mono leading-relaxed">
+    <div className="text-3xs font-mono leading-relaxed">
       {hunks.map((hunk, hi) => (
         <div key={hi}>
           {/* Hunk header */}
-          <div className="sticky top-0 flex items-center gap-2 px-3 py-1.5 bg-info/8 border-y border-info/15 text-info text-[10px] font-medium">
+          <div className="sticky top-0 flex items-center gap-2 px-3 py-1.5 bg-info/8 border-y border-info/15 text-info text-4xs font-medium">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M4 6h16M4 12h16M4 18h12" />
             </svg>
@@ -296,7 +296,7 @@ export function DiffCard({
   };
 
   return (
-    <div className="rounded-xl border border-border bg-panel overflow-hidden my-2 shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
+    <div className="rounded-xl border border-border bg-panel overflow-hidden my-2 shadow-xl">
       {/* Header bar — Claude Code style */}
       <div className="flex items-center justify-between px-3.5 py-2.5 bg-bg/30 border-b border-border gap-3">
         {/* Left: file icon + name + version badge */}
@@ -314,12 +314,12 @@ export function DiffCard({
               <span className="text-sm font-medium text-fg truncate leading-tight">
                 {fileName ?? "Diff 变更"}
               </span>
-              <span className="shrink-0 rounded-md border border-border/60 px-1.5 py-0.5 text-[10px] text-muted">
+              <span className="shrink-0 rounded-md border border-border/60 px-1.5 py-0.5 text-4xs text-muted">
                 diff
               </span>
             </div>
             {summary && (
-              <div className="text-[10px] text-muted mt-0.5 flex items-center gap-2">
+              <div className="text-4xs text-muted mt-0.5 flex items-center gap-2">
                 {summary}
                 {added + removed > 0 && (
                   <span className="inline-flex items-center gap-1">
@@ -331,7 +331,7 @@ export function DiffCard({
               </div>
             )}
             {!summary && added + removed > 0 && (
-              <div className="text-[10px] text-muted mt-0.5 flex items-center gap-1">
+              <div className="text-4xs text-muted mt-0.5 flex items-center gap-1">
                 <span className="text-success font-medium">+{added}</span>
                 <span className="text-muted/40">/</span>
                 <span className="text-danger font-medium">-{removed}</span>
@@ -346,7 +346,7 @@ export function DiffCard({
             <button
               type="button"
               onClick={() => setViewMode(viewMode === "split" ? "unified" : "split")}
-              className="rounded-md border border-border/60 px-2 py-1 text-[11px] text-muted hover:text-fg hover:bg-bg transition-colors"
+              className="rounded-md border border-border/60 px-2 py-1 text-3xs text-muted hover:text-fg hover:bg-bg transition-colors"
               title={viewMode === "split" ? "统一视图" : "分栏视图"}
             >
               {viewMode === "split" ? "统一" : "分栏"}
@@ -354,7 +354,7 @@ export function DiffCard({
           )}
 
           {status === "applied" ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-success/12 border border-success/25 px-2.5 py-1 text-[11px] text-success font-medium">
+            <span className="inline-flex items-center gap-1 rounded-md bg-success/12 border border-success/25 px-2.5 py-1 text-3xs text-success font-medium">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
@@ -364,7 +364,7 @@ export function DiffCard({
             <button
               type="button"
               onClick={handleApply}
-              className="rounded-md bg-accent px-2.5 py-1 text-[11px] text-white hover:bg-accent-hover transition-colors"
+              className="rounded-lg bg-accent px-2.5 py-1 text-3xs text-white hover:bg-accent-hover transition-colors"
             >
               重试
             </button>
@@ -374,7 +374,7 @@ export function DiffCard({
               disabled={!canApply}
               onClick={handleApply}
               title={!hasBaseArtifact ? "需要 base_artifact_id 才能应用" : undefined}
-              className={`rounded-md px-3 py-1 text-[11px] font-medium transition-all flex items-center gap-1 ${
+              className={`rounded-lg px-3 py-1 text-3xs font-medium transition-all flex items-center gap-1 ${
                 status === "applying"
                   ? "bg-accent/60 text-white cursor-wait"
                   : hasBaseArtifact
@@ -402,7 +402,7 @@ export function DiffCard({
 
       {/* Error message */}
       {status === "error" && error && (
-        <div className="px-3.5 py-2 text-[11px] text-danger bg-danger/6 border-b border-danger/15 flex items-center gap-2">
+        <div className="px-3.5 py-2 text-3xs text-danger bg-danger/6 border-b border-danger/15 flex items-center gap-2">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
             <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
           </svg>

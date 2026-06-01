@@ -107,14 +107,14 @@ export function ConversationListPanel() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => void createLoginDemoConversation()}
-              className="rounded-md border border-accent/50 px-2.5 py-1.5 text-xs text-accent transition hover:bg-accent/10"
+              className="rounded-lg border border-accent/50 px-2.5 py-1.5 text-xs text-accent transition hover:bg-accent/10"
               title="创建登录页多 Agent 协作 Demo 群聊"
             >
               Demo
             </button>
             <button
               onClick={() => setShowCreate(true)}
-              className="rounded-md bg-accent px-2.5 py-1.5 text-xs text-white transition hover:bg-accent-hover"
+              className="rounded-lg bg-accent px-2.5 py-1.5 text-xs text-white transition hover:bg-accent-hover"
               title="新建会话"
             >
               新建
@@ -132,7 +132,7 @@ export function ConversationListPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索标题、成员或最近消息"
-          className="mt-3 w-full rounded-md border border-border bg-bg px-3 py-2 text-xs text-fg outline-none transition focus:border-accent"
+          className="mt-3 w-full rounded-lg border border-border bg-bg px-3 py-2 text-xs text-fg outline-none transition focus:border-accent"
         />
 
         <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border border-border bg-bg p-1">
@@ -165,7 +165,7 @@ export function ConversationListPanel() {
           <button
             type="button"
             onClick={() => setShowAgentCreate(true)}
-            className="rounded-md border border-border px-2 py-1 text-2xs text-muted transition hover:border-accent/60 hover:text-fg"
+            className="rounded-lg border border-border px-2 py-1 text-2xs text-muted transition hover:border-accent/60 hover:text-fg"
           >
             New Agent
           </button>
@@ -190,7 +190,7 @@ export function ConversationListPanel() {
                     </span>
                   </span>
                   <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${agent.api_key_configured || agent.adapter_type === "mock" ? "bg-emerald-400" : "bg-amber-400"}`}
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${agent.api_key_configured || agent.adapter_type === "mock" ? "bg-success" : "bg-warning"}`}
                     title={agent.api_key_configured ? "可调用" : "未配置 API Key"}
                   />
                 </div>

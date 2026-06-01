@@ -169,14 +169,14 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           <span className="text-sm font-medium text-fg truncate">
             {currentArtifact.title}
           </span>
-          <span className="text-[10px] text-muted shrink-0">
+          <span className="text-4xs text-muted shrink-0">
             v{currentArtifact.version}
           </span>
-          <span className="text-[10px] text-muted shrink-0">
+          <span className="text-4xs text-muted shrink-0">
             {language}
           </span>
           {hasChanges && (
-            <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+            <span className="text-4xs text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
               未保存的修改
             </span>
           )}
@@ -194,7 +194,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           <button
             type="button"
             onClick={() => setShowHistory(!showHistory)}
-            className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md border transition-colors ${
+            className={`px-2.5 py-1.5 text-3xs font-medium rounded-md border transition-colors ${
               showHistory
                 ? "border-accent/30 text-accent bg-accent/5"
                 : "border-border text-muted hover:text-fg hover:bg-bg"
@@ -206,7 +206,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
             type="button"
             onClick={handleSave}
             disabled={saveStatus === "saving" || content === null || !hasChanges}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saveStatus === "saving" ? "保存中…" : hasChanges ? "保存 (Ctrl+S)" : "已是最新"}
           </button>

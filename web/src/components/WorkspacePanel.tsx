@@ -57,12 +57,12 @@ function FileTreeView({
               style={{ paddingLeft: `${depth * 14 + 6}px` }}
               onClick={() => isDir ? onToggle(node.path) : onFileClick(node.path)}
             >
-              <span className="w-3.5 text-center shrink-0 text-[10px] text-muted">
+              <span className="w-3.5 text-center shrink-0 text-4xs text-muted">
                 {icon}
               </span>
               <span className="truncate text-fg/90">{node.name}</span>
               {!isDir && node.size > 0 && (
-                <span className="ml-auto shrink-0 text-[10px] text-muted">
+                <span className="ml-auto shrink-0 text-4xs text-muted">
                   {formatSize(node.size)}
                 </span>
               )}
@@ -79,7 +79,7 @@ function FileTreeView({
             )}
             {isDir && isOpen && (!node.children || node.children.length === 0) && (
               <div
-                className="py-1 text-[10px] text-muted/60"
+                className="py-1 text-4xs text-muted/60"
                 style={{ paddingLeft: `${(depth + 1) * 14 + 22}px` }}
               >
                 empty
@@ -200,12 +200,12 @@ export function WorkspacePanel() {
         <button
           type="button"
           onClick={loadTree}
-          className="text-[10px] text-muted hover:text-fg transition-colors"
+          className="text-4xs text-muted hover:text-fg transition-colors"
         >
           ↻ Refresh
         </button>
         {rootPath && (
-          <span className="text-[10px] text-muted/60 truncate ml-2" title={rootPath}>
+          <span className="text-4xs text-muted/60 truncate ml-2" title={rootPath}>
             {rootPath.split(/[/\\]/).slice(-2).join("/")}
           </span>
         )}
@@ -213,18 +213,18 @@ export function WorkspacePanel() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading && (
-          <div className="px-3 py-6 text-center text-[10px] text-muted">
+          <div className="px-3 py-6 text-center text-4xs text-muted">
             Loading workspace...
           </div>
         )}
 
         {error && !loading && (
           <div className="px-3 py-4 text-center">
-            <div className="text-[10px] text-danger">{error}</div>
+            <div className="text-4xs text-danger">{error}</div>
             <button
               type="button"
               onClick={loadTree}
-              className="mt-2 text-[10px] text-accent hover:underline"
+              className="mt-2 text-4xs text-accent hover:underline"
             >
               Retry
             </button>
@@ -232,7 +232,7 @@ export function WorkspacePanel() {
         )}
 
         {!loading && !error && tree.length === 0 && (
-          <div className="px-3 py-6 text-center text-[10px] text-muted">
+          <div className="px-3 py-6 text-center text-4xs text-muted">
             <div className="mb-1">No files yet</div>
             <div className="text-muted/60">
               Agents will create files here as they work.
@@ -258,18 +258,18 @@ export function WorkspacePanel() {
       {selectedFile && (
         <div className="shrink-0 border-t border-border">
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-bg/60">
-            <span className="truncate text-[10px] font-medium text-fg">
+            <span className="truncate text-4xs font-medium text-fg">
               {selectedFile.split("/").pop() ?? selectedFile}
             </span>
-            <span className="shrink-0 text-[9px] text-muted ml-2">{lang}</span>
+            <span className="shrink-0 text-4xs text-muted ml-2">{lang}</span>
           </div>
           <div className="max-h-48 overflow-y-auto">
             {fileLoading ? (
-              <div className="px-3 py-4 text-center text-[10px] text-muted">
+              <div className="px-3 py-4 text-center text-4xs text-muted">
                 Loading...
               </div>
             ) : (
-              <pre className="p-3 text-[10px] leading-relaxed text-fg/80 font-mono whitespace-pre-wrap break-all">
+              <pre className="p-3 text-4xs leading-relaxed text-fg/80 font-mono whitespace-pre-wrap break-all">
                 {previewText || "(empty file)"}
               </pre>
             )}

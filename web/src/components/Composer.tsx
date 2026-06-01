@@ -248,7 +248,7 @@ export function Composer() {
                   ? "输入消息，使用 @ 提及 Agent，Enter 发送"
                   : "输入消息，Enter 发送，Shift+Enter 换行"
           }
-          className="max-h-32 min-h-[40px] flex-1 resize-none rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+          className="max-h-32 min-h-[40px] flex-1 resize-none rounded-lg border border-border bg-bg px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
           rows={1}
           disabled={!currentConvId}
         />
@@ -256,7 +256,7 @@ export function Composer() {
           <button
             type="button"
             onClick={cancel}
-            className="shrink-0 rounded-md bg-rose-700 px-4 py-2 text-sm text-white transition hover:bg-rose-600"
+            className="shrink-0 rounded-lg bg-danger px-4 py-2 text-sm text-white transition hover:bg-danger/80"
             title={streamingCount > 1 ? `取消全部 ${streamingCount} 条流式回复` : "取消当前回复"}
           >
             {streamingCount > 1 ? `取消 (${streamingCount})` : "取消"}
@@ -276,7 +276,7 @@ export function Composer() {
               type="button"
               onClick={doSend}
               disabled={!canSend}
-              className="shrink-0 rounded-md bg-accent px-4 py-2 text-sm text-white transition hover:bg-accent-hover disabled:bg-border disabled:text-muted"
+              className="shrink-0 rounded-lg bg-accent px-4 py-2 text-sm text-white transition hover:bg-accent-hover disabled:bg-border disabled:text-muted"
             >
               发送
             </button>

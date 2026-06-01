@@ -100,7 +100,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
         </div>
       ) : mode === "code" && isHtml ? (
         <pre
-          className="h-full overflow-auto p-4 text-[11px] leading-relaxed text-fg"
+          className="h-full overflow-auto p-4 text-3xs leading-relaxed text-fg"
           dangerouslySetInnerHTML={{ __html: highlighted || "暂无源码" }}
         />
       ) : (
@@ -116,7 +116,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
   );
 
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-border bg-panel shadow-[0_12px_34px_rgba(0,0,0,0.18)]">
+    <div className="my-2 overflow-hidden rounded-xl border border-border bg-panel shadow-2xl">
       <style>{CODE_STYLE}</style>
       <button
         type="button"
@@ -130,7 +130,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
           <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-accent/20 bg-accent/10 text-accent">HTML</div>
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-fg">{title}</div>
-            <div className="mt-0.5 text-[10px] text-muted">
+            <div className="mt-0.5 text-4xs text-muted">
               {isHtml ? "网页预览" : mimeType} · {formatSize(fileSize)}
               {error ? ` · ${error}` : ""}
             </div>
@@ -152,7 +152,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
                   onEdit(artifactId);
                 }
               }}
-              className="rounded-md border border-border px-2 py-1 text-[11px] text-muted hover:text-accent"
+              className="rounded-md border border-border px-2 py-1 text-3xs text-muted hover:text-accent"
             >
               编辑
             </span>
@@ -173,11 +173,11 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
                 setMode("preview");
               }
             }}
-            className="rounded-md border border-accent/30 px-2 py-1 text-[11px] text-accent hover:bg-accent/10"
+            className="rounded-md border border-accent/30 px-2 py-1 text-3xs text-accent hover:bg-accent/10"
           >
             全屏
           </span>
-          <span className="rounded-md border border-border px-2 py-1 text-[11px] text-muted">{expanded ? "收起" : "展开"}</span>
+          <span className="rounded-md border border-border px-2 py-1 text-3xs text-muted">{expanded ? "收起" : "展开"}</span>
         </div>
       </button>
 
@@ -185,18 +185,18 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
         <div>
           {isHtml && (
             <div className="flex items-center border-b border-border bg-bg/60">
-              <button type="button" onClick={() => setMode("preview")} className={`px-3 py-1.5 text-[11px] ${mode === "preview" ? "text-accent" : "text-muted"}`}>
+              <button type="button" onClick={() => setMode("preview")} className={`px-3 py-1.5 text-3xs ${mode === "preview" ? "text-accent" : "text-muted"}`}>
                 预览
               </button>
-              <button type="button" onClick={() => setMode("code")} className={`px-3 py-1.5 text-[11px] ${mode === "code" ? "text-accent" : "text-muted"}`}>
+              <button type="button" onClick={() => setMode("code")} className={`px-3 py-1.5 text-3xs ${mode === "code" ? "text-accent" : "text-muted"}`}>
                 源码
               </button>
               {mode === "code" && (
                 <div className="ml-auto flex gap-1 pr-2">
-                  <button type="button" onClick={sendToChat} className="rounded px-2 py-1 text-[10px] text-sky-300 hover:bg-sky-500/10">
+                  <button type="button" onClick={sendToChat} className="rounded px-2 py-1 text-4xs text-sky-300 hover:bg-sky-500/10">
                     在聊天中修改
                   </button>
-                  <button type="button" onClick={copyCode} className="rounded px-2 py-1 text-[10px] text-muted hover:text-fg">
+                  <button type="button" onClick={copyCode} className="rounded px-2 py-1 text-4xs text-muted hover:text-fg">
                     {copied ? "已复制" : "复制源码"}
                   </button>
                 </div>
@@ -212,7 +212,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-panel px-4">
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-fg">{title}</div>
-              <div className="text-[10px] text-muted">全屏预览 · {formatSize(fileSize)}</div>
+              <div className="text-4xs text-muted">全屏预览 · {formatSize(fileSize)}</div>
             </div>
             <div className="flex items-center gap-2">
               {isHtml && (

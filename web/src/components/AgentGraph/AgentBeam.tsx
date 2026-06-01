@@ -47,7 +47,7 @@ export function AgentBeam({ beamId, fromX, fromY, toX, toY, kind, label, onCompl
 
       {label && (
         <foreignObject x={(fromX + toX) / 2 - 76} y={(fromY + toY) / 2 - 34} width={152} height={32}>
-          <div className={`mx-auto w-fit max-w-[140px] truncate rounded-full border px-2 py-1 text-[10px] font-semibold ${
+          <div className={`mx-auto w-fit max-w-[140px] truncate rounded-full border px-2 py-1 text-4xs font-semibold ${
             kind === "create"
               ? "border-sky-400/50 bg-sky-950/70 text-sky-100"
               : "border-zinc-500/50 bg-zinc-950/80 text-zinc-100"

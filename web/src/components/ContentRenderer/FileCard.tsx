@@ -187,10 +187,10 @@ export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
   );
 
   return (
-    <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-[0_8px_24px_rgba(0,0,0,0.14)] group">
+    <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-lg group">
       {/* Image preview */}
       {isImage(mimeType) && !imgError && (
-        <div className="border-b border-border bg-[#0d0d0d] p-2 flex items-center justify-center min-h-[80px] max-h-[360px] overflow-hidden">
+        <div className="border-b border-border bg-bg p-2 flex items-center justify-center min-h-[80px] max-h-[360px] overflow-hidden">
           <img
             src={downloadUrl}
             alt={fileName}
@@ -218,14 +218,14 @@ export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
                   <button
                     type="button"
                     onClick={() => setViewMode("preview")}
-                    className={`px-2 py-1 text-[10px] ${viewMode === "preview" ? "text-accent" : "text-muted"}`}
+                    className={`px-2 py-1 text-4xs ${viewMode === "preview" ? "text-accent" : "text-muted"}`}
                   >
                     预览
                   </button>
                   <button
                     type="button"
                     onClick={() => setViewMode("raw")}
-                    className={`px-2 py-1 text-[10px] ${viewMode === "raw" ? "text-accent" : "text-muted"}`}
+                    className={`px-2 py-1 text-4xs ${viewMode === "raw" ? "text-accent" : "text-muted"}`}
                   >
                     源码
                   </button>
@@ -236,12 +236,12 @@ export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
               {isMarkdown(mimeType) && viewMode === "preview" && (
                 <div className="max-h-[420px] overflow-auto">
                   <div
-                    className="px-4 py-3 text-[14px] leading-relaxed text-fg markdown-body"
+                    className="px-4 py-3 text-sm leading-relaxed text-fg markdown-body"
                     dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText) }}
                   />
                   {showExpand && (
                     <button type="button" onClick={toggleExpand}
-                      className="w-full border-t border-border px-3 py-1.5 text-[11px] text-accent hover:bg-accent/5 transition-colors">
+                      className="w-full border-t border-border px-3 py-1.5 text-3xs text-accent hover:bg-accent/5 transition-colors">
                       {expanded ? "收起预览" : `展开全部 (${formatSize(textContent.length)} 字符)`}
                     </button>
                   )}
@@ -254,13 +254,13 @@ export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
                   {isCodeLike(mimeType) || isMarkdown(mimeType) ? (
                     <CodeBlock code={displayText} language={lang} title={fileName} mini maxHeight={420} />
                   ) : (
-                    <pre className="!m-0 !bg-bg px-4 py-3 font-mono text-[12px] leading-relaxed text-fg/90 whitespace-pre">
+                    <pre className="!m-0 !bg-bg px-4 py-3 font-mono text-2xs leading-relaxed text-fg/90 whitespace-pre">
                       <code>{displayText}</code>
                     </pre>
                   )}
                   {showExpand && (
                     <button type="button" onClick={toggleExpand}
-                      className="w-full border-t border-border px-3 py-1.5 text-[11px] text-accent hover:bg-accent/5 transition-colors">
+                      className="w-full border-t border-border px-3 py-1.5 text-3xs text-accent hover:bg-accent/5 transition-colors">
                       {expanded ? "收起预览" : `展开全部 (${formatSize(textContent.length)} 字符)`}
                     </button>
                   )}
@@ -278,7 +278,7 @@ export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-fg truncate">{fileName}</div>
-          <div className="text-[10px] text-muted mt-0.5 flex items-center gap-2 min-w-0">
+          <div className="text-4xs text-muted mt-0.5 flex items-center gap-2 min-w-0">
             <span className="truncate">{shortMime(mimeType)}</span>
             <span aria-hidden="true">·</span>
             <span className="shrink-0">{formatSize(fileSize)}</span>
@@ -293,7 +293,7 @@ export function FileCard({ fileName, mimeType, fileSize, downloadUrl }: Props) {
         <a
           href={downloadUrl}
           download={fileName}
-          className="shrink-0 rounded-md border border-accent/30 px-2.5 py-1 text-[11px] text-accent hover:bg-accent/10 transition-colors"
+          className="shrink-0 rounded-md border border-accent/30 px-2.5 py-1 text-3xs text-accent hover:bg-accent/10 transition-colors"
         >
           下载
         </a>

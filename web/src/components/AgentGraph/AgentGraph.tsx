@@ -176,10 +176,10 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
 
       <div className="absolute left-4 top-3 z-10 flex items-center gap-3">
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">
+          <div className="text-3xs font-semibold uppercase tracking-[0.18em] text-accent">
             Agent Mesh
           </div>
-          <div className="mt-0.5 text-[10px] text-muted">
+          <div className="mt-0.5 text-4xs text-muted">
             {nodes.length} nodes / {busyCount} active / {events.length} events
           </div>
         </div>
@@ -202,13 +202,13 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
         </button>
         <button
           onClick={() => { setVizOffset({ x: 0, y: 0 }); setVizScale(0.94); setNodeOffsets({}) }}
-          className="h-7 rounded border border-border bg-bg/80 px-2 text-[10px] text-muted hover:text-fg"
+          className="h-7 rounded border border-border bg-bg/80 px-2 text-4xs text-muted hover:text-fg"
         >
           Reset
         </button>
         <button
           onClick={() => setShowEvents((v) => !v)}
-          className={`h-7 rounded border px-2 text-[10px] ${
+          className={`h-7 rounded border px-2 text-4xs ${
             showEvents ? "border-accent/50 text-accent" : "border-border text-muted"
           } bg-bg/80`}
         >
@@ -264,7 +264,7 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
                     width={36}
                     height={24}
                   >
-                    <div className="mx-auto w-fit rounded-full border border-border bg-panel/90 px-1.5 py-0.5 text-[9px] font-semibold text-fg">
+                    <div className="mx-auto w-fit rounded-full border border-border bg-panel/90 px-1.5 py-0.5 text-4xs font-semibold text-fg">
                       {edge.count}
                     </div>
                   </foreignObject>
@@ -325,10 +325,10 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
             className="absolute bottom-3 right-3 z-10 w-72 max-w-[42%] rounded-lg border border-border bg-bg/90 p-3 shadow-2xl backdrop-blur"
           >
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+              <div className="text-4xs font-semibold uppercase tracking-[0.16em] text-muted">
                 Event Stream
               </div>
-              <span className="rounded border border-border px-1.5 py-0.5 text-[9px] text-muted">
+              <span className="rounded border border-border px-1.5 py-0.5 text-4xs text-muted">
                 {events.length}
               </span>
             </div>
@@ -341,11 +341,11 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
                     evt.kind === "message" ? "bg-emerald-400" :
                     "bg-purple-400"
                   }`} />
-                  <span className="min-w-0 truncate text-[10px] text-fg/80">{evt.label}</span>
+                  <span className="min-w-0 truncate text-4xs text-fg/80">{evt.label}</span>
                 </div>
               ))}
               {events.length === 0 && (
-                <div className="rounded border border-dashed border-border px-3 py-3 text-center text-[10px] text-muted">
+                <div className="rounded border border-dashed border-border px-3 py-3 text-center text-4xs text-muted">
                   Waiting for agent activity
                 </div>
               )}

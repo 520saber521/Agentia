@@ -267,7 +267,7 @@ function renderInline(text: string) {
       case "italic":
         return <em key={i} className="italic text-fg/90">{seg.text}</em>;
       case "code":
-        return <code key={i} className="px-1 py-[1px] rounded bg-border/50 text-[12px] font-mono text-accent">{seg.text}</code>;
+        return <code key={i} className="px-1 py-[1px] rounded bg-border/50 text-2xs font-mono text-accent">{seg.text}</code>;
       case "link":
         return (
           <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer"
@@ -460,18 +460,18 @@ function FileCardView({ wrapper }: { wrapper: ParsedWrapper }) {
   return (
     <div className="text-sm leading-relaxed space-y-2">
       {wrapper.prefix && <p className="whitespace-pre-wrap break-words">{wrapper.prefix}</p>}
-      <div className="rounded-xl border border-border bg-bg overflow-hidden shadow-[0_4px_16px_rgba(0,0,0,0.1)]">
+      <div className="rounded-xl border border-border bg-bg overflow-hidden shadow-md">
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border bg-bg/60">
           <span className="text-purple-400">{FILE_ICON}</span>
           <span className="text-xs font-medium text-fg truncate">{wrapper.fileName}</span>
-          <span className="text-[10px] text-muted">{wrapper.mimeType}</span>
+          <span className="text-4xs text-muted">{wrapper.mimeType}</span>
           {wrapper.title && wrapper.title !== wrapper.fileName && (
-            <span className="text-[10px] text-muted/60 ml-auto truncate max-w-[40%]">{wrapper.title}</span>
+            <span className="text-4xs text-muted/60 ml-auto truncate max-w-[40%]">{wrapper.title}</span>
           )}
         </div>
         <div className="max-h-[500px] overflow-auto">
           <div
-            className="px-4 py-3 text-[14px] leading-relaxed text-fg markdown-body"
+            className="px-4 py-3 text-sm leading-relaxed text-fg markdown-body"
             dangerouslySetInnerHTML={{ __html: html }}
           />
         </div>
@@ -518,7 +518,7 @@ export const TextBubble = React.memo(function TextBubble({ text }: Props) {
     return (
       <div className="text-sm leading-relaxed space-y-2">
         {treePrefix && (
-          <pre className="text-[11px] text-fg/80 whitespace-pre font-mono leading-tight bg-bg/50 rounded-lg p-3 border border-border overflow-x-auto">
+          <pre className="text-3xs text-fg/80 whitespace-pre font-mono leading-tight bg-bg/50 rounded-lg p-3 border border-border overflow-x-auto">
             {treePrefix}
           </pre>
         )}

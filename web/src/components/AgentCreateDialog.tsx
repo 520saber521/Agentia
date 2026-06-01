@@ -199,7 +199,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-border px-2 py-1 text-xs text-muted hover:text-fg"
+            className="rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-fg"
           >
             Close
           </button>
@@ -209,7 +209,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
         {isSystem && (
           <div className="mt-3 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2">
             <span className="text-xs text-accent font-medium">🔒 System Agent</span>
-            <span className="text-[10px] text-muted">
+            <span className="text-4xs text-muted">
               Prompt locked · Configuration restricted
             </span>
           </div>
@@ -314,7 +314,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
                     <span className="text-xs font-medium">{tool.label}</span>
                     <span className={`h-3 w-3 rounded-sm border ${checked ? "border-accent bg-accent" : "border-border"}`} />
                   </span>
-                  <span className="mt-1 block text-[10px] leading-relaxed text-muted">{tool.desc}</span>
+                  <span className="mt-1 block text-4xs leading-relaxed text-muted">{tool.desc}</span>
                 </button>
               );
             })}
@@ -332,29 +332,29 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
               <span className="flex items-center gap-2">
                 <span>{lockedPrompt ? "🔒" : "📝"} System Prompt</span>
                 {lockedPrompt && (
-                  <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400">
+                  <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-4xs text-amber-400">
                     🛜 read-only
                   </span>
                 )}
               </span>
-              <span className="text-[10px]">
+              <span className="text-4xs">
                 {promptLoading ? "Loading..." : showPrompt ? "▲ Hide" : "▼ View"}
               </span>
             </button>
             {showPrompt && promptText && (
               <div className="border-t border-border px-3 py-3 max-h-64 overflow-y-auto">
                 {lockedPrompt && (
-                  <div className="mb-2 rounded border border-accent/20 bg-accent/5 px-2 py-1.5 text-[10px] text-accent leading-relaxed">
+                  <div className="mb-2 rounded border border-accent/20 bg-accent/5 px-2 py-1.5 text-4xs text-accent leading-relaxed">
                     系统提示词 · 只读（内容来自项目代码，不可修改）
                   </div>
                 )}
-                <pre className="text-[11px] text-muted leading-relaxed whitespace-pre-wrap font-mono">
+                <pre className="text-3xs text-muted leading-relaxed whitespace-pre-wrap font-mono">
                   {promptText}
                 </pre>
               </div>
             )}
             {showPrompt && !promptText && !promptLoading && (
-              <div className="border-t border-border px-3 py-2 text-[11px] text-muted italic">
+              <div className="border-t border-border px-3 py-2 text-3xs text-muted italic">
                 No prompt configured.
               </div>
             )}
@@ -369,7 +369,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
               {agent.tools.map((tool) => (
                 <span
                   key={tool}
-                  className="rounded-md border border-accent/30 bg-accent/5 px-2 py-0.5 text-[10px] text-accent"
+                  className="rounded-md border border-accent/30 bg-accent/5 px-2 py-0.5 text-4xs text-accent"
                 >
                   {tool}
                 </span>
@@ -385,7 +385,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
               {agent.capabilities.map((cap) => (
                 <span
                   key={cap}
-                  className="rounded-md border border-border bg-bg/50 px-2 py-0.5 text-[10px] text-fg/70"
+                  className="rounded-md border border-border bg-bg/50 px-2 py-0.5 text-4xs text-fg/70"
                 >
                   {cap}
                 </span>

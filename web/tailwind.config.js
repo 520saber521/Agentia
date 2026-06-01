@@ -34,43 +34,69 @@ export default {
         mono: ["JetBrains Mono", "Cascadia Mono", "Consolas", "monospace"],
       },
       fontSize: {
-        // Accessibility: base sizes never below 12px for UI labels
-        "3xs": ["0.6875rem", { lineHeight: "0.9375rem" }],
-        "2xs": ["0.75rem", { lineHeight: "1rem" }],
-        "xs": ["0.8125rem", { lineHeight: "1.25rem" }],
+        "4xs": ["0.625rem", { lineHeight: "0.875rem" }],   // 10px — micro labels
+        "3xs": ["0.6875rem", { lineHeight: "0.9375rem" }], // 11px — mini labels
+        "2xs": ["0.75rem", { lineHeight: "1rem" }],         // 12px — captions
+        xs: ["0.8125rem", { lineHeight: "1.25rem" }],       // 13px — body small
+        sm: ["0.875rem", { lineHeight: "1.375rem" }],       // 14px — body
+        base: ["0.9375rem", { lineHeight: "1.5rem" }],      // 15px — body large
+        lg: ["1.0625rem", { lineHeight: "1.625rem" }],      // 17px — subtitle
+        xl: ["1.25rem", { lineHeight: "1.75rem" }],         // 20px — heading
+        "2xl": ["1.5rem", { lineHeight: "2rem" }],          // 24px — heading large
       },
       borderRadius: {
+        xs: "4px",
         sm: "6px",
         md: "8px",
-        lg: "12px",
-        xl: "16px",
-        "2xl": "20px",
+        lg: "10px",
+        xl: "14px",
+        "2xl": "18px",
         full: "9999px",
       },
       boxShadow: {
-        "card-sm": "0 4px 16px rgba(0, 0, 0, 0.10)",
-        "card-md": "0 8px 24px rgba(0, 0, 0, 0.13)",
-        "card-lg": "0 10px 30px rgba(0, 0, 0, 0.17)",
+        // Elevation tokens — consistent across all components
+        xs: "0 1px 2px rgba(0, 0, 0, 0.06)",
+        sm: "0 1px 3px rgba(0, 0, 0, 0.10)",
+        md: "0 4px 16px rgba(0, 0, 0, 0.10)",
+        lg: "0 8px 24px rgba(0, 0, 0, 0.12)",
+        xl: "0 12px 32px rgba(0, 0, 0, 0.15)",
+        "2xl": "0 20px 48px rgba(0, 0, 0, 0.22)",
+        // Semantic shadows
         "bubble-user": "0 1px 3px rgba(0, 0, 0, 0.18)",
-        "bubble-agent": "0 1px 3px rgba(0, 0, 0, 0.12)",
-        popover: "0 16px 48px rgba(0, 0, 0, 0.35)",
-        modal: "0 24px 64px rgba(0, 0, 0, 0.40)",
+        "bubble-agent": "0 1px 3px rgba(0, 0, 0, 0.10)",
       },
       transitionDuration: {
+        DEFAULT: "180ms",
         150: "150ms",
         200: "200ms",
         300: "300ms",
       },
       animation: {
         blink: "blink 1s steps(2) infinite",
-        "fade-in": "fade-in 0.18s ease-out",
+        "fade-in": "fade-in 0.2s ease-out",
+        "fade-in-up": "fade-in-up 0.2s ease-out",
+        "slide-in-left": "slide-in-left 0.2s ease-out",
+        "slide-in-right": "slide-in-right 0.2s ease-out",
         "dot-pulse": "dot-pulse 1.4s infinite ease-in-out both",
+        "spin-slow": "spin 2s linear infinite",
       },
       keyframes: {
         blink: { "50%": { opacity: "0" } },
         "fade-in": {
-          from: { opacity: "0", transform: "translateY(4px)" },
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
+        "fade-in-up": {
+          from: { opacity: "0", transform: "translateY(6px)" },
           to: { opacity: "1", transform: "translateY(0)" },
+        },
+        "slide-in-left": {
+          from: { opacity: "0", transform: "translateX(-12px)" },
+          to: { opacity: "1", transform: "translateX(0)" },
+        },
+        "slide-in-right": {
+          from: { opacity: "0", transform: "translateX(12px)" },
+          to: { opacity: "1", transform: "translateX(0)" },
         },
         "dot-pulse": {
           "0%, 80%, 100%": { transform: "scale(0)" },

@@ -177,8 +177,8 @@ export function ContextSidebar() {
                     </div>
                     <span className={`h-1.5 w-1.5 rounded-full ${
                       member.agent.api_key_configured || member.agent.adapter_type === "mock"
-                        ? "bg-emerald-400"
-                        : "bg-amber-400"
+                        ? "bg-success"
+                        : "bg-warning"
                     }`} />
                   </div>
                 ))}

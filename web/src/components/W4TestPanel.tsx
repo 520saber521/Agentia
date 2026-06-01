@@ -131,13 +131,13 @@ export function W4TestPanel() {
   }
 
   return (
-    <div className="border-b border-border bg-bg/80 px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.16)]">
+    <div className="border-b border-border bg-bg/80 px-4 py-3 shadow-xl">
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 mr-auto">
           <div className="text-xs uppercase tracking-[0.16em] text-accent font-semibold">
             W4 网页端验收面板
           </div>
-          <div className="text-[11px] text-muted mt-0.5 truncate">
+          <div className="text-3xs text-muted mt-0.5 truncate">
             {currentLabel} · 点击按钮后消息流会自动刷新，无需命令行
           </div>
         </div>

@@ -149,7 +149,7 @@ function FilePreviewContent({ file }: { file: PreviewFile }) {
   if (isImage(file.mimeType, file.name)) {
     const imgSrc = file.contentUrl ?? (content ?? "");
     return (
-      <div className="grid h-full place-items-center p-4 bg-[#0d0d0d]">
+      <div className="grid h-full place-items-center p-4 bg-bg">
         <img
           src={imgSrc}
           alt={file.name}
@@ -167,7 +167,7 @@ function FilePreviewContent({ file }: { file: PreviewFile }) {
     return (
       <div className="h-full overflow-auto p-4">
         <div
-          className="prose prose-sm prose-invert max-w-none text-[13px] leading-relaxed"
+          className="prose prose-sm prose-invert max-w-none text-xs leading-relaxed"
           dangerouslySetInnerHTML={{ __html: content }}
         />
       </div>
@@ -206,11 +206,11 @@ export function FilePreviewPane({ files, activeIndex = 0, compact }: Props) {
 
   if (compact && files.length === 1) {
     return (
-      <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
+      <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-xl">
         <div className="flex items-center gap-2 px-3 py-2 bg-panel border-b border-border">
           <FileIcon name={files[0].name} mimeType={files[0].mimeType} />
           <span className="text-xs font-medium text-fg truncate">{files[0].name}</span>
-          {files[0].size ? <span className="text-[10px] text-muted">{formatSize(files[0].size)}</span> : null}
+          {files[0].size ? <span className="text-4xs text-muted">{formatSize(files[0].size)}</span> : null}
         </div>
         <div className="h-[420px]">
           <FilePreviewContent file={files[0]} />
@@ -220,7 +220,7 @@ export function FilePreviewPane({ files, activeIndex = 0, compact }: Props) {
   }
 
   return (
-    <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-[0_12px_34px_rgba(0,0,0,0.18)]">
+    <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-2xl">
       {/* Header */}
       <button
         type="button"
@@ -231,7 +231,7 @@ export function FilePreviewPane({ files, activeIndex = 0, compact }: Props) {
           <FileIcon name={current.name} mimeType={current.mimeType} />
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-fg">{current.name}</div>
-            <div className="mt-0.5 text-[10px] text-muted">
+            <div className="mt-0.5 text-4xs text-muted">
               {files.length} 个文件
               {current.language ? ` · ${current.language}` : ""}
               {current.size ? ` · ${formatSize(current.size)}` : ""}
@@ -239,7 +239,7 @@ export function FilePreviewPane({ files, activeIndex = 0, compact }: Props) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <span className="rounded-md border border-border px-2 py-1 text-[11px] text-muted">
+          <span className="rounded-md border border-border px-2 py-1 text-3xs text-muted">
             {expanded ? "收起" : "展开"}
           </span>
         </div>
@@ -255,7 +255,7 @@ export function FilePreviewPane({ files, activeIndex = 0, compact }: Props) {
                   key={f.path ?? f.name}
                   type="button"
                   onClick={() => setActive(i)}
-                  className={`flex items-center gap-1.5 shrink-0 px-3 py-1.5 text-[11px] border-r border-border transition-colors ${
+                  className={`flex items-center gap-1.5 shrink-0 px-3 py-1.5 text-3xs border-r border-border transition-colors ${
                     i === active
                       ? "bg-bg text-fg border-b-2 border-b-accent"
                       : "text-muted hover:text-fg hover:bg-bg/50"
@@ -284,11 +284,11 @@ export function FilePreviewPane({ files, activeIndex = 0, compact }: Props) {
                         : "text-muted hover:bg-bg/60 hover:text-fg border-l-2 border-l-transparent"
                     }`}
                   >
-                    <span className="shrink-0 text-[10px] opacity-60">
+                    <span className="shrink-0 text-4xs opacity-60">
                       {isImage(f.mimeType, f.name) ? "🖼" : isMarkdown(f.mimeType, f.name) ? "📝" : "📄"}
                     </span>
                     <span className="truncate">{f.name}</span>
-                    {f.size ? <span className="ml-auto shrink-0 text-[10px] text-muted/60">{formatSize(f.size)}</span> : null}
+                    {f.size ? <span className="ml-auto shrink-0 text-4xs text-muted/60">{formatSize(f.size)}</span> : null}
                   </button>
                 ))}
               </div>

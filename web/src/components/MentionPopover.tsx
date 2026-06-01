@@ -83,7 +83,7 @@ export function MentionPopover({ open, filter, agents, onSelect, onClose }: Prop
             {a.avatar || a.name.charAt(0).toUpperCase()}
           </span>
           <span className="font-medium truncate">{a.name}</span>
-          <span className="ml-auto text-[10px] text-muted truncate shrink-0">
+          <span className="ml-auto text-4xs text-muted truncate shrink-0">
             {a.capabilities.slice(0, 2).join(" · ")}
           </span>
         </button>

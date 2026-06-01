@@ -150,7 +150,7 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
     <div className="flex items-center justify-between px-3 py-1.5 bg-panel border-b border-border">
       <span className="text-xs text-muted flex items-center gap-2 min-w-0">
         {language && (
-          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${langColor(language)}`}>
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-4xs font-medium border ${langColor(language)}`}>
             {language}
           </span>
         )}
@@ -161,7 +161,7 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
           <button
             type="button"
             onClick={() => setShowLines(!showLines)}
-            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${showLines ? "text-accent bg-accent/10" : "text-muted hover:text-fg"}`}
+            className={`text-4xs px-1.5 py-0.5 rounded transition-colors ${showLines ? "text-accent bg-accent/10" : "text-muted hover:text-fg"}`}
             title={showLines ? "隐藏行号" : "显示行号"}
           >
             {showLines ? "行号" : "行号"}
@@ -177,7 +177,7 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
                 })
               );
             }}
-            className="text-[10px] text-sky-400 hover:text-sky-300 transition-colors px-1.5 py-0.5"
+            className="text-4xs text-sky-400 hover:text-sky-300 transition-colors px-1.5 py-0.5"
             title="在聊天中描述修改"
           >
             在聊天中修改
@@ -187,7 +187,7 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
           <button
             type="button"
             onClick={() => onEdit(artifactId)}
-            className="text-[10px] text-muted hover:text-accent transition-colors px-1.5 py-0.5"
+            className="text-4xs text-muted hover:text-accent transition-colors px-1.5 py-0.5"
           >
             编辑
           </button>
@@ -197,7 +197,7 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
           type="button"
           onClick={handleCopy}
           disabled={loading || loadError}
-          className="text-[10px] text-muted hover:text-fg disabled:opacity-40 transition-colors px-1.5 py-0.5"
+          className="text-4xs text-muted hover:text-fg disabled:opacity-40 transition-colors px-1.5 py-0.5"
         >
           {copied ? "已复制" : "复制"}
         </button>
@@ -210,11 +210,11 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
       <div className="rounded-lg border border-border bg-bg overflow-hidden my-1">
         {toolbar}
         {loadError ? (
-          <div className="p-3 text-[10px] text-danger bg-red-500/5">代码加载失败</div>
+          <div className="p-3 text-4xs text-danger bg-red-500/5">代码加载失败</div>
         ) : loading ? (
-          <div className="p-3 text-[10px] text-muted animate-pulse">加载中...</div>
+          <div className="p-3 text-4xs text-muted animate-pulse">加载中...</div>
         ) : (
-          <pre className="overflow-auto text-[11px] leading-[1.6] whitespace-pre min-w-0 flex" style={styleMaxH}>
+          <pre className="overflow-auto text-3xs leading-[1.6] whitespace-pre min-w-0 flex" style={styleMaxH}>
             {showLines && (
               <div className="select-none text-right pr-2 pl-2 py-2 text-muted/30 border-r border-border/50 shrink-0 sticky left-0 bg-bg">
                 {lines.map((_, i) => (
@@ -233,7 +233,7 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
   }
 
   return (
-    <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-[0_10px_30px_rgba(0,0,0,0.18)] group">
+    <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-xl group">
       {toolbar}
       {loadError ? (
         <div className="p-4 text-xs text-danger bg-red-500/5">代码内容加载失败，请稍后重试。</div>
