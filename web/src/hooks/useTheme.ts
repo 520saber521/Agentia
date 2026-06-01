@@ -19,6 +19,14 @@ function applyTheme(theme: Theme) {
   } else {
     root.classList.remove("light");
   }
+  updateMetaThemeColor(theme);
+}
+
+function updateMetaThemeColor(theme: Theme) {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    meta.setAttribute("content", theme === "dark" ? "#05070a" : "#f8fafc");
+  }
 }
 
 export function useTheme() {
@@ -26,6 +34,10 @@ export function useTheme() {
 
   useEffect(() => {
     applyTheme(theme);
+    // Mark theme as ready after initial application (prevents transition flash on load)
+    requestAnimationFrame(() => {
+      document.documentElement.classList.add("theme-ready");
+    });
   }, [theme]);
 
   const toggle = useCallback(() => {

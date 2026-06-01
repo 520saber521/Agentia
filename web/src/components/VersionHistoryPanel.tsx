@@ -103,7 +103,7 @@ export function VersionHistoryPanel({ artifactId, currentVersion, onSelectVersio
 
   if (error) {
     return (
-      <div className="px-3 py-4 text-xs text-red-400 text-center">{error}</div>
+      <div className="px-3 py-4 text-xs text-danger text-center">{error}</div>
     );
   }
 
@@ -222,9 +222,9 @@ function UnifiedInlineDiff({ before, after }: { before: string; after: string })
           key={i}
           className={
             line.type === "add"
-              ? "bg-emerald-500/10 text-emerald-300/80"
+              ? "bg-success/10 text-success"
               : line.type === "del"
-                ? "bg-rose-500/10 text-rose-300/70"
+                ? "bg-danger/10 text-danger"
                 : "text-muted/40"
           }
         >

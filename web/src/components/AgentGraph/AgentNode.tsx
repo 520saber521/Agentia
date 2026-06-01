@@ -1,4 +1,5 @@
 import { motion } from "framer-motion"
+import { useTheme } from "../../hooks/useTheme"
 
 const DOMAIN_COLORS: Record<string, string> = {
   frontend: "#38bdf8",
@@ -39,9 +40,14 @@ export function AgentNode({
   onDrag,
   onDragEnd,
 }: Props) {
+  const { theme } = useTheme()
   const normalizedDomain = (domain || "").toLowerCase()
   const color = DOMAIN_COLORS[normalizedDomain] || "#38bdf8"
   const isBusy = status === "BUSY"
+  const isDark = theme === "dark"
+  const nodeFill = isOrchestrator ? (isDark ? "#07111f" : "#f1f5f9") : (isDark ? "#05070a" : "#f8fafc")
+  const textFill = isDark ? "#f8fafc" : "#0f172a"
+  const labelFill = isDark ? "#e2e8f0" : "#334155"
   const shortRole = isOrchestrator
     ? "ORCH"
     : (domain || role || "agent").slice(0, 7).toUpperCase()
@@ -112,7 +118,7 @@ export function AgentNode({
         cx={x}
         cy={y}
         r={NODE_SIZE / 2}
-        fill={isOrchestrator ? "#07111f" : "#05070a"}
+        fill={nodeFill}
         stroke={color}
         strokeWidth={2}
         filter={`drop-shadow(0 0 18px ${color}55)`}
@@ -125,7 +131,7 @@ export function AgentNode({
         dominantBaseline="central"
         fontSize={15}
         fontWeight={800}
-        fill="#f8fafc"
+        fill={textFill}
         fontFamily="Cascadia Mono, Consolas, monospace"
       >
         {initials}
@@ -151,7 +157,7 @@ export function AgentNode({
           textAnchor="middle"
           dominantBaseline="central"
           fontSize={9.5}
-          fill="#e2e8f0"
+          fill={labelFill}
           fontFamily="system-ui, sans-serif"
         >
           {agentName.length > 16 ? agentName.slice(0, 16) + "\u2026" : agentName}

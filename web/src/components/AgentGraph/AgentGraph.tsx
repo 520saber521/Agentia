@@ -5,6 +5,7 @@ import { computeTreeLayout } from "./layout"
 import { AgentNode } from "./AgentNode"
 import { AgentBeam } from "./AgentBeam"
 import type { AnimBeam } from "./types"
+import { useTheme } from "../../hooks/useTheme"
 
 interface Props {
   width?: number
@@ -13,6 +14,8 @@ interface Props {
 
 export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 220 }: Props) {
   const { nodes, beams, events, commEdges, nodeStatusMap, orchestratorId } = useAgentGraph()
+  const { theme } = useTheme()
+  const isDark = theme === "dark"
   const containerRef = useRef<HTMLDivElement>(null)
   const [viewport, setViewport] = useState({ width: initialWidth, height: initialHeight })
   const [vizOffset, setVizOffset] = useState({ x: 0, y: 0 })
@@ -152,7 +155,7 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
   return (
     <div
       ref={containerRef}
-      className="relative w-full overflow-hidden border-border bg-[#05070a]"
+      className="relative w-full overflow-hidden border-border bg-bg"
       style={{ height: initialHeight }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -173,7 +176,7 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
 
       <div className="absolute left-4 top-3 z-10 flex items-center gap-3">
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">
             Agent Mesh
           </div>
           <div className="mt-0.5 text-[10px] text-muted">
@@ -206,7 +209,7 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
         <button
           onClick={() => setShowEvents((v) => !v)}
           className={`h-7 rounded border px-2 text-[10px] ${
-            showEvents ? "border-sky-400/50 text-sky-200" : "border-border text-muted"
+            showEvents ? "border-accent/50 text-accent" : "border-border text-muted"
           } bg-bg/80`}
         >
           Events
@@ -250,7 +253,7 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
                     y1={edge.from.y}
                     x2={edge.to.x}
                     y2={edge.to.y}
-                    stroke="rgba(248,250,252,0.8)"
+                    stroke={isDark ? "rgba(248,250,252,0.8)" : "rgba(15,23,42,0.7)"}
                     strokeWidth={strokeWidth}
                     strokeOpacity={opacity}
                     strokeDasharray="2 8"
@@ -261,7 +264,7 @@ export function AgentGraph({ width: initialWidth = 900, height: initialHeight = 
                     width={36}
                     height={24}
                   >
-                    <div className="mx-auto w-fit rounded-full border border-zinc-500/50 bg-zinc-950/80 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-200">
+                    <div className="mx-auto w-fit rounded-full border border-border bg-panel/90 px-1.5 py-0.5 text-[9px] font-semibold text-fg">
                       {edge.count}
                     </div>
                   </foreignObject>

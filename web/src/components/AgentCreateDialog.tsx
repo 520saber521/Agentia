@@ -395,8 +395,8 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
         )}
 
         {/* Notices */}
-        {notice && <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">{notice}</p>}
-        {error && <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</p>}
+        {notice && <p className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">{notice}</p>}
+        {error && <p className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</p>}
 
         {/* Actions */}
         <div className="mt-5 flex items-center justify-between">
@@ -405,7 +405,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
               type="button"
               onClick={() => void handleDelete()}
               disabled={deleting}
-              className="rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-300 transition hover:bg-red-500/10 disabled:opacity-60"
+              className="rounded-lg border border-danger/40 px-3 py-2 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-60"
             >
               {deleting ? "Deleting..." : "Delete Agent"}
             </button>

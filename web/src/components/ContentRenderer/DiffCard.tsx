@@ -104,21 +104,21 @@ function SideBySideView({ before, after }: { before: string; after: string }) {
     <div className="flex text-[11px] font-mono leading-relaxed">
       {/* Before */}
       <div className="flex-1 min-w-0">
-        <div className="sticky top-0 flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium text-rose-400 bg-bg border-b border-border/50">
+        <div className="sticky top-0 flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium text-danger bg-bg border-b border-border/50">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12" /></svg>
           原始
         </div>
         <table className="w-full border-collapse">
           <tbody>
             {rows.map((r, i) => (
-              <tr key={i} className={r.type === "del" ? "bg-rose-500/8" : ""}>
+              <tr key={i} className={r.type === "del" ? "bg-danger/8" : ""}>
                 <td className={`text-right text-muted/30 select-none px-1.5 py-0 border-r border-border/30 w-[${maxNumLen + 1}ch]`}
                   style={{ minWidth: `${maxNumLen + 2}ch` }}>
                   {r.type === "del" || r.type === "ctx" ? r.leftNum : ""}
                 </td>
                 <td className="px-2 py-0 whitespace-pre">
                   {r.type === "del" ? (
-                    <span className="text-rose-300/80">{r.left}</span>
+                    <span className="text-danger">{r.left}</span>
                   ) : r.type === "add" ? (
                     <span className="text-muted/20">{r.right || " "}</span>
                   ) : (
@@ -132,21 +132,21 @@ function SideBySideView({ before, after }: { before: string; after: string }) {
       </div>
       {/* After */}
       <div className="flex-1 min-w-0 border-l border-border/50">
-        <div className="sticky top-0 flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium text-emerald-400 bg-bg border-b border-border/50">
+        <div className="sticky top-0 flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium text-success bg-bg border-b border-border/50">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
           修改后
         </div>
         <table className="w-full border-collapse">
           <tbody>
             {rows.map((r, i) => (
-              <tr key={i} className={r.type === "add" ? "bg-emerald-500/8" : ""}>
+              <tr key={i} className={r.type === "add" ? "bg-success/8" : ""}>
                 <td className={`text-right text-muted/30 select-none px-1.5 py-0 border-r border-border/30 w-[${maxNumLen + 1}ch]`}
                   style={{ minWidth: `${maxNumLen + 2}ch` }}>
                   {r.type === "add" || r.type === "ctx" ? r.rightNum : ""}
                 </td>
                 <td className="px-2 py-0 whitespace-pre">
                   {r.type === "add" ? (
-                    <span className="text-emerald-300/80">{r.right}</span>
+                    <span className="text-success">{r.right}</span>
                   ) : r.type === "del" ? (
                     <span className="text-muted/20">{r.left || " "}</span>
                   ) : (
@@ -177,14 +177,14 @@ function UnifiedDiffView({ diff }: { diff: string }) {
           const isHdr = line.startsWith("@@");
           return (
             <div key={i} className={
-              isAdd ? "bg-emerald-500/8" : isDel ? "bg-rose-500/8" : isHdr ? "bg-sky-500/6" : ""
+              isAdd ? "bg-success/8" : isDel ? "bg-danger/8" : isHdr ? "bg-info/6" : ""
             }>
               <span className={`inline-block w-8 text-right select-none mr-2 ${
-                isHdr ? "text-sky-400" : "text-muted/30"
+                isHdr ? "text-info" : "text-muted/30"
               }`}>
                 {isHdr ? "@@" : isAdd ? "+" : isDel ? "-" : " "}
               </span>
-              <span className={isAdd ? "text-emerald-300/90" : isDel ? "text-rose-300/80" : isHdr ? "text-sky-300" : "text-fg/60"}>
+              <span className={isAdd ? "text-success" : isDel ? "text-danger" : isHdr ? "text-info" : "text-fg/60"}>
                 {line || " "}
               </span>
             </div>
@@ -199,7 +199,7 @@ function UnifiedDiffView({ diff }: { diff: string }) {
       {hunks.map((hunk, hi) => (
         <div key={hi}>
           {/* Hunk header */}
-          <div className="sticky top-0 flex items-center gap-2 px-3 py-1.5 bg-sky-500/8 border-y border-sky-500/15 text-sky-300 text-[10px] font-medium">
+          <div className="sticky top-0 flex items-center gap-2 px-3 py-1.5 bg-info/8 border-y border-info/15 text-info text-[10px] font-medium">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M4 6h16M4 12h16M4 18h12" />
             </svg>
@@ -215,8 +215,8 @@ function UnifiedDiffView({ diff }: { diff: string }) {
             <div
               key={li}
               className={`flex hover:brightness-110 ${
-                line.type === "add" ? "bg-emerald-500/8" :
-                line.type === "del" ? "bg-rose-500/8" : ""
+                line.type === "add" ? "bg-success/8" :
+                line.type === "del" ? "bg-danger/8" : ""
               }`}
             >
               {/* Old line number */}
@@ -230,16 +230,16 @@ function UnifiedDiffView({ diff }: { diff: string }) {
               {/* Diff marker and content */}
               <span className="w-[1.2ch] text-center select-none shrink-0 text-muted/30">
                 {line.type === "add" ? (
-                  <span className="text-emerald-500 font-bold">+</span>
+                  <span className="text-success font-bold">+</span>
                 ) : line.type === "del" ? (
-                  <span className="text-rose-500 font-bold">−</span>
+                  <span className="text-danger font-bold">−</span>
                 ) : (
                   <span className="text-muted/20"> </span>
                 )}
               </span>
               <span className={`whitespace-pre px-1 flex-1 min-w-0 ${
-                line.type === "add" ? "text-emerald-300/85" :
-                line.type === "del" ? "text-rose-300/80" :
+                line.type === "add" ? "text-success" :
+                line.type === "del" ? "text-danger" :
                 "text-fg/55"
               }`}>
                 {line.text || " "}
@@ -301,7 +301,7 @@ export function DiffCard({
       <div className="flex items-center justify-between px-3.5 py-2.5 bg-bg/30 border-b border-border gap-3">
         {/* Left: file icon + name + version badge */}
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="h-7 w-7 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+          <div className="h-7 w-7 rounded-lg bg-danger/10 border border-danger/20 flex items-center justify-center text-danger shrink-0">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
               <polyline points="14 2 14 8 20 8" />
@@ -323,18 +323,18 @@ export function DiffCard({
                 {summary}
                 {added + removed > 0 && (
                   <span className="inline-flex items-center gap-1">
-                    <span className="text-emerald-400 font-medium">+{added}</span>
+                    <span className="text-success font-medium">+{added}</span>
                     <span className="text-muted/40">/</span>
-                    <span className="text-rose-400 font-medium">-{removed}</span>
+                    <span className="text-danger font-medium">-{removed}</span>
                   </span>
                 )}
               </div>
             )}
             {!summary && added + removed > 0 && (
               <div className="text-[10px] text-muted mt-0.5 flex items-center gap-1">
-                <span className="text-emerald-400 font-medium">+{added}</span>
+                <span className="text-success font-medium">+{added}</span>
                 <span className="text-muted/40">/</span>
-                <span className="text-rose-400 font-medium">-{removed}</span>
+                <span className="text-danger font-medium">-{removed}</span>
               </div>
             )}
           </div>
@@ -354,7 +354,7 @@ export function DiffCard({
           )}
 
           {status === "applied" ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/12 border border-emerald-500/25 px-2.5 py-1 text-[11px] text-emerald-400 font-medium">
+            <span className="inline-flex items-center gap-1 rounded-md bg-success/12 border border-success/25 px-2.5 py-1 text-[11px] text-success font-medium">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
@@ -402,7 +402,7 @@ export function DiffCard({
 
       {/* Error message */}
       {status === "error" && error && (
-        <div className="px-3.5 py-2 text-[11px] text-red-400 bg-red-500/6 border-b border-red-500/15 flex items-center gap-2">
+        <div className="px-3.5 py-2 text-[11px] text-danger bg-danger/6 border-b border-danger/15 flex items-center gap-2">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
             <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
           </svg>

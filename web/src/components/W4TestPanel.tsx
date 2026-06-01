@@ -20,9 +20,9 @@ interface ActionState {
 const INITIAL_STATE: ActionState = { status: "idle", message: "选择一个操作开始测试" };
 
 function statusClass(status: TestStatus): string {
-  if (status === "success") return "text-emerald-300 border-emerald-500/30 bg-emerald-500/10";
-  if (status === "error") return "text-red-300 border-red-500/30 bg-red-500/10";
-  if (status === "running") return "text-sky-300 border-sky-500/30 bg-sky-500/10";
+  if (status === "success") return "text-success border-success/30 bg-success/10";
+  if (status === "error") return "text-danger border-danger/30 bg-danger/10";
+  if (status === "running") return "text-info border-info/30 bg-info/10";
   return "text-muted border-border bg-bg/60";
 }
 
@@ -178,7 +178,7 @@ export function W4TestPanel() {
           type="button"
           disabled={disabled}
           onClick={() => void testInvalidSchema()}
-          className="rounded-full border border-red-500/30 px-3 py-1.5 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          className="rounded-full border border-danger/30 px-3 py-1.5 text-xs text-danger hover:bg-danger/10 disabled:opacity-50 disabled:cursor-not-allowed transition"
         >
           测非法 schema
         </button>

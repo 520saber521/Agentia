@@ -210,7 +210,7 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
       <div className="rounded-lg border border-border bg-bg overflow-hidden my-1">
         {toolbar}
         {loadError ? (
-          <div className="p-3 text-[10px] text-red-400 bg-red-500/5">代码加载失败</div>
+          <div className="p-3 text-[10px] text-danger bg-red-500/5">代码加载失败</div>
         ) : loading ? (
           <div className="p-3 text-[10px] text-muted animate-pulse">加载中...</div>
         ) : (
@@ -236,7 +236,7 @@ export function CodeBlock({ code, language, title, artifactId, onEdit, mini, max
     <div className="rounded-xl border border-border bg-bg overflow-hidden my-2 shadow-[0_10px_30px_rgba(0,0,0,0.18)] group">
       {toolbar}
       {loadError ? (
-        <div className="p-4 text-xs text-red-400 bg-red-500/5">代码内容加载失败，请稍后重试。</div>
+        <div className="p-4 text-xs text-danger bg-red-500/5">代码内容加载失败，请稍后重试。</div>
       ) : loading ? (
         <div className="p-4 text-xs text-muted animate-pulse">
           <div className="h-3 w-3/4 rounded bg-border mb-2" />

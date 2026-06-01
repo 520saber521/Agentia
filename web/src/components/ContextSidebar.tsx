@@ -27,10 +27,10 @@ function textOf(msg: Message): string {
 function ToolStatus({ call }: { call: ToolCallInfo }) {
   const cls =
     call.status === "running"
-      ? "border-sky-500/40 text-sky-200"
+      ? "border-info/40 text-info"
       : call.status === "done"
-        ? "border-emerald-500/35 text-emerald-200"
-        : "border-rose-500/40 text-rose-200";
+        ? "border-success/35 text-success"
+        : "border-danger/40 text-danger";
   return (
     <div className={`rounded-md border bg-bg px-2 py-1.5 ${cls}`}>
       <div className="flex items-center justify-between gap-2">

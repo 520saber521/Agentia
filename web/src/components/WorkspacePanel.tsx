@@ -220,7 +220,7 @@ export function WorkspacePanel() {
 
         {error && !loading && (
           <div className="px-3 py-4 text-center">
-            <div className="text-[10px] text-rose-400">{error}</div>
+            <div className="text-[10px] text-danger">{error}</div>
             <button
               type="button"
               onClick={loadTree}

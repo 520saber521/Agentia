@@ -5,6 +5,7 @@ import { fetchArtifactContent, saveArtifactVersion, describeApiError } from "../
 import type { Artifact } from "../types";
 import { VersionHistoryPanel } from "./VersionHistoryPanel";
 import { formatHtml } from "../formatHtml";
+import { useTheme } from "../hooks/useTheme";
 
 interface Props {
   artifact: Artifact;
@@ -47,6 +48,7 @@ function detectLanguage(artifact: Artifact): string {
 }
 
 export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: Props) {
+  const { theme } = useTheme();
   const [content, setContent] = useState<string | null>(null);
   const [originalContent, setOriginalContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -182,10 +184,10 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
 
         <div className="flex items-center gap-2 shrink-0">
           {saveStatus === "success" && (
-            <span className="text-xs text-emerald-400/80">已保存</span>
+            <span className="text-xs text-success">已保存</span>
           )}
           {saveStatus === "error" && (
-            <span className="text-xs text-red-500/80 max-w-64 truncate" title={saveError ?? ""}>
+            <span className="text-xs text-danger max-w-64 truncate" title={saveError ?? ""}>
               保存失败：{saveError ?? "可重试"}
             </span>
           )}
@@ -221,7 +223,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           )}
           {loadError && (
             <div className="flex flex-col items-center justify-center h-full gap-3">
-              <div className="text-sm text-red-500/80">{loadError}</div>
+              <div className="text-sm text-danger">{loadError}</div>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
@@ -237,7 +239,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
               language={language}
               value={content}
               onChange={(v) => setContent(v ?? "")}
-              theme="vs-dark"
+              theme={theme === "dark" ? "vs-dark" : "vs"}
               options={{
                 fontSize: 13,
                 fontFamily: "'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace",

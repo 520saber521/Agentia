@@ -77,7 +77,7 @@ function FileIcon({ name, mimeType, size }: { name: string; mimeType?: string; s
   const kind = fileIcon(name, mimeType);
 
   const colors: Record<string, string> = {
-    img: "bg-rose-500/10 border-rose-500/20 text-rose-400",
+    img: "bg-rose-500/10 border-rose-500/20 text-danger",
     code: "bg-cyan-500/10 border-cyan-500/20 text-cyan-400",
     doc: "bg-purple-500/10 border-purple-500/20 text-purple-400",
     archive: "bg-amber-500/10 border-amber-500/20 text-amber-400",
@@ -179,7 +179,7 @@ function FilePreviewContent({ file }: { file: PreviewFile }) {
     return <div className="grid h-full place-items-center text-xs text-muted animate-pulse">加载中...</div>;
   }
   if (fetchError) {
-    return <div className="grid h-full place-items-center text-xs text-rose-400">加载失败</div>;
+    return <div className="grid h-full place-items-center text-xs text-danger">加载失败</div>;
   }
   if (content === undefined || content === null) {
     return <div className="grid h-full place-items-center text-xs text-muted">无法预览此文件类型</div>;

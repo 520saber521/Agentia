@@ -242,7 +242,7 @@ export function NewConversationDialog({ open, onClose }: Props) {
         </div>
 
         {error && (
-          <p className="mt-3 text-xs text-red-400" role="alert">
+          <p className="mt-3 text-xs text-danger" role="alert">
             {error}
           </p>
         )}
