@@ -271,13 +271,11 @@ export type ServerEvent =
   | {
       type: "message_pinned";
       ts: number;
-      conversation_id: string;
       message: Message;
     }
   | {
       type: "message_unpinned";
       ts: number;
-      conversation_id: string;
       message: Message;
     }
   | {

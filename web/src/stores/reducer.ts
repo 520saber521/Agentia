@@ -298,12 +298,18 @@ export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
 
     case "message_pinned":
     case "message_unpinned": {
-      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const convId = evt.message.conversation_id;
+      if (convId !== state.currentConvId) return { next: state, effects };
       const pinned = evt.type === "message_pinned";
       const messages = state.messages.map((m) =>
         m.id === evt.message.id ? { ...m, pinned } : m
       );
-      return { next: { ...state, messages }, effects };
+      const delta = pinned ? 1 : -1;
+      const currentPinned = state.contextStats?.pinned ?? 0;
+      const contextStats = state.contextStats
+        ? { ...state.contextStats, pinned: Math.max(0, currentPinned + delta) }
+        : null;
+      return { next: { ...state, messages, contextStats }, effects };
     }
 
     case "context_info": {

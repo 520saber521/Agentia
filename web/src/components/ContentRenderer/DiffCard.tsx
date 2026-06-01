@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { applyDiffArtifact, describeApiError } from "../../api/client";
+import type { Artifact, Message } from "../../types";
 
 interface Props {
   diff?: string;
@@ -10,7 +11,7 @@ interface Props {
   appliedArtifactId?: string;
   summary?: string;
   fileName?: string;
-  onApplied?: () => void;
+  onApplied?: (result: { artifact: Artifact; message: Message }) => void;
 }
 
 type ApplyStatus = "idle" | "applying" | "applied" | "error";
@@ -280,7 +281,7 @@ export function DiffCard({
     setStatus("applying");
     setError(null);
     try {
-      await applyDiffArtifact({
+      const result = await applyDiffArtifact({
         base_artifact_id: baseArtifactId!,
         before,
         after,
@@ -288,7 +289,7 @@ export function DiffCard({
         file_name: fileName,
       });
       setStatus("applied");
-      onApplied?.();
+      onApplied?.(result);
     } catch (err) {
       setStatus("error");
       setError(describeApiError(err));

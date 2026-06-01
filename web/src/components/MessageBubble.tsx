@@ -104,11 +104,25 @@ function MessageActions({ msg, streaming, canCancel }: { msg: Message; streaming
   }
 
   async function handlePin() {
+    const nextPinned = !msg.pinned;
+    useChatStore.setState((s) => {
+      const idx = s.messages.findIndex((m) => m.id === msg.id);
+      if (idx < 0) return {};
+      const messages = s.messages.slice();
+      messages[idx] = { ...messages[idx], pinned: nextPinned };
+      return { messages };
+    });
     try {
-      if (msg.pinned) await unpinMessage(msg.id);
-      else await pinMessage(msg.id);
+      if (nextPinned) await pinMessage(msg.id);
+      else await unpinMessage(msg.id);
     } catch {
-      // WebSocket will keep the final state in sync when the operation succeeds.
+      useChatStore.setState((s) => {
+        const idx = s.messages.findIndex((m) => m.id === msg.id);
+        if (idx < 0) return {};
+        const messages = s.messages.slice();
+        messages[idx] = { ...messages[idx], pinned: !nextPinned };
+        return { messages };
+      });
     }
   }
 

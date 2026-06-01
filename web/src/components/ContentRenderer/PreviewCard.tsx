@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { fetchArtifactContent } from "../../api/client";
+import type { Artifact, Message } from "../../types";
 
 interface Props {
   artifactId: string;
@@ -26,6 +27,8 @@ function fallbackHtml(title: string): string {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle(title)}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#10131a;color:#eef2ff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif}.card{max-width:560px;padding:28px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:#171b24;box-shadow:0 24px 80px rgba(0,0,0,.35)}h1{margin:0 0 10px;font-size:22px}p{margin:0;color:#aab3c5;line-height:1.8}</style></head><body><main class="card"><h1>预览暂不可用</h1><p>该产物没有返回可直接渲染的完整 HTML。你仍可以打开编辑器查看和修复源码。</p></main></body></html>`;
 }
 
+void fallbackHtml;
+
 function highlightHtml(code: string): string {
   return code
     .replace(/&/g, "&amp;")
@@ -38,6 +41,10 @@ function highlightHtml(code: string): string {
 const CODE_STYLE = ".syn-tag{color:#f0abfc}.syn-attr{color:#93c5fd}.syn-string{color:#86efac}";
 
 export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previewUrl, onEdit }: Props) {
+  const [activeArtifactId, setActiveArtifactId] = useState(artifactId);
+  const [activeUrl, setActiveUrl] = useState(url);
+  const [activePreviewUrl, setActivePreviewUrl] = useState(previewUrl);
+  const [activeFileSize, setActiveFileSize] = useState(fileSize);
   const [expanded, setExpanded] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [mode, setMode] = useState<"preview" | "code">("preview");
@@ -48,26 +55,54 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
 
   const isHtml = mimeType.toLowerCase().includes("html");
   const isImage = mimeType.startsWith("image/");
-  const sourceUrl = url || (artifactId ? `/api/artifacts/${encodeURIComponent(artifactId)}/content` : "");
-  const resolvedPreviewUrl = previewUrl || (artifactId ? `/preview/${encodeURIComponent(artifactId)}` : sourceUrl);
+  const sourceUrl = activeUrl || (activeArtifactId ? `/api/artifacts/${encodeURIComponent(activeArtifactId)}/content` : "");
+  const resolvedPreviewUrl = activePreviewUrl || (activeArtifactId ? `/preview/${encodeURIComponent(activeArtifactId)}` : sourceUrl);
   const highlighted = useMemo(() => highlightHtml(content || ""), [content]);
 
   const loadContent = useCallback(() => {
-    if (!artifactId || content !== null || loading) return;
+    if (!activeArtifactId || content !== null || loading) return;
     setLoading(true);
     setError(null);
-    fetchArtifactContent(artifactId)
+    fetchArtifactContent(activeArtifactId)
       .then((value) => setContent(value.trim() || ""))
       .catch((err) => {
         setContent("");
         setError(err instanceof Error ? err.message : "源码加载失败");
       })
       .finally(() => setLoading(false));
-  }, [artifactId, content, loading]);
+  }, [activeArtifactId, content, loading]);
 
   useEffect(() => {
     if ((expanded || fullscreen) && mode === "code") loadContent();
   }, [expanded, fullscreen, mode, loadContent]);
+
+  useEffect(() => {
+    setActiveArtifactId(artifactId);
+    setActiveUrl(url);
+    setActivePreviewUrl(previewUrl);
+    setActiveFileSize(fileSize);
+    setContent(null);
+    setError(null);
+  }, [artifactId, fileSize, previewUrl, url]);
+
+  useEffect(() => {
+    function handleApplied(evt: Event) {
+      const detail = (evt as CustomEvent<{ artifact?: Artifact; message?: Message }>).detail;
+      const artifact = detail?.artifact;
+      if (!artifact || artifact.parent_id !== activeArtifactId) return;
+
+      setActiveArtifactId(artifact.id);
+      setActiveUrl(artifact.url);
+      setActivePreviewUrl(artifact.preview_url);
+      setActiveFileSize(artifact.file_size);
+      setContent(null);
+      setError(null);
+      setMode("preview");
+    }
+
+    window.addEventListener("agenthub:artifact-applied", handleApplied);
+    return () => window.removeEventListener("agenthub:artifact-applied", handleApplied);
+  }, [activeArtifactId]);
 
   function copyCode() {
     if (!content) return;
@@ -91,7 +126,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
       )}
       {isImage ? (
         <div className="grid h-full place-items-center p-4">
-          <img src={sourceUrl} alt={title} className="max-h-full max-w-full rounded object-contain" />
+          <img key={activeArtifactId} src={sourceUrl} alt={title} className="max-h-full max-w-full rounded object-contain" />
         </div>
       ) : mode === "code" ? (
         <pre
@@ -100,6 +135,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
         />
       ) : (
         <iframe
+          key={activeArtifactId}
           title={title}
           src={resolvedPreviewUrl}
           className="h-full w-full border-0 bg-white"
@@ -125,25 +161,25 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-fg">{title}</div>
             <div className="mt-0.5 text-[10px] text-muted">
-              {isHtml ? "网页预览" : mimeType} · {formatSize(fileSize)}
+              {isHtml ? "网页预览" : mimeType} · {formatSize(activeFileSize)}
               {error ? ` · ${error}` : ""}
             </div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {onEdit && artifactId && (
+          {onEdit && activeArtifactId && (
             <span
               role="button"
               tabIndex={0}
               onClick={(e) => {
                 e.stopPropagation();
-                onEdit(artifactId);
+                onEdit(activeArtifactId);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   e.stopPropagation();
-                  onEdit(artifactId);
+                  onEdit(activeArtifactId);
                 }
               }}
               className="rounded-md border border-border px-2 py-1 text-[11px] text-muted hover:text-accent"
@@ -206,7 +242,7 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-panel px-4">
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-fg">{title}</div>
-              <div className="text-[10px] text-muted">全屏预览 · {formatSize(fileSize)}</div>
+              <div className="text-[10px] text-muted">全屏预览 · {formatSize(activeFileSize)}</div>
             </div>
             <div className="flex items-center gap-2">
               {isHtml && (
@@ -219,8 +255,8 @@ export function PreviewCard({ artifactId, title, mimeType, fileSize, url, previe
                   </button>
                 </>
               )}
-              {onEdit && artifactId && (
-                <button type="button" onClick={() => onEdit(artifactId)} className="rounded bg-accent px-3 py-1.5 text-xs text-white">
+              {onEdit && activeArtifactId && (
+                <button type="button" onClick={() => onEdit(activeArtifactId)} className="rounded bg-accent px-3 py-1.5 text-xs text-white">
                   编辑代码
                 </button>
               )}

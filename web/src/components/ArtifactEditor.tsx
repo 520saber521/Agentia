@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 
 import { fetchArtifactContent, saveArtifactVersion, describeApiError } from "../api/client";
 import type { Artifact } from "../types";
@@ -13,6 +13,13 @@ interface Props {
 }
 
 type SaveStatus = "idle" | "saving" | "success" | "error";
+
+interface DiffSelection {
+  version: Artifact;
+  previousVersion: Artifact;
+  before: string;
+  after: string;
+}
 
 const LANGUAGE_MAP: Record<string, string> = {
   js: "javascript",
@@ -54,10 +61,13 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
   const [saveError, setSaveError] = useState<string | null>(null);
   const [currentArtifact, setCurrentArtifact] = useState(artifact);
   const [showHistory, setShowHistory] = useState(false);
+  const [diffSelection, setDiffSelection] = useState<DiffSelection | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setCurrentArtifact(artifact);
+    setDiffSelection(null);
   }, [artifact]);
 
   useEffect(() => {
@@ -66,6 +76,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     setLoadError(null);
     setSaveStatus("idle");
     setSaveError(null);
+    setDiffSelection(null);
 
     fetchArtifactContent(currentArtifact.id)
       .then((c) => {
@@ -88,9 +99,11 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
   }, [currentArtifact.id]);
 
   const hasChanges = content !== null && content !== originalContent;
+  const language = detectLanguage(currentArtifact);
+  const isDiffMode = diffSelection !== null || diffLoading;
 
   const handleSave = useCallback(async () => {
-    if (content === null) return;
+    if (content === null || isDiffMode) return;
     setSaveStatus("saving");
     setSaveError(null);
 
@@ -113,7 +126,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
       setSaveStatus("error");
       setSaveError(describeApiError(err));
     }
-  }, [content, conversationId, currentArtifact, onSaved]);
+  }, [content, conversationId, currentArtifact, isDiffMode, onSaved]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -130,55 +143,84 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  const handleSelectVersion = useCallback(async (versionArtifactId: string, _versionNumber: number) => {
-    try {
-      setLoading(true);
-      setLoadError(null);
-      const c = await fetchArtifactContent(versionArtifactId);
-      setContent(c);
-      setOriginalContent(c);
-      setLoading(false);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "版本加载失败");
-      setLoading(false);
-    }
-  }, []);
+  const handleCompareVersion = useCallback(
+    async (version: Artifact, previousVersion: Artifact | null) => {
+      if (!previousVersion) {
+        setDiffSelection(null);
+        setLoading(true);
+        setLoadError(null);
+        try {
+          const c = await fetchArtifactContent(version.id);
+          setContent(c);
+          setOriginalContent(c);
+        } catch (err) {
+          setLoadError(err instanceof Error ? err.message : "版本加载失败");
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
 
-  const language = detectLanguage(currentArtifact);
+      setDiffLoading(true);
+      setDiffSelection(null);
+      setLoadError(null);
+      try {
+        const [before, after] = await Promise.all([
+          fetchArtifactContent(previousVersion.id),
+          fetchArtifactContent(version.id),
+        ]);
+        setDiffSelection({ version, previousVersion, before, after });
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Diff 加载失败");
+      } finally {
+        setDiffLoading(false);
+      }
+    },
+    [],
+  );
 
   return (
-    <div
-      ref={editorRef}
-      className="fixed inset-0 z-50 flex flex-col bg-bg"
-    >
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-panel shrink-0">
+    <div ref={editorRef} className="fixed inset-0 z-50 flex flex-col bg-[#05080d]">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[#1d2633] bg-[#070b11] shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
             onClick={onClose}
-            className="text-sm text-muted hover:text-fg transition-colors shrink-0"
+            className="text-sm text-[#9aa7b8] hover:text-[#e5eefc] transition-colors shrink-0"
           >
             ← 返回
           </button>
-          <span className="w-px h-4 bg-border" />
-          <span className="text-sm font-medium text-fg truncate">
+          <span className="w-px h-4 bg-[#1d2633]" />
+          <span className="text-sm font-medium text-[#e5eefc] truncate">
             {currentArtifact.title}
           </span>
-          <span className="text-[10px] text-muted shrink-0">
+          <span className="text-[10px] text-[#7f8a9b] shrink-0">
             v{currentArtifact.version}
           </span>
-          <span className="text-[10px] text-muted shrink-0">
-            {language}
-          </span>
-          {hasChanges && (
-            <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+          <span className="text-[10px] text-[#7f8a9b] shrink-0">{language}</span>
+          {isDiffMode && (
+            <span className="text-[10px] text-[#75d6ff] bg-[#12384b] px-1.5 py-0.5 rounded border border-[#23627d]">
+              Diff 视图
+            </span>
+          )}
+          {hasChanges && !isDiffMode && (
+            <span className="text-[10px] text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded">
               未保存的修改
             </span>
           )}
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {saveStatus === "success" && (
+          {diffSelection && (
+            <button
+              type="button"
+              onClick={() => setDiffSelection(null)}
+              className="px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-[#263242] text-[#b8c7df] hover:text-[#e5eefc] hover:bg-[#101a27] transition-colors"
+            >
+              编辑最新版本
+            </button>
+          )}
+          {saveStatus === "success" && !isDiffMode && (
             <span className="text-xs text-emerald-400/80">已保存</span>
           )}
           {saveStatus === "error" && (
@@ -191,8 +233,8 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
             onClick={() => setShowHistory(!showHistory)}
             className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md border transition-colors ${
               showHistory
-                ? "border-accent/30 text-accent bg-accent/5"
-                : "border-border text-muted hover:text-fg hover:bg-bg"
+                ? "border-[#23627d] text-[#75d6ff] bg-[#12384b]"
+                : "border-[#263242] text-[#9aa7b8] hover:text-[#e5eefc] hover:bg-[#101a27]"
             }`}
           >
             版本历史
@@ -200,35 +242,66 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           <button
             type="button"
             onClick={handleSave}
-            disabled={saveStatus === "saving" || content === null || !hasChanges}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={saveStatus === "saving" || content === null || !hasChanges || isDiffMode}
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-[#2388ff] text-white hover:bg-[#3c98ff] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {saveStatus === "saving" ? "保存中…" : hasChanges ? "保存 (Ctrl+S)" : "已是最新"}
+            {saveStatus === "saving" ? "保存中..." : hasChanges ? "保存 (Ctrl+S)" : "已是最新"}
           </button>
         </div>
       </div>
 
+      {diffSelection && (
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-[#1d2633] bg-[#080d14] text-xs text-[#8d99aa]">
+          <span className="font-mono text-[#b8c7df]">
+            v{diffSelection.previousVersion.version || 1} → v{diffSelection.version.version || 1}
+          </span>
+          <span className="truncate">{diffSelection.version.title}</span>
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 flex">
-        {/* Editor area */}
         <div className="flex-1 min-w-0">
-          {loading && (
-            <div className="flex items-center justify-center h-full text-sm text-muted">
-              加载中…
+          {(loading || diffLoading) && (
+            <div className="flex items-center justify-center h-full text-sm text-[#8d99aa]">
+              {diffLoading ? "加载 Diff..." : "加载中..."}
             </div>
           )}
-          {loadError && (
+          {loadError && !loading && !diffLoading && (
             <div className="flex flex-col items-center justify-center h-full gap-3">
               <div className="text-sm text-red-500/80">{loadError}</div>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="text-xs text-accent hover:underline"
+                className="text-xs text-[#75d6ff] hover:underline"
               >
                 重试
               </button>
             </div>
           )}
-          {!loading && !loadError && content !== null && (
+          {!loading && !diffLoading && !loadError && diffSelection && (
+            <DiffEditor
+              height="100%"
+              language={language}
+              original={diffSelection.before}
+              modified={diffSelection.after}
+              theme="vs-dark"
+              options={{
+                readOnly: true,
+                renderSideBySide: false,
+                fontSize: 13,
+                fontFamily: "'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace",
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                wordWrap: "on",
+                lineNumbers: "on",
+                renderWhitespace: "selection",
+                padding: { top: 12 },
+                originalEditable: false,
+              }}
+            />
+          )}
+          {!loading && !diffLoading && !loadError && !diffSelection && content !== null && (
             <Editor
               height="100%"
               language={language}
@@ -252,13 +325,13 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           )}
         </div>
 
-        {/* Version history sidebar */}
         {showHistory && (
-          <div className="w-72 border-l border-border bg-panel flex flex-col min-h-0">
+          <div className="w-80 border-l border-[#1d2633] bg-[#080d14] flex flex-col min-h-0">
             <VersionHistoryPanel
               artifactId={currentArtifact.id}
               currentVersion={currentArtifact.version || 1}
-              onSelectVersion={handleSelectVersion}
+              selectedVersionId={diffSelection?.version.id ?? null}
+              onCompareVersion={handleCompareVersion}
             />
           </div>
         )}
