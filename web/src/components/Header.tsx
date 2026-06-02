@@ -1,6 +1,6 @@
 import { useChatStore } from "../stores/useChatStore";
-import { useTheme } from "../hooks/useTheme";
-import { Menu, Sun, Moon } from "./icons";
+import { ThemeToggle } from "./ThemeToggle";
+import { Menu } from "./icons";
 
 const STATUS_LABELS: Record<string, { label: string; cls: string; dot: string }> = {
   connected: {
@@ -25,7 +25,6 @@ export function Header() {
   const serverInfo = useChatStore((s) => s.serverInfo);
   const cur = useChatStore((s) => s.currentConvId);
   const { label, cls, dot } = STATUS_LABELS[status] ?? STATUS_LABELS.disconnected;
-  const { theme, toggle: toggleTheme } = useTheme();
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-4 border-b border-border bg-bg/90 backdrop-blur-lg px-5">
@@ -54,15 +53,7 @@ export function Header() {
       )}
 
       <div className="ml-auto flex items-center gap-3">
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className="rounded p-1.5 text-muted hover:text-fg transition-colors"
-          aria-label={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
-          title={theme === "dark" ? "亮色模式" : "暗色模式"}
-        >
-          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </button>
+        <ThemeToggle />
         <div className="min-w-0 truncate text-xs text-muted">
           {cur ? (
             <>
