@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
 import { useChatStore } from "../stores/useChatStore";
 import { MessageBubble } from "./MessageBubble";
@@ -21,7 +20,6 @@ export function MessagePanel({ onEditArtifact }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottomRef = useRef(true);
   const scrollRafRef = useRef<number | null>(null);
-  const prefersReducedMotion = useReducedMotion();
 
   const currentTasks = currentConvId
     ? Object.values(tasks ?? {})
@@ -30,6 +28,12 @@ export function MessagePanel({ onEditArtifact }: Props) {
     : [];
 
   const currentConv = conversations.find((c) => c.id === currentConvId);
+
+  const typingAgentIds = Object.keys(agentTyping);
+  const typingAgents = typingAgentIds
+    .map((id) => agents.find((a) => a.id === id))
+    .filter((a): a is NonNullable<typeof a> => a != null);
+
   const memberAgents = (currentConv?.members ?? [])
     .filter((m) => m.member_type === "agent")
     .map((m) => agents.find((a) => a.id === m.member_id))
@@ -81,7 +85,7 @@ export function MessagePanel({ onEditArtifact }: Props) {
               <div className="truncate text-sm font-semibold text-fg">
                 {currentConv.title}
               </div>
-              <div className="text-2xs text-muted">
+              <div className="text-[10.5px] text-muted">
                 {currentConv.type === "group" ? "群聊协作" : "单聊"} · {currentConv.members.length} 成员
               </div>
             </div>
@@ -92,17 +96,17 @@ export function MessagePanel({ onEditArtifact }: Props) {
                   className="flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-bg px-2 py-1"
                   title={`${agent.name} · ${agent.capabilities.join(", ")}`}
                 >
-                  <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-3xs text-accent">
+                  <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-[10px] text-accent">
                     {agent.avatar || agent.name.charAt(0).toUpperCase()}
                   </span>
-                  <span className="max-w-[10rem] truncate text-xs text-fg">
+                  <span className="max-w-[10rem] truncate text-[11px] text-fg">
                     {agent.name}
                   </span>
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
                       agent.api_key_configured || agent.adapter_type === "mock"
-                        ? "bg-success"
-                        : "bg-warning"
+                        ? "bg-emerald-400"
+                        : "bg-amber-400"
                     }`}
                   />
                 </div>
@@ -114,7 +118,7 @@ export function MessagePanel({ onEditArtifact }: Props) {
 
       {showGraph && (
         <div className="shrink-0 border-b border-border bg-bg/80">
-          <AgentGraph height={220} />
+          <AgentGraph height={180} />
         </div>
       )}
 
@@ -128,35 +132,37 @@ export function MessagePanel({ onEditArtifact }: Props) {
             对话还是空的，在下方输入消息即可开始。
           </div>
         )}
-        <AnimatePresence initial={false}>
-          {messages.map((m) => (
-            <motion.div
-              key={m.id}
-              initial={prefersReducedMotion ? undefined : { opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
-            >
-              <MessageBubble
-                msg={m}
-                streaming={streamingIds.includes(m.id)}
-                onEditArtifact={onEditArtifact}
-              />
-            </motion.div>
-          ))}
-        </AnimatePresence>
+        {messages.map((m) => (
+          <MessageBubble
+            key={m.id}
+            msg={m}
+            streaming={streamingIds.includes(m.id)}
+            onEditArtifact={onEditArtifact}
+          />
+        ))}
         {currentTasks.length > 0 && (
           <>
             <CollaborationProgressCard tasks={currentTasks} />
           </>
         )}
-        {agentTyping && (
-          <div className="animate-fade-in px-3 text-xs text-muted inline-flex items-center gap-1.5">
-            Agent 正在思考
-            <span className="inline-flex items-center gap-0.5">
-              <span className="inline-block h-1 w-1 rounded-full bg-accent animate-dot-pulse" />
-              <span className="inline-block h-1 w-1 rounded-full bg-accent animate-dot-pulse" style={{ animationDelay: "0.16s" }} />
-              <span className="inline-block h-1 w-1 rounded-full bg-accent animate-dot-pulse" style={{ animationDelay: "0.32s" }} />
-            </span>
+        {typingAgents.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-3">
+            {typingAgents.map((agent) => (
+              <div
+                key={agent.id}
+                className="animate-fade-in flex items-center gap-1.5 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-xs text-muted"
+              >
+                <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-[10px] text-accent">
+                  {agent.avatar || agent.name.charAt(0).toUpperCase()}
+                </span>
+                <span className="max-w-[12ch] truncate">{agent.name}</span>
+                <span className="inline-flex gap-0.5">
+                  <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:0ms]" />
+                  <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:150ms]" />
+                  <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:300ms]" />
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </div>

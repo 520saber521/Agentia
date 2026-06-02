@@ -1,5 +1,5 @@
 import { motion } from "framer-motion"
-import { useTheme } from "../../hooks/useTheme"
+import { memo, useCallback } from "react"
 
 const DOMAIN_COLORS: Record<string, string> = {
   frontend: "#38bdf8",
@@ -11,7 +11,7 @@ const DOMAIN_COLORS: Record<string, string> = {
   agent_comm: "#e2e8f0",
 }
 
-const NODE_SIZE = 58
+const NODE_RADIUS = 26
 
 interface Props {
   id: string
@@ -27,7 +27,7 @@ interface Props {
   onDragEnd?: () => void
 }
 
-export function AgentNode({
+export const AgentNode = memo(function AgentNode({
   id,
   role,
   x,
@@ -40,14 +40,9 @@ export function AgentNode({
   onDrag,
   onDragEnd,
 }: Props) {
-  const { theme } = useTheme()
   const normalizedDomain = (domain || "").toLowerCase()
   const color = DOMAIN_COLORS[normalizedDomain] || "#38bdf8"
   const isBusy = status === "BUSY"
-  const isDark = theme === "dark"
-  const nodeFill = isOrchestrator ? (isDark ? "#07111f" : "#f1f5f9") : (isDark ? "#05070a" : "#f8fafc")
-  const textFill = isDark ? "#f8fafc" : "#0f172a"
-  const labelFill = isDark ? "#e2e8f0" : "#334155"
   const shortRole = isOrchestrator
     ? "ORCH"
     : (domain || role || "agent").slice(0, 7).toUpperCase()
@@ -59,90 +54,101 @@ export function AgentNode({
       .map((part) => part[0]?.toUpperCase())
       .join("") || "AG"
 
+  const handlePointerDown = useCallback((event: React.PointerEvent) => {
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    onDragStart?.(id, event.clientX, event.clientY)
+  }, [id, onDragStart])
+
+  const handlePointerMove = useCallback((event: React.PointerEvent) => {
+    if (event.buttons !== 1) return
+    event.stopPropagation()
+    onDrag?.(id, event.clientX, event.clientY)
+  }, [id, onDrag])
+
+  const handlePointerUp = useCallback((event: React.PointerEvent) => {
+    event.stopPropagation()
+    event.currentTarget.releasePointerCapture(event.pointerId)
+    onDragEnd?.()
+  }, [onDragEnd])
+
+  const handlePointerCancel = useCallback((event: React.PointerEvent) => {
+    event.stopPropagation()
+    onDragEnd?.()
+  }, [onDragEnd])
+
   return (
     <motion.g
-      initial={{ scale: 0, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      exit={{ scale: 0, opacity: 0 }}
-      transition={{ type: "spring", stiffness: 220, damping: 18 }}
+      animate={{ x, y }}
+      transition={{
+        type: "spring",
+        stiffness: 280,
+        damping: 26,
+        mass: 0.6,
+      }}
       style={{ cursor: "grab", touchAction: "none" }}
-      onPointerDown={(event) => {
-        event.stopPropagation()
-        event.currentTarget.setPointerCapture(event.pointerId)
-        onDragStart?.(id, event.clientX, event.clientY)
-      }}
-      onPointerMove={(event) => {
-        if (event.buttons !== 1) return
-        event.stopPropagation()
-        onDrag?.(id, event.clientX, event.clientY)
-      }}
-      onPointerUp={(event) => {
-        event.stopPropagation()
-        event.currentTarget.releasePointerCapture(event.pointerId)
-        onDragEnd?.()
-      }}
-      onPointerCancel={(event) => {
-        event.stopPropagation()
-        onDragEnd?.()
-      }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
     >
       <motion.circle
-        cx={x}
-        cy={y}
-        r={NODE_SIZE / 2 + 15}
+        cx={0}
+        cy={0}
+        r={NODE_RADIUS + 12}
         fill="none"
         stroke={color}
         strokeWidth={1}
-        opacity={status === "IDLE" ? 0.16 : 0.32}
-        animate={isBusy ? { scale: [1, 1.12, 1], opacity: [0.3, 0.08, 0.3] } : undefined}
-        transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-        style={{ transformOrigin: `${x}px ${y}px` }}
+        animate={{ opacity: isBusy ? 0.3 : 0.14, scale: isBusy ? [1, 1.1, 1] : 1 }}
+        transition={isBusy
+          ? { duration: 1.6, repeat: Infinity, ease: "easeInOut" }
+          : { duration: 0.3 }
+        }
       />
 
       {isBusy && (
         <motion.circle
-          cx={x}
-          cy={y}
-          r={NODE_SIZE / 2 + 8}
+          cx={0}
+          cy={0}
+          r={NODE_RADIUS + 6}
           fill="none"
           stroke={color}
           strokeWidth={2}
-          strokeDasharray="9 5"
+          strokeDasharray="8 5"
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-          style={{ transformOrigin: `${x}px ${y}px` }}
         />
       )}
 
       <circle
-        cx={x}
-        cy={y}
-        r={NODE_SIZE / 2}
-        fill={nodeFill}
+        cx={0}
+        cy={0}
+        r={NODE_RADIUS}
+        fill={isOrchestrator ? "#07111f" : "#05070a"}
         stroke={color}
         strokeWidth={2}
-        filter={`drop-shadow(0 0 18px ${color}55)`}
+        filter={`drop-shadow(0 0 14px ${color}55)`}
       />
 
       <text
-        x={x}
-        y={y - 6}
+        x={0}
+        y={-5}
         textAnchor="middle"
         dominantBaseline="central"
-        fontSize={15}
+        fontSize={14}
         fontWeight={800}
-        fill={textFill}
+        fill="#f8fafc"
         fontFamily="Cascadia Mono, Consolas, monospace"
       >
         {initials}
       </text>
 
       <text
-        x={x}
-        y={y + 13}
+        x={0}
+        y={11}
         textAnchor="middle"
         dominantBaseline="central"
-        fontSize={7.5}
+        fontSize={7}
         fill={color}
         fontFamily="Cascadia Mono, Consolas, monospace"
         letterSpacing={0}
@@ -152,17 +158,17 @@ export function AgentNode({
 
       {agentName && (
         <text
-          x={x}
-          y={y + NODE_SIZE / 2 + 16}
+          x={0}
+          y={NODE_RADIUS + 14}
           textAnchor="middle"
           dominantBaseline="central"
-          fontSize={9.5}
-          fill={labelFill}
+          fontSize={9}
+          fill="#e2e8f0"
           fontFamily="system-ui, sans-serif"
         >
-          {agentName.length > 16 ? agentName.slice(0, 16) + "\u2026" : agentName}
+          {agentName.length > 14 ? agentName.slice(0, 14) + "\u2026" : agentName}
         </text>
       )}
     </motion.g>
   )
-}
+})

@@ -86,10 +86,7 @@ def _is_complete_html(content: str | None) -> bool:
     lower = value.lower()
     return (
         ("<!doctype html" in lower or "<html" in lower)
-        and "<body" in lower
-        and "</body>" in lower
-        and "</html>" in lower
-        and not lower.lstrip().startswith("<!doctype html>\n```")
+        and ("</html>" in lower)
     )
 
 

@@ -49,7 +49,11 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
           appliedArtifactId={stringValue(content.applied_artifact_id)}
           summary={stringValue(content.summary)}
           fileName={stringValue(content.fileName) ?? stringValue(content.file_name)}
-          onApplied={() => window.dispatchEvent(new CustomEvent("agenthub:artifact-applied"))}
+          onApplied={(result) => {
+            window.dispatchEvent(
+              new CustomEvent("agenthub:artifact-applied", { detail: result }),
+            );
+          }}
         />
       );
 

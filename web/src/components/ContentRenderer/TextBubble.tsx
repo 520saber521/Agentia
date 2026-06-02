@@ -1,7 +1,6 @@
 import React, { Fragment, useMemo } from "react";
 import { marked } from "marked";
 import { CodeBlock } from "./CodeBlock";
-import { FilePreviewPane, extractFilesFromText } from "./FilePreviewPane";
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -27,6 +26,36 @@ function tryJsonParse(text: string): Record<string, unknown> | null {
     const trimmed = text.trim();
     if (!trimmed.startsWith("{")) return null;
     return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function findMatchingBrace(text: string, openIdx: number): number {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = openIdx; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") { depth++; continue; }
+    if (ch === "}") { depth--; if (depth === 0) return i; continue; }
+  }
+  return -1;
+}
+
+function tryParseAnyJson(text: string, startPos: number): { obj: Record<string, unknown>; idx: number } | null {
+  const braceIdx = text.indexOf("{", startPos);
+  if (braceIdx === -1) return null;
+  const closeIdx = findMatchingBrace(text, braceIdx);
+  if (closeIdx === -1) return null;
+  const candidate = text.slice(braceIdx, closeIdx + 1);
+  try {
+    const obj = JSON.parse(candidate) as Record<string, unknown>;
+    return { obj, idx: braceIdx };
   } catch {
     return null;
   }
@@ -99,33 +128,82 @@ function parseJsonWrapper(text: string): ParsedWrapper | null {
   return null;
 }
 
-function tryParseJsonAt(text: string, startPos: number): { obj: Record<string, unknown>; braceIdx: number } | null {
-  const braceIdx = text.indexOf("{", startPos);
-  if (braceIdx === -1) return null;
-  const candidate = text.slice(braceIdx);
-  try {
-    const obj = JSON.parse(candidate) as Record<string, unknown>;
-    return { obj, braceIdx };
-  } catch {
-    return null;
+
+function tryExtractCreateArtifact(text: string): ParsedWrapper | null {
+  if (!text.includes('"create_artifact"')) return null;
+
+  const prefixEnd = text.indexOf('{"name"');
+  const prefix = prefixEnd > 0 ? text.slice(0, prefixEnd).trim() : "";
+
+  const titleM = text.match(/"title"\s*:\s*"((?:\\"|[^"])*?)"/);
+  const title = titleM ? titleM[1].replace(/\\"/g, '"').replace(/\\n/g, "\n") : "untitled";
+
+  const kindM = text.match(/"kind"\s*:\s*"(preview|file|code)"/);
+  const kind = (kindM ? kindM[1] : "file") as "file" | "preview" | "code";
+
+  const fileM = text.match(/"file_name"\s*:\s*"((?:\\"|[^"])*?)"/);
+  const fileName = fileM ? fileM[1].replace(/\\"/g, '"') : title;
+
+  const mimeM = text.match(/"mime_type"\s*:\s*"((?:\\"|[^"])*?)"/);
+  const mimeType = mimeM ? mimeM[1] : kind === "file" ? "text/markdown" : "text/html";
+
+  const contentMarker = '"content"';
+  const contentStart = text.indexOf(contentMarker);
+  if (contentStart === -1) return null;
+
+  const colonIdx = text.indexOf(":", contentStart);
+  if (colonIdx === -1) return null;
+
+  let quoteIdx = -1;
+  for (let i = colonIdx + 1; i < text.length; i++) {
+    if (text[i] === '"') { quoteIdx = i; break; }
+    if (text[i] !== " " && text[i] !== "\t" && text[i] !== "\n" && text[i] !== "\r") break;
   }
+  if (quoteIdx === -1) return null;
+
+  let depth = 0;
+  let inString = true;
+  let escape = false;
+  let contentEnd = -1;
+  for (let i = quoteIdx + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') {
+      const rest = text.slice(i + 1);
+      const trimmed = rest.replace(/^\s+/, "");
+      if (trimmed.startsWith("}") || trimmed.startsWith(",")) {
+        contentEnd = i;
+        break;
+      }
+      continue;
+    }
+  }
+
+  if (contentEnd === -1) return null;
+
+  const rawContent = text.slice(quoteIdx + 1, contentEnd);
+  const content = rawContent
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
+
+  if (!content || content.length < 10) return null;
+
+  return { kind, title, fileName, mimeType, content, prefix, rawArgs: {} };
 }
+
 
 function findEmbeddedWrapper(text: string): ParsedWrapper | null {
   let searchFrom = 0;
   while (true) {
-    const braceIdx = text.indexOf("{", searchFrom);
-    if (braceIdx === -1) return null;
-
-    const result = tryParseJsonAt(text, searchFrom);
-    if (!result) {
-      searchFrom = braceIdx + 1;
-      continue;
-    }
+    const result = tryParseAnyJson(text, searchFrom);
+    if (!result) break;
 
     const args = (result.obj.arguments ?? result.obj.args ?? result.obj.parameters) as Record<string, unknown> | undefined;
     if (!args) {
-      searchFrom = result.braceIdx + 1;
+      searchFrom = result.idx + 1;
       continue;
     }
 
@@ -136,16 +214,16 @@ function findEmbeddedWrapper(text: string): ParsedWrapper | null {
         return {
           kind: "text",
           content: unHtmlify(content),
-          prefix: text.slice(0, result.braceIdx).trim(),
+          prefix: text.slice(0, result.idx).trim(),
         };
       }
-      searchFrom = result.braceIdx + 1;
+      searchFrom = result.idx + 1;
       continue;
     }
 
     const fileContent = stringVal(args.content);
     if (!fileContent) {
-      searchFrom = result.braceIdx + 1;
+      searchFrom = result.idx + 1;
       continue;
     }
 
@@ -155,10 +233,12 @@ function findEmbeddedWrapper(text: string): ParsedWrapper | null {
       fileName: stringVal(args.file_name ?? args.fileName) ?? stringVal(args.title) ?? "untitled",
       mimeType: stringVal(args.mime_type ?? args.mimeType) ?? (kind === "file" ? "text/markdown" : "text/html"),
       content: fileContent,
-      prefix: text.slice(0, result.braceIdx).trim(),
+      prefix: text.slice(0, result.idx).trim(),
       rawArgs: args,
     };
   }
+
+  return tryExtractCreateArtifact(text);
 }
 
 /* ── HTML / Markdown helpers ──────────────────────────────────── */
@@ -267,7 +347,7 @@ function renderInline(text: string) {
       case "italic":
         return <em key={i} className="italic text-fg/90">{seg.text}</em>;
       case "code":
-        return <code key={i} className="px-1 py-[1px] rounded bg-border/50 text-2xs font-mono text-accent">{seg.text}</code>;
+        return <code key={i} className="px-1 py-[1px] rounded bg-border/50 text-[12px] font-mono text-accent">{seg.text}</code>;
       case "link":
         return (
           <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer"
@@ -460,18 +540,18 @@ function FileCardView({ wrapper }: { wrapper: ParsedWrapper }) {
   return (
     <div className="text-sm leading-relaxed space-y-2">
       {wrapper.prefix && <p className="whitespace-pre-wrap break-words">{wrapper.prefix}</p>}
-      <div className="rounded-xl border border-border bg-bg overflow-hidden shadow-md">
+      <div className="rounded-xl border border-border bg-bg overflow-hidden shadow-[0_4px_16px_rgba(0,0,0,0.1)]">
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border bg-bg/60">
           <span className="text-purple-400">{FILE_ICON}</span>
           <span className="text-xs font-medium text-fg truncate">{wrapper.fileName}</span>
-          <span className="text-4xs text-muted">{wrapper.mimeType}</span>
+          <span className="text-[10px] text-muted">{wrapper.mimeType}</span>
           {wrapper.title && wrapper.title !== wrapper.fileName && (
-            <span className="text-4xs text-muted/60 ml-auto truncate max-w-[40%]">{wrapper.title}</span>
+            <span className="text-[10px] text-muted/60 ml-auto truncate max-w-[40%]">{wrapper.title}</span>
           )}
         </div>
         <div className="max-h-[500px] overflow-auto">
           <div
-            className="px-4 py-3 text-sm leading-relaxed text-fg markdown-body"
+            className="px-4 py-3 text-[14px] leading-relaxed text-fg markdown-body"
             dangerouslySetInnerHTML={{ __html: html }}
           />
         </div>
@@ -482,50 +562,12 @@ function FileCardView({ wrapper }: { wrapper: ParsedWrapper }) {
 
 /* ── Main component ───────────────────────────────────────────── */
 
-function hasMultiCodeFences(text: string): boolean {
-  const matches = text.match(/```/g);
-  return matches !== null && matches.length >= 6;
-}
-
 export const TextBubble = React.memo(function TextBubble({ text }: Props) {
   const wrapper = useMemo(() => {
     const top = parseJsonWrapper(text);
     if (top) return top;
     return findEmbeddedWrapper(text);
   }, [text]);
-
-  const multiFiles = useMemo(() => {
-    if (wrapper?.kind === "file") return null;
-    if (!hasMultiCodeFences(text)) return null;
-    const files = extractFilesFromText(text);
-    if (files.length >= 3) return files;
-    return null;
-  }, [text, wrapper]);
-
-  const treePrefix = useMemo(() => {
-    if (!multiFiles) return null;
-    const firstFenceIdx = text.indexOf("```");
-    if (firstFenceIdx <= 0) return null;
-    const prefix = text.slice(0, firstFenceIdx).trim();
-    if (!prefix) return null;
-    const treeLines = prefix.split("\n").filter((l) => l.trim());
-    const treeChars = treeLines.join("").length;
-    const boxChars = (prefix.match(/[│├└─┌┐┘┤┬┴┼]/g) || []).length;
-    return boxChars >= 3 && treeChars < 3000 ? prefix : null;
-  }, [text, multiFiles]);
-
-  if (multiFiles) {
-    return (
-      <div className="text-sm leading-relaxed space-y-2">
-        {treePrefix && (
-          <pre className="text-3xs text-fg/80 whitespace-pre font-mono leading-tight bg-bg/50 rounded-lg p-3 border border-border overflow-x-auto">
-            {treePrefix}
-          </pre>
-        )}
-        <FilePreviewPane files={multiFiles} />
-      </div>
-    );
-  }
 
   if (wrapper?.kind === "file") {
     return <FileCardView wrapper={wrapper} />;

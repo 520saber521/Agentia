@@ -38,65 +38,8 @@ import { reduceEvent, type ChatSlice } from "./reducer";
 import { useToastStore } from "./useToastStore";
 
 /* ------------------------------------------------------------------ */
-/*  Stream-chunk batching: coalesce deltas per animation frame         */
+/*  Stream-chunk: processed directly through reducer for correctness   */
 /* ------------------------------------------------------------------ */
-
-let _streamAcc: Record<string, string> = {};
-let _rafId: number | null = null;
-let _storeGet: (() => ChatState) | null = null;
-let _storeSet: ((partial: any) => void) | null = null;
-
-function _flushStreamAcc() {
-  const acc = _streamAcc;
-  _streamAcc = {};
-  _rafId = null;
-  const get = _storeGet;
-  const set = _storeSet;
-  if (!get || !set) return;
-  const keys = Object.keys(acc);
-  if (keys.length === 0) return;
-
-  const state = get();
-  let messages = state.messages;
-  let changed = false;
-
-  for (const [mid, delta] of Object.entries(acc)) {
-    if (!delta) continue;
-    const idx = messages.findIndex((m) => m.id === mid);
-    if (idx < 0) continue;
-    if (!changed) messages = messages.slice();
-    const prev = messages[idx];
-    const prevText = (prev.content as any)?.text ?? "";
-
-    let newText: string;
-    if (!prevText) {
-      newText = delta;
-    } else if (prevText.endsWith(delta) || (delta.length > 12 && prevText.includes(delta))) {
-      newText = prevText;
-    } else {
-      const suffixLen = Math.min(32, prevText.length);
-      const suffix = prevText.slice(-suffixLen);
-      const maxOverlap = Math.min(suffixLen, delta.length);
-      let overlap = 0;
-      for (let size = maxOverlap; size > 0; size -= 1) {
-        if (suffix.endsWith(delta.slice(0, size))) {
-          overlap = size;
-          break;
-        }
-      }
-      newText = collapseImmediateRepeats(prevText + delta.slice(overlap));
-    }
-
-    messages[idx] = { ...prev, content: { type: "text", text: newText } as any };
-    changed = true;
-  }
-
-  if (changed) set({ messages });
-}
-
-function collapseImmediateRepeats(text: string): string {
-  return text.replace(/([\u4e00-\u9fff]{2,6})\1/g, "$1");
-}
 
 /* ------------------------------------------------------------------ */
 /*  Per-tab cache                                                      */
@@ -105,7 +48,8 @@ function collapseImmediateRepeats(text: string): string {
 export interface TabState {
   messages: Message[];
   streamingMessageIds: string[];
-  agentTyping: boolean;
+  /** Per-agent typing indicator: agent_id → is typing */
+  agentTyping: Record<string, boolean>;
   tasks: Record<string, import("../types").Task>;
   contextStats: {
     total: number;
@@ -124,7 +68,7 @@ function emptyTabState(): TabState {
   return {
     messages: [],
     streamingMessageIds: [],
-    agentTyping: false,
+    agentTyping: {},
     tasks: {},
     contextStats: null,
     agentGraphNodes: {},
@@ -173,7 +117,8 @@ export interface ChatState extends ChatSlice {
   currentConvId: string | null;
   messages: Message[];
   streamingMessageIds: string[];
-  agentTyping: boolean;
+  /** Per-agent typing indicator: agent_id → is typing */
+  agentTyping: Record<string, boolean>;
   agents: Agent[];
   agentGraphNodes: Record<string, AgentGraphNode>;
   agentGraphBeams: AgentGraphBeam[];
@@ -247,24 +192,6 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   /* ---- event dispatch (tab-aware) ---- */
 
   applyServerEvent(evt) {
-    // Cache get/set for RAF stream-chunk batching
-    _storeGet = get as any;
-    _storeSet = set as any;
-
-    // Batch stream_chunk events per animation frame to reduce renders
-    if (evt.type === "stream_chunk" && (evt as any).message_id) {
-      const s = get();
-      const cid = _eventConversationId(evt);
-      if (cid && cid === s.currentConvId) {
-        _streamAcc[(evt as any).message_id] =
-          (_streamAcc[(evt as any).message_id] || "") + ((evt as any).delta || "");
-        if (_rafId === null) {
-          _rafId = requestAnimationFrame(() => _flushStreamAcc());
-        }
-        return;
-      }
-    }
-
     const state = get();
     const cid = _eventConversationId(evt);
 

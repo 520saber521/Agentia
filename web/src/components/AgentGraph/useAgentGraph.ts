@@ -138,10 +138,12 @@ export function useAgentGraph(): UseAgentGraphReturn {
 
     for (const msg of convMessages) {
       if (msg.sender_type === "agent") {
+        const senderAgent = agents.find((a) => a.id === msg.sender_id)
+        const senderName = senderAgent?.name || msg.sender_id.slice(0, 8)
         events.push({
           id: `evt-msg-${msg.id}`,
           kind: "message",
-          label: `消息: ${msg.sender_id.slice(0, 8)}`,
+          label: `消息: ${senderName}`,
           at: msg.created_at,
         })
       }
