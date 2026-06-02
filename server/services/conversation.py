@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import asc, desc, or_, select
+from sqlalchemy import asc, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Conversation, ConversationMember, Message, new_id, now_ms
@@ -25,7 +25,6 @@ def conv_to_dict(
         "pinned": bool(c.pinned),
         "archived": bool(c.archived),
         "last_msg_preview": c.last_msg_preview,
-        "workspace_path": c.workspace_path,
         "owner_user_id": c.owner_user_id,
         "members": [
             {
@@ -45,72 +44,21 @@ async def list_conversations(
     include_archived: bool = False,
     query: str | None = None,
 ) -> list[dict[str, Any]]:
-    stmt = select(Conversation)
+    stmt = select(Conversation).order_by(desc(Conversation.pinned), desc(Conversation.updated_at))
     if not include_archived:
         stmt = stmt.where(Conversation.archived == 0)
-    q = (query or "").strip()
-    if q:
-        like = f"%{q}%"
-        stmt = stmt.where(
-            or_(
-                Conversation.title.like(like),
-                Conversation.last_msg_preview.like(like),
-            )
-        )
-    stmt = stmt.order_by(desc(Conversation.pinned), desc(Conversation.updated_at))
     convs = (await s.scalars(stmt)).all()
-    if not convs:
-        return []
-
-    # Single batch query: fetch all members for all loaded conversations
-    conv_ids = [c.id for c in convs]
-    all_members = (
-        await s.scalars(
-            select(ConversationMember).where(
-                ConversationMember.conversation_id.in_(conv_ids)
-            )
-        )
-    ).all()
-    members_by_conv: dict[str, list[ConversationMember]] = {}
-    for m in all_members:
-        members_by_conv.setdefault(m.conversation_id, []).append(m)
-
     out: list[dict[str, Any]] = []
     for c in convs:
-        out.append(conv_to_dict(c, members_by_conv.get(c.id, [])))
-    return out
-
-
-async def update_conversation(
-    s: AsyncSession,
-    conversation_id: str,
-    *,
-    title: str | None = None,
-    pinned: bool | None = None,
-    archived: bool | None = None,
-) -> Optional[dict[str, Any]]:
-    c = await s.get(Conversation, conversation_id)
-    if c is None:
-        return None
-    if title is not None:
-        next_title = title.strip()
-        if not next_title:
-            raise ValueError("title required")
-        c.title = next_title
-    if pinned is not None:
-        c.pinned = 1 if pinned else 0
-    if archived is not None:
-        c.archived = 1 if archived else 0
-    c.updated_at = now_ms()
-    await s.commit()
-    members = (
-        await s.scalars(
-            select(ConversationMember).where(
-                ConversationMember.conversation_id == conversation_id
+        members = (
+            await s.scalars(
+                select(ConversationMember).where(
+                    ConversationMember.conversation_id == c.id
+                )
             )
-        )
-    ).all()
-    return conv_to_dict(c, list(members))
+        ).all()
+        out.append(conv_to_dict(c, list(members)))
+    return out
 
 
 async def list_messages(
@@ -240,6 +188,39 @@ async def create_conversation(
     members = (
         await s.scalars(
             select(ConversationMember).where(ConversationMember.conversation_id == cid)
+        )
+    ).all()
+    return conv_to_dict(c, list(members))
+
+
+async def update_conversation(
+    s: AsyncSession,
+    conversation_id: str,
+    *,
+    title: str | None = None,
+    pinned: bool | None = None,
+    archived: bool | None = None,
+) -> Optional[dict[str, Any]]:
+    """更新会话信息。"""
+    c = await s.get(Conversation, conversation_id)
+    if c is None:
+        return None
+
+    if title is not None:
+        c.title = title.strip()
+    if pinned is not None:
+        c.pinned = 1 if pinned else 0
+    if archived is not None:
+        c.archived = 1 if archived else 0
+        if c.archived == 0:
+            c.updated_at = now_ms()
+
+    await s.commit()
+    await s.refresh(c)
+
+    members = (
+        await s.scalars(
+            select(ConversationMember).where(ConversationMember.conversation_id == conversation_id)
         )
     ).all()
     return conv_to_dict(c, list(members))

@@ -88,7 +88,7 @@ export function ContentRenderer({ content, artifactId, onEditArtifact }: Props) 
 
     default:
       return (
-        <div className="text-xs text-red-500/70 border border-red-500/20 rounded p-2 my-1">
+        <div className="text-xs text-danger border border-red-500/20 rounded p-2 my-1">
           未知消息类型：{(content as { type: string }).type}
         </div>
       );

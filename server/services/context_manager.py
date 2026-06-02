@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time as _time
 from typing import Any, Optional
 
 from sqlalchemy import desc, select
@@ -42,33 +41,6 @@ from sqlalchemy import desc, select
 from db.models import Message
 
 logger = logging.getLogger("agenthub.services.context_manager")
-
-# ---------------------------------------------------------------------------
-# Module-level TTL cache for build() results — avoids redundant assembly
-# when the same conversation is queried in rapid succession.
-# ---------------------------------------------------------------------------
-
-_BUILD_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-_BUILD_CACHE_TTL = 5.0  # seconds
-_BUILD_CACHE_MAX = 64
-
-
-def _cache_get(key: str) -> list[dict[str, Any]] | None:
-    entry = _BUILD_CACHE.get(key)
-    if entry is None:
-        return None
-    ts, data = entry
-    if _time.monotonic() - ts > _BUILD_CACHE_TTL:
-        del _BUILD_CACHE[key]
-        return None
-    return data
-
-
-def _cache_set(key: str, messages: list[dict[str, Any]]) -> None:
-    if len(_BUILD_CACHE) >= _BUILD_CACHE_MAX:
-        oldest = min(_BUILD_CACHE, key=lambda k: _BUILD_CACHE[k][0])
-        del _BUILD_CACHE[oldest]
-    _BUILD_CACHE[key] = (_time.monotonic(), messages)
 
 # ---------------------------------------------------------------------------
 # 模型上下文窗口上限（留 20% 给回复）
@@ -86,15 +58,15 @@ MODEL_CONTEXT_LIMITS: dict[str, int] = {
 
 DEFAULT_CONTEXT_LIMIT = 128_000
 MAX_RESPONSE_TOKENS = 4096
-SAFETY_MARGIN_RATIO = 0.90  # 预留 10% 给回复和 buffer（原 0.75 过于保守）
+SAFETY_MARGIN_RATIO = 0.75  # 预留 25% 给回复和 buffer
 
 STRATEGY_SLIDING_WINDOW = "sliding"
 STRATEGY_TOKEN_CONTROL = "token"
 STRATEGY_HYBRID = "hybrid"
 
-# 滑窗策略保留的对话轮数（针对 200K 上下文模型提升）
-SLIDING_WINDOW_TURNS = 30  # 30 轮 = 60 条消息 (user + assistant)
-HYBRID_WINDOW_TURNS = 50   # hybrid 先保留 50 轮，再按 token 进一步裁剪
+# 滑窗策略保留的对话轮数
+SLIDING_WINDOW_TURNS = 6   # 6 轮 = 12 条消息 (user + assistant)
+HYBRID_WINDOW_TURNS = 10  # hybrid 先保留 10 轮，再按 token 进一步裁剪
 
 
 # ---------------------------------------------------------------------------
@@ -103,16 +75,9 @@ HYBRID_WINDOW_TURNS = 50   # hybrid 先保留 50 轮，再按 token 进一步裁
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count, preferring tiktoken for accuracy."""
+    """粗略估算 token 数。中文 ≈ 1.5 字符/token，英文 ≈ 4 字符/token。"""
     if not text:
         return 0
-    try:
-        import tiktoken
-        _enc = tiktoken.get_encoding("cl100k_base")
-        return len(_enc.encode(text))
-    except (ImportError, Exception):
-        pass
-    # Fallback: character-based heuristic
     cjk = sum(1 for c in text if "一" <= c <= "鿿" or "　" <= c <= "〿")
     rest = len(text) - cjk
     return int(cjk / 1.5 + rest / 4) + 1
@@ -150,46 +115,6 @@ def _extract_artifact_summary(raw: dict[str, Any]) -> str | None:
     if msg_type in ("task_status", "deploy_status"):
         return None  # 状态类消息不需要带入上下文
     return None
-
-
-def _format_tree_for_agent(root: str, max_depth: int = 2, prefix: str = "") -> str:
-    """Generate a `tree`-like text representation of a directory."""
-    import os
-
-    _SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", ".agenthub", ".codex_team"}
-    lines: list[str] = []
-    try:
-        entries = sorted(os.scandir(root), key=lambda e: (not e.is_dir(), e.name.lower()))
-    except (PermissionError, OSError):
-        return ""
-
-    count = 0
-    for entry in entries:
-        if count >= 50:
-            lines.append(f"{prefix}... (truncated)")
-            break
-        if entry.name.startswith(".") or entry.name in _SKIP:
-            continue
-        count += 1
-        if entry.is_dir():
-            lines.append(f"{prefix}{entry.name}/")
-            if max_depth > 1:
-                subtree = _format_tree_for_agent(
-                    entry.path, max_depth - 1, prefix + "  "
-                )
-                if subtree:
-                    lines.append(subtree)
-        else:
-            try:
-                size = entry.stat().st_size
-            except OSError:
-                size = 0
-            if size >= 1024:
-                size_str = f" ({size / 1024:.1f} KB)"
-            else:
-                size_str = f" ({size} B)" if size > 0 else ""
-            lines.append(f"{prefix}{entry.name}{size_str}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +173,7 @@ class ContextManager:
                 select(Message)
                 .where(Message.conversation_id == self.conversation_id)
                 .order_by(desc(Message.created_at))
-                .limit(200)
+                .limit(30)
             )
         ).all()
 
@@ -276,14 +201,6 @@ class ContextManager:
 
             if not content_text.strip():
                 continue
-
-            # Annotate artifact messages with ID so agents can call read_artifact
-            if m.artifact_id and m.sender_type == "agent":
-                content_text += (
-                    f"\n[artifact_id: {m.artifact_id}"
-                    + (f", file: {raw.get('fileName', raw.get('file_name', ''))}" if raw.get("fileName") or raw.get("file_name") else "")
-                    + "]"
-                )
 
             entry: dict[str, Any] = {
                 "role": role,
@@ -326,9 +243,9 @@ class ContextManager:
 
     def _pick_strategy(self) -> None:
         """根据对话轮数和消息总长度自动选择裁剪策略。"""
-        if self._total_turns < 20:
+        if self._total_turns < 10:
             self.strategy = STRATEGY_SLIDING_WINDOW
-        elif self._total_chars < 50_000:
+        elif self._total_chars < 15_000:
             self.strategy = STRATEGY_TOKEN_CONTROL
         else:
             self.strategy = STRATEGY_HYBRID
@@ -437,12 +354,6 @@ class ContextManager:
 
     def build(self) -> list[dict[str, Any]]:
         """按四层顺序构建最终消息列表，用于传给 ``adapter.send()``。"""
-        # Check TTL cache first — avoids redundant assembly on rapid successive calls
-        cache_key = f"{self.conversation_id}:{self._pinned_count}:{len(self.tool_context)}"
-        cached = _cache_get(cache_key)
-        if cached is not None:
-            return cached
-
         messages: list[dict[str, Any]] = []
 
         # Layer 1: System prompt — 由 adapter 自行注入　（codex 用 system message，claude 用 system 参数）
@@ -468,33 +379,7 @@ class ContextManager:
             self.conversation_id,
             self.strategy,
         )
-        _cache_set(cache_key, messages)
         return messages
-
-    # ------------------------------------------------------------------
-    # Workspace 上下文注入
-    # ------------------------------------------------------------------
-
-    def inject_workspace_context(self, workspace_root: str) -> None:
-        """将 workspace 文件树摘要注入 project_context 层，Agent 可据此了解文件结构。"""
-        import os
-        if not workspace_root or not os.path.isdir(workspace_root):
-            return
-        tree_text = _format_tree_for_agent(workspace_root, max_depth=2)
-        if not tree_text:
-            return
-        self.project_context.append({
-            "role": "system",
-            "content": (
-                "## Workspace 文件结构\n"
-                f"根目录: {workspace_root}\n"
-                "你可以使用 read_file / write_file / list_files 操作此目录下的文件。\n\n"
-                f"```\n{tree_text}\n```"
-            ),
-            "pinned": False,
-            "artifact_id": None,
-            "sender_id": "system",
-        })
 
     # ------------------------------------------------------------------
     # 调试辅助

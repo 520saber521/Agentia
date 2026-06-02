@@ -126,3 +126,14 @@ def _safe_loads(raw: Optional[str]) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError:
         return raw
+
+
+async def pin_message(s: AsyncSession, message_id: str, pinned: bool) -> Optional[Message]:
+    """Pin 或 unpin 消息。"""
+    m = await s.get(Message, message_id)
+    if m is None:
+        return None
+    m.pinned = 1 if pinned else 0
+    await s.commit()
+    await s.refresh(m)
+    return m

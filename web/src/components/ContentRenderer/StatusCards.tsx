@@ -40,7 +40,7 @@ export function TaskStatusInlineCard({ content }: TaskStatusProps) {
             </div>
           )}
         </div>
-        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${colorFor(content.status)}`}>
+        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-4xs ${colorFor(content.status)}`}>
           {content.status}
         </span>
       </div>
@@ -50,7 +50,7 @@ export function TaskStatusInlineCard({ content }: TaskStatusProps) {
           style={{ width: `${progress}%` }}
         />
       </div>
-      <div className="mt-2 text-[10px] text-muted truncate">
+      <div className="mt-2 text-4xs text-muted truncate">
         task · {content.task_id} · {progress}%
       </div>
     </div>
@@ -83,7 +83,7 @@ export function DeployStatusCard({ content }: DeployStatusProps) {
             </a>
           )}
         </div>
-        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${colorFor(content.status)}`}>
+        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-4xs ${colorFor(content.status)}`}>
           {content.status}
         </span>
       </div>
@@ -95,7 +95,7 @@ export function DeployStatusCard({ content }: DeployStatusProps) {
           />
         </div>
       )}
-      <div className="mt-2 text-[10px] text-muted truncate">
+      <div className="mt-2 text-4xs text-muted truncate">
         deploy · {content.deploy_id}{progress > 0 ? ` · ${progress}%` : ""}
       </div>
     </div>
