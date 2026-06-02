@@ -35,7 +35,7 @@ function ToolStatus({ call }: { call: ToolCallInfo }) {
         <span className="shrink-0 text-[9px] uppercase">{call.status}</span>
       </div>
       {call.resultSummary && (
-        <div className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-muted">
+        <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-[10px] leading-relaxed text-muted">
           {call.resultSummary}
         </div>
       )}

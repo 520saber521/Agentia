@@ -1070,7 +1070,7 @@ async def run_agent_reply(
                         conversation_id=conversation_id,
                         tool_name=tool_name,
                         status="done",
-                        result_summary=observation_text[:240],
+                        result_summary=observation_text,
                     )
                 )
                 animation_bus.viz_event(

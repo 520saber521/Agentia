@@ -875,8 +875,77 @@ def _ensure_preview_collaboration_domains(user_text: str, domains: set[str]) -> 
     return expanded
 
 
+def _domain_display_name(domain: str) -> str:
+    names = {
+        "frontend": "前端",
+        "backend": "后端",
+        "database": "数据库",
+        "test": "测试",
+        "docs": "文档",
+        "devops": "部署",
+        "product": "产品",
+        "code": "代码",
+    }
+    return names.get(domain, domain or "通用")
+
+
+def _domain_task_focus(domain: str, requirement: str) -> str:
+    focuses = {
+        "frontend": "只负责前端页面、组件结构、样式布局、交互状态、响应式体验和可预览界面；不要输出后端接口、数据库表或产品需求正文。",
+        "backend": "只负责后端 API、路由设计、业务逻辑、认证授权、错误处理和接口契约；不要输出前端页面、数据库 DDL 或产品需求正文。",
+        "database": "只负责数据库表设计、字段类型、关系约束、索引、迁移建议和数据一致性；不要输出前端页面、后端完整实现或产品需求正文。",
+        "test": "只负责测试策略、测试用例、验收标准、边界场景、自动化测试建议和质量风险；不要输出前端页面、后端实现或数据库 DDL 正文。",
+        "docs": "只负责技术文档结构、接口说明、使用说明、开发/部署说明和交付文档；不要替其他领域实现代码。",
+        "devops": "只负责构建、部署、环境变量、CI/CD、容器化、运行检查和发布流程；不要输出业务功能实现正文。",
+        "product": "只负责产品需求、用户故事、功能范围、信息架构、交互规则、验收口径和迭代建议；不要输出代码、数据库 DDL 或测试实现。",
+        "code": "只负责当前通用代码任务中最小必要的实现、分析或修复；避免扩展到无关领域。",
+    }
+    return focuses.get(domain, f"只负责{_domain_display_name(domain)}领域内的工作；不要重复完整原始需求或越界处理其他领域。")
+
+
+def _subtask_title(domain: str, requirement: str) -> str:
+    title_map = {
+        "frontend": "前端：实现页面与交互体验",
+        "backend": "后端：设计接口与业务逻辑",
+        "database": "数据库：设计数据模型与表结构",
+        "test": "测试：制定测试用例与验收标准",
+        "docs": "文档：编写技术与交付说明",
+        "devops": "部署：设计构建与发布流程",
+        "product": "产品：梳理需求与功能规划",
+        "code": "代码：完成通用实现任务",
+    }
+    return title_map.get(domain, f"{_domain_display_name(domain)}：完成领域任务")
+
+
+def _looks_like_repeated_original(description: str, requirement: str) -> bool:
+    desc = re.sub(r"\s+", "", _clean_requirement(description).lower())
+    req = re.sub(r"\s+", "", _clean_requirement(requirement).lower())
+    if not desc or not req:
+        return False
+    return desc.startswith(req[: min(len(req), 40)]) or req[: min(len(req), 60)] in desc[: max(80, len(req) + 20)]
+
+
+def _normalize_subtask_for_domain(subtask: Any, requirement: str) -> None:
+    domain = str(getattr(subtask, "domain", "") or "code")
+    title = _subtask_title(domain, requirement)
+    raw_description = str(getattr(subtask, "description", "") or "").strip()
+    cleaned_description = _clean_requirement(raw_description)
+    focus = _domain_task_focus(domain, requirement)
+    if not cleaned_description or _looks_like_repeated_original(cleaned_description, requirement):
+        cleaned_description = focus
+    elif focus not in cleaned_description:
+        cleaned_description = f"{focus}\n\n领域任务细节：{cleaned_description}"
+    subtask.description = f"{title}\n\n原始需求：{_clean_requirement(requirement)}\n\n{cleaned_description}"
+    if hasattr(subtask, "hints") and isinstance(subtask.hints, dict):
+        subtask.hints["display_title"] = title
+    else:
+        try:
+            subtask.hints = {"display_title": title}
+        except Exception:
+            pass
+
+
 def _build_subtask_description(subtask: Any, decompose_result: Any) -> str:
-    # Keep the decomposer-provided task details intact for agent assignment.
     return subtask.description or ""
 
 
@@ -1822,6 +1891,7 @@ async def handle_orchestrator_mention(
         subtask_records = []
         subtask_id_map = {}
         for i, subtask in enumerate(decompose_subtasks):
+            _normalize_subtask_for_domain(subtask, user_text)
             agent_id, agent_name = await _pick_agent_for_domain(
                 s,
                 domain=subtask.domain,
@@ -1829,17 +1899,19 @@ async def handle_orchestrator_mention(
             )
 
             enhanced_desc = _build_subtask_description(subtask, decompose_result)
+            display_title = getattr(subtask, "hints", {}).get("display_title") if isinstance(getattr(subtask, "hints", None), dict) else None
+            display_title = display_title or _subtask_title(subtask.domain, user_text)
             depends_on_list = subtask.dependencies if hasattr(subtask, "dependencies") and subtask.dependencies else []
             input_summary = (
-                f"Domain: {subtask.domain}. "
-                f"{'Depends on: ' + ', '.join(depends_on_list) + '. ' if depends_on_list else ''}"
-                f"{subtask.description[:100]}"
+                f"领域：{subtask.domain}。"
+                f"{'依赖：' + ', '.join(depends_on_list) + '。' if depends_on_list else ''}"
+                f"任务：{display_title}"
             )
 
             st = await create_task(
                 s,
                 conversation_id=conversation_id,
-                title=subtask.description[:80],
+                title=display_title,
                 description=enhanced_desc,
                 domain=subtask.domain,
                 assigned_agent_id=agent_id,
@@ -1980,7 +2052,9 @@ async def handle_orchestrator_mention(
                 agent_id=node.assigned_agent_id,
                 conversation_id=conversation_id,
                 user_text=(
-                    f"[Orchestrator] Subtask: {node.title}\nInput: {node.input_summary}"
+                    f"[Orchestrator] 领域子任务：{node.title}\n"
+                    f"请只完成 {node.domain or 'general'} 领域内的工作，不要复述完整原始需求，也不要越界输出其他领域内容。\n\n"
+                    f"{node.description}"
                 ),
                 pinned_context=pinned_context,
             )

@@ -156,6 +156,18 @@ def _json_dumps_tool_args(args: Any) -> str:
         return "{}"
 
 
+def _normalize_tool_call(chunk: dict[str, Any]) -> dict[str, Any]:
+    name = str(chunk.get("name") or chunk.get("tool_name") or "")
+    args = chunk.get("arguments")
+    if not args:
+        args = chunk.get("args") or chunk.get("tool_arguments") or {}
+    return {
+        "name": name,
+        "arguments": _coerce_tool_arguments(args),
+        "call_id": str(chunk.get("call_id") or chunk.get("id") or ""),
+    }
+
+
 def _native_tool_history_mode(adapter: AgentAdapter) -> str:
     """Return the native tool-result history format expected by the adapter.
 
@@ -374,14 +386,7 @@ def _extract_tool_calls(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     calls = []
     for c in chunks:
         if c.get("type") == "tool_call":
-            name = str(c.get("name", ""))
-            args = c.get("args") or c.get("arguments") or {}
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            calls.append({"name": name, "arguments": args, "call_id": str(c.get("call_id", ""))})
+            calls.append(_normalize_tool_call(c))
     return calls
 
 
@@ -514,9 +519,10 @@ class ReActEngine:
                                     yield {"type": "text", "delta": deduped}
 
                         elif ctype == "tool_call":
-                            step_chunks.append(chunk)
-                            step_tool_calls.append(chunk)
-                            yield chunk  # 转发（run_agent_reply 需要处理）
+                            normalized = _normalize_tool_call(chunk)
+                            step_chunks.append(normalized)
+                            step_tool_calls.append(normalized)
+                            yield {**chunk, "arguments": normalized["arguments"]}  # 转发（run_agent_reply 需要处理）
 
                         elif ctype == "usage":
                             usage_chunk = chunk  # 最后再 yield

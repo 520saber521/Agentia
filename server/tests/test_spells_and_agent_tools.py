@@ -11,7 +11,7 @@ from db.models import ConversationMember, Message
 from db.seed import DEFAULT_AGENT_ID, DEFAULT_CONV_ID, seed_defaults
 from services.react_loop import ReActEngine
 from services.spells import expand_spell
-from services.tool_registry import get_tool_registry
+from services.tool_registry import Tool, ToolCategory, _web_search, get_tool_registry
 
 
 class InvalidToolCallThenTextAdapter(AgentAdapter):
@@ -81,6 +81,38 @@ class DSMLToolCallThenTextAdapter(AgentAdapter):
 
     def capabilities(self) -> list[str]:
         return []
+
+
+class NativeWebSearchArgsAdapter(AgentAdapter):
+    name = "codex"
+
+    def __init__(self) -> None:
+        super().__init__({})
+        self.calls = 0
+
+    async def send(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        artifacts_context: dict[str, Any] | None = None,
+        stream: bool = True,
+    ) -> AsyncIterator[Chunk]:
+        self.calls += 1
+        if self.calls == 1:
+            yield {
+                "type": "tool_call",
+                "name": "web_search",
+                "args": {"query": "Agentia web search regression"},
+                "call_id": "call_web_search",
+            }
+            yield {"type": "done"}
+            return
+        yield {"type": "text", "delta": "web search worked"}
+        yield {"type": "done"}
+
+    def capabilities(self) -> list[str]:
+        return ["text", "tool_use"]
 
 
 class OpenAIToolHistoryAdapter(AgentAdapter):
@@ -197,6 +229,89 @@ async def test_react_injects_openai_assistant_tool_call_before_tool_result() -> 
     assert text == "tool history is valid"
     assert adapter.calls == 2
     assert any(message.get("role") == "tool" for message in adapter.second_call_messages)
+
+
+async def test_native_tool_call_args_are_executed_as_arguments() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_web_search(query: str, **kwargs: Any) -> str:
+        captured["query"] = query
+        return f"result for {query}"
+
+    registry = get_tool_registry(project_root=".")
+    registry.register(Tool(
+        name="web_search",
+        description="fake web search",
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        handler=fake_web_search,
+        category=ToolCategory.WEB,
+    ))
+    adapter = NativeWebSearchArgsAdapter()
+    engine = ReActEngine(registry=registry, max_steps=2)
+
+    chunks = [
+        chunk
+        async for chunk in engine.run(
+            adapter,
+            [{"role": "user", "content": "Search the web."}],
+            tools=registry.get_openai_schemas(),
+        )
+    ]
+    observations = [chunk for chunk in chunks if chunk.get("type") == "observation"]
+
+    assert captured["query"] == "Agentia web search regression"
+    assert not any("missing required arguments" in str(chunk.get("result", "")) for chunk in observations)
+    assert any(chunk.get("arguments", {}).get("query") == "Agentia web search regression" for chunk in observations)
+    assert adapter.calls == 2
+
+
+async def test_web_search_falls_back_to_bing_when_duckduckgo_is_empty(monkeypatch) -> None:
+    class FakeResponse:
+        def __init__(self, status_code: int, text: str = "", data: dict[str, Any] | None = None) -> None:
+            self.status_code = status_code
+            self.text = text
+            self._data = data or {}
+
+        def json(self) -> dict[str, Any]:
+            return self._data
+
+    class FakeClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def get(self, url: str, **kwargs: Any) -> FakeResponse:
+            if "api.duckduckgo.com" in url:
+                return FakeResponse(200, data={"AbstractText": "", "RelatedTopics": []})
+            if "bing.com/search" in url:
+                return FakeResponse(200, text=(
+                    '<li class="b_algo"><h2><a href="https://example.com/test-plan">'
+                    'Microblogging Platform Test Plan</a></h2>'
+                    '<p>Acceptance criteria and best practices for social platform testing.</p></li>'
+                ))
+            return FakeResponse(404)
+
+        async def post(self, url: str, **kwargs: Any) -> FakeResponse:
+            return FakeResponse(200, text="")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    result = await _web_search("microblogging platform test plan acceptance criteria best practices")
+
+    assert "搜索结果来源：Bing HTML" in result
+    assert "Microblogging Platform Test Plan" in result
+    assert "搜索服务暂时不可用" not in result
 
 
 async def test_agent_comm_tools_create_and_message(db_env) -> None:

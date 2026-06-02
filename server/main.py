@@ -22,6 +22,15 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+# Load .env from server/ directory before any os.environ reads
+try:
+    from dotenv import load_dotenv
+    _dotenv_path = _HERE / ".env"
+    if _dotenv_path.is_file():
+        load_dotenv(_dotenv_path)
+except Exception:
+    pass
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager

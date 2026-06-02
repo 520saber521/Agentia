@@ -407,65 +407,228 @@ async def _run_shell(
 
 
 async def _web_search(query: str, **kwargs: Any) -> str:
-    """Search the web and return results. Tries DuckDuckGo first, falls back to Bing."""
+    """Search the web and return results from multiple providers."""
     import httpx
+    from html import unescape
+
+    q = (query or "").strip()
+    if not q:
+        return "Error: query required"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    failures: list[str] = []
+
+    def _clean_html(value: str) -> str:
+        text = re.sub(r"<script[\s\S]*?</script>", " ", value, flags=re.IGNORECASE)
+        text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _format_results(source: str, items: list[dict[str, str]]) -> str | None:
+        cleaned = []
+        seen = set()
+        for item in items:
+            title = _clean_html(item.get("title", ""))
+            snippet = _clean_html(item.get("snippet", ""))
+            url = item.get("url", "").strip()
+            key = (title or snippet or url).lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            line = f"- {title or '搜索结果'}"
+            if snippet:
+                line += f"：{snippet}"
+            if url:
+                line += f"\n  {url}"
+            cleaned.append(line)
+            if len(cleaned) >= 5:
+                break
+        if not cleaned:
+            return None
+        return f"搜索结果来源：{source}\n" + "\n".join(cleaned)
 
     async def _try_ddg(q: str) -> str | None:
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
                 resp = await client.get(
                     "https://api.duckduckgo.com/",
                     params={"q": q, "format": "json", "no_html": "1", "skip_disambig": "1"},
                 )
                 if resp.status_code != 200:
+                    failures.append(f"DuckDuckGo JSON HTTP {resp.status_code}")
                     return None
                 data = resp.json()
-                abs_text = data.get("AbstractText", "").strip()
-                related = [t.get("Text", "") for t in data.get("RelatedTopics", [])[:3] if t.get("Text")]
-                parts = [abs_text] if abs_text else []
-                parts.extend(related[:4])
-                return "\n\n".join(parts) if parts else None
-        except Exception:
+                items: list[dict[str, str]] = []
+                abs_text = str(data.get("AbstractText", "")).strip()
+                if abs_text:
+                    items.append({"title": str(data.get("Heading", "DuckDuckGo")), "snippet": abs_text, "url": str(data.get("AbstractURL", ""))})
+                for topic in data.get("RelatedTopics", [])[:8]:
+                    if isinstance(topic, dict) and topic.get("Text"):
+                        items.append({"title": topic.get("FirstURL", "Related"), "snippet": topic.get("Text", ""), "url": topic.get("FirstURL", "")})
+                    elif isinstance(topic, dict) and isinstance(topic.get("Topics"), list):
+                        for nested in topic.get("Topics", [])[:3]:
+                            if isinstance(nested, dict) and nested.get("Text"):
+                                items.append({"title": nested.get("FirstURL", "Related"), "snippet": nested.get("Text", ""), "url": nested.get("FirstURL", "")})
+                result = _format_results("DuckDuckGo Instant Answer", items)
+                if not result:
+                    failures.append("DuckDuckGo JSON empty")
+                return result
+        except Exception as exc:
+            failures.append(f"DuckDuckGo JSON {type(exc).__name__}")
             return None
 
     async def _try_ddg_html(q: str) -> str | None:
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    "https://html.duckduckgo.com/html/",
-                    data={"q": q},
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
+                resp = await client.post("https://html.duckduckgo.com/html/", data={"q": q})
                 if resp.status_code != 200:
+                    failures.append(f"DuckDuckGo HTML HTTP {resp.status_code}")
                     return None
                 text = resp.text
-                results = re.findall(
-                    r'class="result__snippet">(.*?)</a>',
-                    text,
-                    re.DOTALL,
-                )
-                if results:
-                    return "\n\n".join(
-                        re.sub(r"<[^>]+>", "", r).strip() for r in results[:5]
-                    )
-                return None
-        except Exception:
+                blocks = re.findall(r'<div[^>]+class="[^"]*result[^"]*"[\s\S]*?</div>\s*</div>', text, re.IGNORECASE)
+                items: list[dict[str, str]] = []
+                for block in blocks[:8]:
+                    title_m = re.search(r'class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', block, re.IGNORECASE)
+                    snippet_m = re.search(r'class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)</a>', block, re.IGNORECASE)
+                    if not snippet_m:
+                        snippet_m = re.search(r'class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)</div>', block, re.IGNORECASE)
+                    items.append({
+                        "title": title_m.group(2) if title_m else "DuckDuckGo result",
+                        "url": title_m.group(1) if title_m else "",
+                        "snippet": snippet_m.group(1) if snippet_m else _clean_html(block)[:240],
+                    })
+                result = _format_results("DuckDuckGo HTML", items)
+                if not result:
+                    failures.append("DuckDuckGo HTML empty")
+                return result
+        except Exception as exc:
+            failures.append(f"DuckDuckGo HTML {type(exc).__name__}")
             return None
 
-    # Try DuckDuckGo JSON API first (fast, clean), then HTML fallback
-    result = await _try_ddg(query)
-    if result:
-        return result
+    async def _try_bing_html(q: str) -> str | None:
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
+                resp = await client.get("https://www.bing.com/search", params={"q": q, "setlang": "zh-CN"})
+                if resp.status_code != 200:
+                    failures.append(f"Bing HTML HTTP {resp.status_code}")
+                    return None
+                text = resp.text
+                blocks = re.findall(r'<li class="b_algo"[\s\S]*?</li>', text, re.IGNORECASE)
+                items: list[dict[str, str]] = []
+                for block in blocks[:8]:
+                    title_m = re.search(r'<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>\s*</h2>', block, re.IGNORECASE)
+                    snippet_m = re.search(r'<p[^>]*>([\s\S]*?)</p>', block, re.IGNORECASE)
+                    if title_m or snippet_m:
+                        items.append({
+                            "title": title_m.group(2) if title_m else "Bing result",
+                            "url": title_m.group(1) if title_m else "",
+                            "snippet": snippet_m.group(1) if snippet_m else "",
+                        })
+                result = _format_results("Bing HTML", items)
+                if not result:
+                    failures.append("Bing HTML empty")
+                return result
+        except Exception as exc:
+            failures.append(f"Bing HTML {type(exc).__name__}")
+            return None
 
-    result = await _try_ddg_html(query)
-    if result:
-        return result
+    async def _try_brave(q: str) -> str | None:
+        api_key = os.environ.get("BRAVE_SEARCH_API_KEY")
+        if not api_key:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=15, headers={**headers, "X-Subscription-Token": api_key}) as client:
+                resp = await client.get("https://api.search.brave.com/res/v1/web/search", params={"q": q, "count": 5})
+                if resp.status_code != 200:
+                    failures.append(f"Brave HTTP {resp.status_code}")
+                    return None
+                data = resp.json()
+                items = [
+                    {"title": item.get("title", ""), "snippet": item.get("description", ""), "url": item.get("url", "")}
+                    for item in data.get("web", {}).get("results", [])
+                    if isinstance(item, dict)
+                ]
+                result = _format_results("Brave Search", items)
+                if not result:
+                    failures.append("Brave empty")
+                return result
+        except Exception as exc:
+            failures.append(f"Brave {type(exc).__name__}")
+            return None
 
-    # Search failed — guide the model to continue with its own knowledge
+    async def _try_tavily(q: str) -> str | None:
+        api_key = os.environ.get("TAVILY_API_KEY")
+        if not api_key:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+                resp = await client.post(
+                    "https://api.tavily.com/search",
+                    json={"api_key": api_key, "query": q, "max_results": 5, "search_depth": "basic"},
+                )
+                if resp.status_code != 200:
+                    failures.append(f"Tavily HTTP {resp.status_code}")
+                    return None
+                data = resp.json()
+                items = [
+                    {"title": item.get("title", ""), "snippet": item.get("content", ""), "url": item.get("url", "")}
+                    for item in data.get("results", [])
+                    if isinstance(item, dict)
+                ]
+                result = _format_results("Tavily", items)
+                if not result:
+                    failures.append("Tavily empty")
+                return result
+        except Exception as exc:
+            failures.append(f"Tavily {type(exc).__name__}")
+            return None
+
+    async def _try_searchapi(q: str) -> str | None:
+        api_key = os.environ.get("SEARCHAPI_API_KEY")
+        if not api_key:
+            return None
+        try:
+            engine = os.environ.get("SEARCHAPI_ENGINE", "baidu")
+            async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+                resp = await client.get(
+                    "https://www.searchapi.io/api/v1/search",
+                    params={"q": q, "api_key": api_key, "engine": engine},
+                )
+                if resp.status_code != 200:
+                    failures.append(f"SearchAPI HTTP {resp.status_code}")
+                    return None
+                data = resp.json()
+                items = [
+                    {"title": item.get("title", ""), "snippet": item.get("snippet", ""), "url": item.get("link", "")}
+                    for item in data.get("organic_results", [])[:5]
+                    if isinstance(item, dict)
+                ]
+                engine_label = engine.capitalize() if engine else "Web"
+                result = _format_results(f"SearchAPI ({engine_label})", items)
+                if not result:
+                    failures.append("SearchAPI empty")
+                return result
+        except Exception as exc:
+            failures.append(f"SearchAPI {type(exc).__name__}")
+            return None
+
+    for provider in (_try_brave, _try_tavily, _try_searchapi, _try_ddg, _try_ddg_html, _try_bing_html):
+        result = await provider(q)
+        if result:
+            return result
+
+    failure_text = "; ".join(failures[-6:]) or "all providers unavailable"
     return (
-        "搜索服务暂时不可用（网络限制或超时）。\n"
+        "搜索服务暂时不可用（网络限制、搜索源屏蔽或超时）。\n"
+        "已尝试：Brave/Tavily/SearchAPI（如配置 API Key）、DuckDuckGo JSON、DuckDuckGo HTML、Bing HTML。\n"
+        f"失败详情: {failure_text}\n"
         "请使用你自己的知识继续完成任务。如果你需要生成文件，请调用 create_artifact 工具。\n"
-        f"原始搜索关键词: {query}"
+        f"原始搜索关键词: {q}"
     )
 
 

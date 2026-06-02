@@ -195,7 +195,7 @@ function ToolCallBadge({ toolCalls }: { toolCalls?: import("../types").ToolCallI
                 </span>
               )}
               {call.resultSummary && (
-                <p className="mt-0.5 text-[10px] text-muted/70 leading-relaxed line-clamp-2">
+                <p className="mt-0.5 text-[10px] text-muted/70 leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">
                   {call.resultSummary}
                 </p>
               )}
