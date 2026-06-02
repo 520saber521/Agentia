@@ -1,17 +1,18 @@
 import type { Task } from "../types";
+import { Bot } from "./icons";
 
 interface Props {
   task: Task;
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  pending: "text-amber-400 border-amber-500/40",
-  planning: "text-sky-400 border-sky-500/40",
-  running: "text-blue-400 border-blue-500/40",
-  done: "text-emerald-400 border-emerald-500/40",
-  failed: "text-red-400 border-red-500/40",
-  blocked: "text-rose-400 border-rose-500/40",
-  conflict: "text-orange-400 border-orange-500/40",
+  pending: "text-warning border-warning/40",
+  planning: "text-info border-info/40",
+  running: "text-accent border-accent/40",
+  done: "text-success border-success/40",
+  failed: "text-danger border-danger/40",
+  blocked: "text-danger border-danger/40",
+  conflict: "text-warning border-warning/40",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -32,7 +33,7 @@ export function TaskStatusCard({ task }: Props) {
     <div className="rounded-lg border border-border bg-panel p-3 my-2">
       <div className="flex items-start gap-3">
         <span
-          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${colorClass} shrink-0 mt-0.5`}
+          className={`inline-flex items-center px-2 py-0.5 rounded-full text-3xs font-medium border shrink-0 mt-0.5 ${colorClass}`}
         >
           {label}
         </span>
@@ -41,8 +42,9 @@ export function TaskStatusCard({ task }: Props) {
             {task.title}
           </div>
           {task.agent_name && (
-            <div className="text-xs text-accent mt-0.5 truncate font-medium">
-              🤖 {task.agent_name}
+            <div className="text-xs text-accent mt-0.5 truncate font-medium inline-flex items-center gap-1">
+              <Bot className="h-3 w-3" />
+              {task.agent_name}
             </div>
           )}
           {!task.agent_name && task.domain && (
@@ -73,7 +75,7 @@ export function TaskStatusCard({ task }: Props) {
 
       {task.status === "done" && task.result_summary && (
         <details className="mt-2 group">
-          <summary className="text-[10px] text-muted cursor-pointer hover:text-fg transition-colors">
+          <summary className="text-3xs text-muted cursor-pointer hover:text-fg">
             查看详情
           </summary>
           <p className="text-xs text-muted mt-1 whitespace-pre-wrap">

@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, AsyncIterator, List, Literal, Optional, TypedDict, Union
+from typing import Any, AsyncIterator, List, Literal, Optional, Required, TypedDict, Union
 
 
 class ChunkText(TypedDict):
@@ -56,10 +56,11 @@ class ChunkError(TypedDict, total=False):
     message: str
 
 
-class ChunkDone(TypedDict):
+class ChunkDone(TypedDict, total=False):
     """终止标志，Adapter 必须在最后一次 yield 它。"""
 
-    type: Literal["done"]
+    type: Required[Literal["done"]]
+    finish_reason: str
 
 
 Chunk = Union[ChunkText, ChunkToolCall, ChunkArtifact, ChunkUsage, ChunkError, ChunkDone]

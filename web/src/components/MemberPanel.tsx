@@ -1,7 +1,24 @@
+import React, { useState } from "react";
 import { useChatStore } from "../stores/useChatStore";
 import type { Agent, Member } from "../types";
+import { AgentCreateDialog } from "./AgentCreateDialog";
+import { Palette, Server, Database, Wrench, ClipboardList, Bot, Settings } from "./icons";
+
+/** 领域 → 适配器图标映射表（与 server/orchestrator.py AGENT_CODE_MAP 和 server/db/seed.py 对齐） */
+const AGENT_DOMAIN_MAP: Record<string, { label: string; icon: React.ReactNode }> = {
+  agent_mock:     { label: "前端专家", icon: <Palette className="h-4 w-4" /> },
+  agent_mock_2:   { label: "后端专家", icon: <Server className="h-4 w-4" /> },
+  agent_claude:   { label: "数据专家", icon: <Database className="h-4 w-4" /> },
+  agent_deepseek: { label: "辅助Agent", icon: <Wrench className="h-4 w-4" /> },
+  agent_opencode: { label: "产品需求分析",  icon: <ClipboardList className="h-4 w-4" /> },
+};
+
+function resolveDomain(agent: Agent): { label: string; icon: React.ReactNode } | null {
+  return AGENT_DOMAIN_MAP[agent.id] ?? null;
+}
 
 export function MemberPanel() {
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const conversations = useChatStore((s) => s.conversations);
   const agents = useChatStore((s) => s.agents);
   const currentConvId = useChatStore((s) => s.currentConvId);
@@ -56,24 +73,47 @@ export function MemberPanel() {
               <div className="px-2 py-1 text-xs font-medium text-muted uppercase tracking-wider">
                 Agent
               </div>
-              {agentMembers.map((member) => (
-                <div
-                  key={member.member_id}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/10 transition-colors"
-                >
-                  <span className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs font-medium text-accent shrink-0">
-                    {member.agent.name.charAt(0).toUpperCase()}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-fg truncate">
-                      {member.agent.name}
+              {agentMembers.map((member) => {
+                const domain = resolveDomain(member.agent);
+                return (
+                  <div
+                    key={member.member_id}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/10 transition-colors group"
+                  >
+                    <span className="w-7 h-7 rounded-lg bg-accent/20 flex items-center justify-center text-sm shrink-0 select-none">
+                      {domain ? domain.icon : member.agent.avatar ? (
+                        <span>{member.agent.avatar}</span>
+                      ) : (
+                        <Bot className="h-4 w-4 text-fg/70" />
+                      )}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-fg truncate flex items-center gap-1.5">
+                        {member.agent.name}
+                        {domain && (
+                          <span className="text-3xs text-accent font-medium bg-accent/10 rounded px-1 py-0.5">
+                            {domain.label}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted truncate mt-0.5">
+                        {member.agent.adapter_type}
+                        {member.agent.capabilities.length > 0 && (
+                          <> · {member.agent.capabilities.slice(0, 4).join(" · ")}</>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-xs text-muted truncate">
-                      {member.agent.adapter_type} · {member.agent.capabilities.slice(0, 3).join(" · ")}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingAgent(member.agent)}
+                      className="shrink-0 w-6 h-6 rounded-md opacity-0 group-hover:opacity-100 hover:bg-accent/20 flex items-center justify-center transition-all"
+                      title={`Configure ${member.agent.name}`}
+                    >
+                      <Settings className="h-3 w-3 text-muted" />
+                    </button>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -90,6 +130,12 @@ export function MemberPanel() {
           会话类型: {currentConv?.type === "group" ? "群聊" : "单聊"}
         </div>
       </div>
+
+      <AgentCreateDialog
+        open={editingAgent !== null}
+        agent={editingAgent}
+        onClose={() => setEditingAgent(null)}
+      />
     </aside>
   );
 }

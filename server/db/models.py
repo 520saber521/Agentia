@@ -38,6 +38,7 @@ class Conversation(Base):
     pinned: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     archived: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_msg_preview: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    workspace_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True, default=None)
     owner_user_id: Mapped[str] = mapped_column(String, nullable=False)
 
 

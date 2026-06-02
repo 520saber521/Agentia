@@ -128,7 +128,7 @@ export function NewConversationDialog({ open, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center px-4"
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center px-4"
       onClick={onClose}
       role="presentation"
     >
@@ -149,7 +149,7 @@ export function NewConversationDialog({ open, onClose }: Props) {
           onChange={(e) => setTitle(e.target.value)}
           placeholder="例如：写一篇博客 / OAuth 登录流程"
           maxLength={200}
-          className="mt-1 w-full bg-bg border border-border rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
+          className="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
         />
 
         <label className="block mt-4 text-xs text-muted">会话类型</label>
@@ -175,7 +175,7 @@ export function NewConversationDialog({ open, onClose }: Props) {
             选择 Agent{type === "group" ? "（可多选，至少 1 个）" : "（单选）"}
           </label>
           {selected.size > 0 && (
-            <span className="text-[10px] text-muted">
+            <span className="text-4xs text-muted">
               已选 {selected.size} 个
             </span>
           )}
@@ -213,11 +213,14 @@ export function NewConversationDialog({ open, onClose }: Props) {
                       <span className="block w-2 h-2 bg-white rounded-sm" />
                     )}
                   </span>
-                  <span className="flex-1">
-                    <span className="text-sm font-medium text-fg">
+                  <span className="w-6 h-6 rounded-lg bg-accent/20 flex items-center justify-center text-xs shrink-0 select-none">
+                    {a.avatar || a.name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="text-sm font-medium text-fg truncate block">
                       {a.name}
                     </span>
-                    <span className="ml-2 text-[10px] text-muted">
+                    <span className="text-4xs text-muted">
                       {a.adapter_type}
                     </span>
                   </span>
@@ -226,7 +229,7 @@ export function NewConversationDialog({ open, onClose }: Props) {
                       {a.capabilities.slice(0, 3).map((cap) => (
                         <span
                           key={cap}
-                          className="px-1.5 py-0.5 text-[10px] rounded bg-bg border border-border text-muted"
+                          className="px-1.5 py-0.5 text-4xs rounded bg-bg border border-border text-muted"
                         >
                           {cap}
                         </span>
@@ -239,22 +242,12 @@ export function NewConversationDialog({ open, onClose }: Props) {
         </div>
 
         {error && (
-          <p className="mt-3 text-xs text-red-400" role="alert">
+          <p className="mt-3 text-xs text-danger" role="alert">
             {error}
           </p>
         )}
 
-        <div className="mt-5 flex items-center justify-end gap-2">
-          {!canSubmit && !submitting && !loadingAgents && title.trim().length === 0 && (
-            <span className="text-[10px] text-muted mr-auto">
-              请先输入会话标题
-            </span>
-          )}
-          {!canSubmit && !submitting && !loadingAgents && title.trim().length > 0 && selected.size === 0 && (
-            <span className="text-[10px] text-muted mr-auto">
-              {type === "group" ? "群聊需要至少 1 个 Agent" : "请选择一个 Agent"}
-            </span>
-          )}
+        <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
@@ -265,15 +258,11 @@ export function NewConversationDialog({ open, onClose }: Props) {
           </button>
           <button
             type="submit"
-            className="px-3 py-1.5 rounded-md text-xs bg-accent text-white hover:bg-accent/90 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:bg-accent/90 transition disabled:opacity-60 disabled:cursor-not-allowed"
             disabled={!canSubmit}
             title={
-              !canSubmit && !submitting && !loadingAgents
-                ? title.trim().length === 0
-                  ? "请先输入会话标题"
-                  : type === "group" && selected.size === 0
-                    ? "群聊需要至少 1 个 Agent"
-                    : "请选择一个 Agent"
+              type === "group" && selected.size === 0
+                ? "群聊需要至少 1 个 Agent"
                 : undefined
             }
           >

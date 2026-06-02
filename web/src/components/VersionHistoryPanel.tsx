@@ -103,7 +103,7 @@ export function VersionHistoryPanel({ artifactId, currentVersion, onSelectVersio
 
   if (error) {
     return (
-      <div className="px-3 py-4 text-xs text-red-400 text-center">{error}</div>
+      <div className="px-3 py-4 text-xs text-danger text-center">{error}</div>
     );
   }
 
@@ -141,19 +141,19 @@ export function VersionHistoryPanel({ artifactId, currentVersion, onSelectVersio
                     v{v.version || 1}
                   </span>
                   {isCurrent && (
-                    <span className="text-[9px] rounded-full bg-accent/15 text-accent px-1.5 py-0.5 border border-accent/20">
+                    <span className="text-4xs rounded-full bg-accent/15 text-accent px-1.5 py-0.5 border border-accent/20">
                       当前
                     </span>
                   )}
-                  <span className="ml-auto text-[10px] text-muted">
+                  <span className="ml-auto text-4xs text-muted">
                     {formatTime(v.created_at)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] text-muted/70 truncate">
+                  <span className="text-4xs text-muted/70 truncate">
                     {v.title || "untitled"}
                   </span>
-                  <span className="text-[9px] text-muted/40 shrink-0">
+                  <span className="text-4xs text-muted/40 shrink-0">
                     {formatSize(v.file_size)}
                   </span>
                 </div>
@@ -163,13 +163,13 @@ export function VersionHistoryPanel({ artifactId, currentVersion, onSelectVersio
               {isSelected && diffContent && (
                 <div className="border-b border-border bg-bg/40">
                   {diffLoading ? (
-                    <div className="px-3 py-2 text-[10px] text-muted animate-pulse">
+                    <div className="px-3 py-2 text-4xs text-muted animate-pulse">
                       加载差异…
                     </div>
                   ) : diffContent.vAfter === v.version && prevVersion ? (
                     <div className="max-h-48 overflow-auto">
                       <div className="sticky top-0 flex items-center gap-2 px-3 py-1 bg-bg/80 border-b border-border/50">
-                        <span className="text-[9px] text-muted font-medium">
+                        <span className="text-4xs text-muted font-medium">
                           v{diffContent.vBefore} → v{diffContent.vAfter}
                         </span>
                       </div>
@@ -179,7 +179,7 @@ export function VersionHistoryPanel({ artifactId, currentVersion, onSelectVersio
                       />
                     </div>
                   ) : (
-                    <div className="px-3 py-2 text-[10px] text-muted">
+                    <div className="px-3 py-2 text-4xs text-muted">
                       {diffContent.vAfter === v.version
                         ? "无前一版本可比较"
                         : "选择版本以查看差异"}
@@ -216,15 +216,15 @@ function UnifiedInlineDiff({ before, after }: { before: string; after: string })
   }, [before, after]);
 
   return (
-    <pre className="text-[10px] font-mono leading-relaxed p-2 overflow-auto whitespace-pre">
+    <pre className="text-4xs font-mono leading-relaxed p-2 overflow-auto whitespace-pre">
       {lines.map((line, i) => (
         <div
           key={i}
           className={
             line.type === "add"
-              ? "bg-emerald-500/10 text-emerald-300/80"
+              ? "bg-success/10 text-success"
               : line.type === "del"
-                ? "bg-rose-500/10 text-rose-300/70"
+                ? "bg-danger/10 text-danger"
                 : "text-muted/40"
           }
         >

@@ -190,3 +190,108 @@ decomposer:
   auto_success_criteria: true
   # 最大子任务数
   max_subtasks: 4
+
+# ========================================
+# Pipeline 流水线配置 (7-Stage Actor-Critic)
+# 借鉴 Cowork Forge 多 Agent 协作架构
+# ========================================
+pipeline:
+  # 是否启用流水线模式（Idea → PRD → Design → Plan → Coding → Check → Delivery）
+  enabled: true
+  # 默认流程: "default" (7 stages) 或 "quick" (4 stages)
+  default_flow: "default"
+  # 是否在失败时停止
+  stop_on_failure: true
+  # 最大用户反馈轮数
+  max_feedback_loops: 5
+  # 阶段失败最大重试次数
+  max_stage_retries: 3
+  # 重试间隔（毫秒）
+  retry_delay_ms: 5000
+  # Actor-Critic 默认最大迭代次数
+  default_max_iterations: 1
+  # Coding 阶段最大迭代次数（允许更多次审查修复）
+  coding_max_iterations: 2
+
+# ========================================
+# Pipeline Stage Agents 配置
+# ========================================
+pipeline_agents:
+  idea:
+    prompt_template: "prompts/agent_idea.txt"
+    temperature: 0.7
+
+  prd_actor:
+    prompt_template: "prompts/agent_prd_actor.txt"
+    temperature: 0.7
+
+  prd_critic:
+    prompt_template: "prompts/agent_prd_critic.txt"
+    temperature: 0.3
+
+  design_actor:
+    prompt_template: "prompts/agent_design_actor.txt"
+    temperature: 0.7
+
+  design_critic:
+    prompt_template: "prompts/agent_design_critic.txt"
+    temperature: 0.3
+
+  plan_actor:
+    prompt_template: "prompts/agent_plan_actor.txt"
+    temperature: 0.7
+
+  plan_critic:
+    prompt_template: "prompts/agent_plan_critic.txt"
+    temperature: 0.3
+
+  coding_actor:
+    prompt_template: "prompts/agent_coding_actor.txt"
+    temperature: 0.7
+
+  coding_critic:
+    prompt_template: "prompts/agent_coding_critic.txt"
+    temperature: 0.3
+
+  check_agent:
+    prompt_template: "prompts/agent_check.txt"
+    temperature: 0.3
+
+  delivery_agent:
+    prompt_template: "prompts/agent_delivery.txt"
+    temperature: 0.5
+
+# ========================================
+# 关键阶段配置（需要人工确认）
+# ========================================
+critical_stages:
+  - idea
+  - prd
+  - design
+  - plan
+  - coding
+
+# ========================================
+# Artifact 预注入配置
+# 每个阶段自动从上下文注入的前序阶段产出物
+# ========================================
+artifact_injection:
+  prd:
+    - idea.md
+  design:
+    - prd.md
+  plan:
+    - design.md
+  coding:
+    - plan.md
+    - design.md
+  check:
+    - prd.md
+    - design.md
+    - plan.md
+  delivery:
+    - idea.md
+    - prd.md
+    - design.md
+    - plan.md
+    - check_report.md

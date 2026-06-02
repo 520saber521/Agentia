@@ -25,7 +25,7 @@ from .base import AgentAdapter, Chunk
 ANTHROPIC_API_BASE = "https://api.anthropic.com/v1"
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_MAX_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 60000
 REQUEST_TIMEOUT_S = 60.0
 
 # For slicing non-streaming response into token-like chunks
@@ -106,7 +106,7 @@ class ClaudeCodeAdapter(AgentAdapter):
     - ``api_key`` (required) — Anthropic API key
     - ``model`` (optional, default ``claude-sonnet-4-20250514``)
     - ``base_url`` (optional, default ``https://api.anthropic.com/v1``)
-    - ``max_tokens`` (optional, default 4096)
+    - ``max_tokens`` (optional, default 12000)
 
     R-A-8 compliance: ``__init__`` does NOT read ``os.environ``.
     """
@@ -119,6 +119,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         self.model: str = str(self.config.get("model", DEFAULT_MODEL))
         self.base_url: str = str(self.config.get("base_url", ANTHROPIC_API_BASE)).rstrip("/")
         self.max_tokens: int = int(self.config.get("max_tokens", DEFAULT_MAX_TOKENS))
+        self.system_prompt: str = str(self.config.get("system_prompt") or "")
 
     async def send(
         self,
@@ -133,19 +134,36 @@ class ClaudeCodeAdapter(AgentAdapter):
             return
 
         anthropic_messages: list[dict[str, Any]] = []
+        last_role = ""
         for m in messages:
             role = _role(m.get("role", "user"))
             content = m.get("content", "")
+            if role not in {"user", "assistant"}:
+                role = "user"
+            if not content:
+                continue
+            if anthropic_messages and role == last_role:
+                previous = anthropic_messages[-1].get("content", "")
+                if isinstance(previous, str) and isinstance(content, str):
+                    anthropic_messages[-1]["content"] = f"{previous}\n\n{content}"
+                    continue
             if isinstance(content, str):
                 anthropic_messages.append({"role": role, "content": content})
+                last_role = role
             elif isinstance(content, list):
                 anthropic_messages.append({"role": role, "content": content})
+                last_role = role
+
+        if anthropic_messages and anthropic_messages[-1]["role"] != "user":
+            anthropic_messages.append({"role": "user", "content": "请基于以上对话继续回复用户。"})
 
         body: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
             "messages": anthropic_messages,
         }
+        if self.system_prompt:
+            body["system"] = self.system_prompt
         if tools:
             body["tools"] = tools
         if stream:
@@ -157,144 +175,192 @@ class ClaudeCodeAdapter(AgentAdapter):
             "content-type": "application/json",
         }
 
+        client = httpx.AsyncClient(timeout=httpx.Timeout(REQUEST_TIMEOUT_S))
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(REQUEST_TIMEOUT_S)) as client:
+            try:
                 response = await client.post(
                     f"{self.base_url}/messages",
                     json=body,
                     headers=headers,
                 )
-        except httpx.TimeoutException:
-            yield {"type": "error", "code": "timeout", "message": f"Anthropic API timeout after {REQUEST_TIMEOUT_S}s"}
-            return
-        except httpx.TransportError as exc:
-            yield {"type": "error", "code": "upstream_error", "message": f"Transport error: {exc}"}
-            return
+            except httpx.TimeoutException:
+                yield {"type": "error", "code": "timeout", "message": f"Anthropic API timeout after {REQUEST_TIMEOUT_S}s"}
+                return
+            except httpx.TransportError as exc:
+                yield {"type": "error", "code": "upstream_error", "message": f"Transport error: {exc}"}
+                return
 
-        if response.status_code == 429:
-            yield {"type": "error", "code": "rate_limited", "message": "Anthropic API rate limited (429)"}
-            return
-        if response.status_code == 400:
-            body_text = await response.aread()
-            yield {"type": "error", "code": "bad_request", "message": body_text.decode(errors="replace")}
-            return
-        if response.status_code >= 500:
-            yield {"type": "error", "code": "upstream_error", "message": f"Anthropic API {response.status_code}"}
-            return
-        if response.status_code != 200:
-            body_text = await response.aread()
-            yield {"type": "error", "code": "upstream_error", "message": f"Anthropic API {response.status_code}: {body_text.decode(errors='replace')}"}
-            return
+            if response.status_code == 429:
+                yield {"type": "error", "code": "rate_limited", "message": "Anthropic API rate limited (429)"}
+                return
+            if response.status_code == 400:
+                body_text = await response.aread()
+                yield {"type": "error", "code": "bad_request", "message": body_text.decode(errors="replace")}
+                return
+            if response.status_code >= 500:
+                yield {"type": "error", "code": "upstream_error", "message": f"Anthropic API {response.status_code}"}
+                return
+            if response.status_code != 200:
+                body_text = await response.aread()
+                yield {"type": "error", "code": "upstream_error", "message": f"Anthropic API {response.status_code}: {body_text.decode(errors='replace')}"}
+                return
 
-        if not stream:
-            body_data = response.json()
-            text = ""
-            for block in (body_data.get("content") or []):
-                if block.get("type") == "text":
-                    text += block.get("text", "")
-            if text:
-                yield {"type": "text", "delta": text}
-            usage = body_data.get("usage") or {}
-            yield {
-                "type": "usage",
-                "input_tokens": usage.get("input_tokens", 0),
-                "output_tokens": usage.get("output_tokens", 0),
-            }
-            yield {"type": "done"}
-            return
+            if not stream:
+                body_data = response.json()
+                text = ""
+                for block in (body_data.get("content") or []):
+                    if block.get("type") == "text":
+                        text += block.get("text", "")
+                if text:
+                    yield {"type": "text", "delta": text}
+                usage = body_data.get("usage") or {}
+                yield {
+                    "type": "usage",
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                }
+                yield {"type": "done"}
+                return
 
-        input_tokens = 0
-        output_tokens = 0
-        current_text = ""
-        is_streaming = False
-        is_full_json = False
+            input_tokens = 0
+            output_tokens = 0
+            current_text = ""
+            is_streaming = False
+            is_full_json = False
+            finish_reason_seen = ""
+            active_tool_calls: dict[int, dict[str, Any]] = {}
 
-        cancel_event = asyncio.Event()
+            cancel_event = asyncio.Event()
 
-        def _on_cancel(_task=None):
-            cancel_event.set()
+            def _on_cancel(_task=None):
+                cancel_event.set()
 
-        loop = asyncio.get_running_loop()
-        current_task = asyncio.current_task(loop=loop)
-        if current_task is not None:
-            current_task.add_done_callback(_on_cancel)
+            loop = asyncio.get_running_loop()
+            current_task = asyncio.current_task(loop=loop)
+            if current_task is not None:
+                current_task.add_done_callback(_on_cancel)
 
-        try:
-            async for parsed in _sse_or_json(response, stream_requested=True):
-                if cancel_event.is_set():
-                    return
-
-                event = parsed["event"]
-                data = parsed["data"]
-
-                if event == "error_stream":
-                    err = json.loads(data) if data else {}
-                    yield {"type": "error", "code": err.get("code", "stream_interrupted"), "message": err.get("message", "stream interrupted")}
-                    return
-
-                try:
-                    payload = json.loads(data) if data else {}
-                except (ValueError, TypeError):
-                    continue
-
-                if event == "message_start":
-                    is_streaming = True
-                    msg = payload.get("message") or {}
-                    usage = msg.get("usage") or {}
-                    input_tokens = usage.get("input_tokens", 0)
-
-                    # Detect non-streaming response (full JSON in SSE reader)
-                    content = msg.get("content") or []
-                    if content and not is_streaming:
-                        is_full_json = True
-                        text = "".join(
-                            block.get("text", "") for block in content if block.get("type") == "text"
-                        )
-                        tokens = _split_into_tokens(text)
-                        for tok in tokens:
-                            if cancel_event.is_set():
-                                return
-                            current_text += tok
-                            yield {"type": "text", "delta": tok}
-
-                elif event == "content_block_delta":
-                    delta = payload.get("delta") or {}
-                    if delta.get("type") == "text_delta":
-                        text = delta.get("text", "")
-                        if text:
-                            current_text += text
-                            yield {"type": "text", "delta": text}
-
-                elif event == "message_delta":
-                    usage = payload.get("usage") or {}
-                    output_tokens = usage.get("output_tokens", 0) or len(current_text)
-
-                elif event == "message_stop":
-                    break
-
-        except asyncio.CancelledError:
-            cancel_event.set()
-            return
-
-        if not is_streaming and not current_text:
-            body_data = response.json()
-            text = ""
-            for block in (body_data.get("content") or []):
-                if block.get("type") == "text":
-                    text += block.get("text", "")
-            if text:
-                tokens = _split_into_tokens(text)
-                for tok in tokens:
+            try:
+                async for parsed in _sse_or_json(response, stream_requested=True):
                     if cancel_event.is_set():
                         return
-                    yield {"type": "text", "delta": tok}
 
-        yield {
-            "type": "usage",
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-        }
-        yield {"type": "done"}
+                    event = parsed["event"]
+                    data = parsed["data"]
+
+                    if event == "error_stream":
+                        err = json.loads(data) if data else {}
+                        yield {"type": "error", "code": err.get("code", "stream_interrupted"), "message": err.get("message", "stream interrupted")}
+                        return
+
+                    try:
+                        payload = json.loads(data) if data else {}
+                    except (ValueError, TypeError):
+                        continue
+
+                    if event == "message_start":
+                        is_streaming = True
+                        msg = payload.get("message") or {}
+                        usage = msg.get("usage") or {}
+                        input_tokens = usage.get("input_tokens", 0)
+
+                        content = msg.get("content") or []
+                        if content and not is_streaming:
+                            is_full_json = True
+                            text = "".join(
+                                block.get("text", "") for block in content if block.get("type") == "text"
+                            )
+                            tokens = _split_into_tokens(text)
+                            for tok in tokens:
+                                if cancel_event.is_set():
+                                    return
+                                current_text += tok
+                                yield {"type": "text", "delta": tok}
+
+                    elif event == "content_block_start":
+                        block = payload.get("content_block") or {}
+                        idx = payload.get("index", 0)
+                        if block.get("type") == "tool_use":
+                            active_tool_calls[idx] = {
+                                "name": str(block.get("name", "")),
+                                "call_id": str(block.get("id", "")),
+                                "arguments": "",
+                            }
+
+                    elif event == "content_block_delta":
+                        delta = payload.get("delta") or {}
+                        idx = payload.get("index", 0)
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text", "")
+                            if text:
+                                current_text += text
+                                yield {"type": "text", "delta": text}
+                        elif delta.get("type") == "input_json_delta":
+                            if idx in active_tool_calls:
+                                active_tool_calls[idx]["arguments"] += delta.get("partial_json", "")
+
+                    elif event == "content_block_stop":
+                        idx = payload.get("index", 0)
+                        if idx in active_tool_calls:
+                            tc = active_tool_calls.pop(idx)
+                            try:
+                                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                            except (json.JSONDecodeError, TypeError):
+                                args = {"raw": tc["arguments"]}
+                            yield {
+                                "type": "tool_call",
+                                "name": tc["name"],
+                                "args": args,
+                                "call_id": tc["call_id"],
+                            }
+
+                    elif event == "message_delta":
+                        delta = payload.get("delta") or {}
+                        stop_reason = delta.get("stop_reason")
+                        if stop_reason:
+                            finish_reason_seen = str(stop_reason)
+                        usage = payload.get("usage") or {}
+                        output_tokens = usage.get("output_tokens", 0) or len(current_text)
+
+                    elif event == "message_stop":
+                        break
+
+            except asyncio.CancelledError:
+                cancel_event.set()
+                return
+
+            if not is_streaming and not current_text:
+                body_data = response.json()
+                text = ""
+                for block in (body_data.get("content") or []):
+                    if block.get("type") == "text":
+                        text += block.get("text", "")
+                if text:
+                    tokens = _split_into_tokens(text)
+                    for tok in tokens:
+                        if cancel_event.is_set():
+                            return
+                        yield {"type": "text", "delta": tok}
+
+            yield {
+                "type": "usage",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            }
+            if finish_reason_seen == "max_tokens":
+                yield {
+                    "type": "error",
+                    "code": "output_truncated",
+                    "message": (
+                        "The model stopped because it reached max_tokens. "
+                        "Increase max_tokens or ask it to continue."
+                    ),
+                }
+                return
+
+            yield {"type": "done", "finish_reason": finish_reason_seen or "stop"}
+        finally:
+            await client.aclose()
 
     def capabilities(self) -> List[str]:
         return ["text", "code", "tool_use", "vision", "web_search", "file"]

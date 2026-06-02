@@ -81,6 +81,43 @@ async def test_successful_streaming(adapter_with_key):
     assert chunks[-1]["type"] == "done"
 
 
+async def test_strips_reasoning_content_and_retries_bad_history(adapter_with_key):
+    first_response = MagicMock(spec=httpx.Response)
+    first_response.status_code = 400
+    first_response.aread = AsyncMock(
+        return_value=b"The reasoning_content in the thinking mode must be passed back to the API."
+    )
+
+    async def aiter_lines():
+        yield 'data: {"choices":[{"delta":{"content":"Recovered"},"index":0,"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}'
+        yield "data: [DONE]"
+
+    second_response = MagicMock(spec=httpx.Response)
+    second_response.status_code = 200
+    second_response.aiter_lines = aiter_lines
+
+    mock_client = _mock_client(first_response)
+    mock_client.post.side_effect = [first_response, second_response]
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        chunks = []
+        async for chunk in adapter_with_key.send(
+            messages=[
+                {"role": "user", "content": "start"},
+                {"role": "assistant", "content": "thinking", "reasoning_content": "secret"},
+                {"role": "user", "content": [{"type": "text", "text": "continue", "reasoning_content": "x"}]},
+            ]
+        ):
+            chunks.append(chunk)
+
+    assert mock_client.post.call_count == 2
+    first_payload = mock_client.post.call_args_list[0].kwargs["json"]
+    assert "reasoning_content" not in str(first_payload)
+    retry_payload = mock_client.post.call_args_list[1].kwargs["json"]
+    assert all(m["role"] != "assistant" for m in retry_payload["messages"])
+    assert [c["delta"] for c in chunks if c.get("type") == "text"] == ["Recovered"]
+
+
 # ---------------------------------------------------------------------------
 # Scenario 2: Missing API key
 # ---------------------------------------------------------------------------

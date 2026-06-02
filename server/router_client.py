@@ -37,7 +37,7 @@ class RouterClient:
     async def health(self) -> bool:
         """Check if Router is reachable."""
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
+            async with httpx.AsyncClient(timeout=1) as client:
                 resp = await client.get(f"{self.base_url}/health")
                 return resp.status_code == 200
         except httpx.TransportError:

@@ -81,6 +81,7 @@ export interface DeployStatusContent {
   title?: string;
   url?: string;
   summary?: string;
+  progress?: number;
 }
 
 export type MessageContent =
@@ -125,6 +126,7 @@ export interface Conversation {
   pinned: boolean;
   archived: boolean;
   last_msg_preview: string | null;
+  workspace_path: string | null;
   owner_user_id: string;
   members: Member[];
 }
@@ -143,6 +145,7 @@ export interface Agent {
   model: string;
   base_url: string;
   system_prompt: string;
+  tools: string[];
   capabilities: string[];
   api_key_configured: boolean;
   api_key_mask: string;
@@ -155,6 +158,33 @@ export interface Agent {
 }
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
+
+export type AgentGraphStatus = "IDLE" | "BUSY" | "WAKING";
+
+export interface AgentGraphNode {
+  id: string;
+  role: string;
+  parentId: string | null;
+  status: AgentGraphStatus;
+  domain?: string;
+  agentName?: string;
+}
+
+export interface AgentGraphBeam {
+  id: string;
+  fromId: string;
+  toId: string;
+  kind: "create" | "message";
+  label?: string;
+  createdAt: number;
+}
+
+export interface AgentGraphEvent {
+  id: string;
+  kind: "agent" | "message" | "llm" | "tool";
+  label: string;
+  at: number;
+}
 
 export type ServerEvent =
   | { type: "hello"; ts: number; conn_id: string; server: string }
@@ -281,6 +311,58 @@ export type ServerEvent =
       tool_name: string;
       arguments: Record<string, unknown>;
     }
+  | {
+      type: "anim_agent_created";
+      ts: number;
+      event_id?: string;
+      conversation_id: string;
+      agent: {
+        id: string;
+        role: string;
+        parentId: string | null;
+        domain?: string | null;
+        agentName?: string | null;
+      };
+    }
+  | {
+      type: "anim_agent_status";
+      ts: number;
+      event_id?: string;
+      conversation_id: string;
+      agentId: string;
+      status: AgentGraphStatus;
+    }
+  | {
+      type: "anim_beam";
+      ts: number;
+      event_id?: string;
+      conversation_id: string;
+      beam: {
+        id: string;
+        fromId: string;
+        toId: string;
+        kind: "create" | "message";
+        label?: string | null;
+      };
+    }
+  | {
+      type: "anim_event";
+      ts: number;
+      event_id?: string;
+      conversation_id: string;
+      event: {
+        id: string;
+        kind: "agent" | "message" | "llm" | "tool";
+        label: string;
+      };
+    }
+  | {
+      type: "workspace_file_changed";
+      ts: number;
+      conversation_id: string;
+      path: string;
+      action: "created" | "modified" | "deleted";
+    }
   ;
 
 export interface Attachment {
@@ -304,6 +386,27 @@ export type ClientEvent =
     }
   | { type: "cancel"; message_id: string }
   | { type: "tool_confirm_response"; confirm_id: string; approved: boolean }
+  | {
+      type: "deploy_status";
+      ts: number;
+      conversation_id: string;
+      deploy_id: string;
+      status: string;
+      content: DeployStatusContent;
+    }
+  | {
+      type: "shell_command_started";
+      ts: number;
+      conversation_id: string;
+      command: string;
+    }
+  | {
+      type: "shell_command_completed";
+      ts: number;
+      conversation_id: string;
+      command: string;
+      exit_code: number;
+    }
 ;
 
 /**
@@ -382,4 +485,15 @@ export interface FileEntry {
   name: string;
   type: "file" | "directory";
   size: number;
+}
+
+/** Workspace 文件树节点（递归） */
+export interface FileTreeNode {
+  name: string;
+  type: "file" | "directory";
+  path: string;
+  size: number;
+  children?: FileTreeNode[] | null;
+  modified_at?: number;
+  truncated?: boolean;
 }

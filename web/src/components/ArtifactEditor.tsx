@@ -4,6 +4,8 @@ import Editor from "@monaco-editor/react";
 import { fetchArtifactContent, saveArtifactVersion, describeApiError } from "../api/client";
 import type { Artifact } from "../types";
 import { VersionHistoryPanel } from "./VersionHistoryPanel";
+import { formatHtml } from "../formatHtml";
+import { useTheme } from "../hooks/useTheme";
 
 interface Props {
   artifact: Artifact;
@@ -46,6 +48,7 @@ function detectLanguage(artifact: Artifact): string {
 }
 
 export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: Props) {
+  const { theme } = useTheme();
   const [content, setContent] = useState<string | null>(null);
   const [originalContent, setOriginalContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -70,8 +73,9 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     fetchArtifactContent(currentArtifact.id)
       .then((c) => {
         if (!cancelled) {
-          setContent(c);
-          setOriginalContent(c);
+          const formatted = language === "html" ? formatHtml(c) : c;
+          setContent(formatted);
+          setOriginalContent(formatted);
           setLoading(false);
         }
       })
@@ -130,21 +134,22 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
+  const language = detectLanguage(currentArtifact);
+
   const handleSelectVersion = useCallback(async (versionArtifactId: string, _versionNumber: number) => {
     try {
       setLoading(true);
       setLoadError(null);
       const c = await fetchArtifactContent(versionArtifactId);
-      setContent(c);
-      setOriginalContent(c);
+      const formatted = language === "html" ? formatHtml(c) : c;
+      setContent(formatted);
+      setOriginalContent(formatted);
       setLoading(false);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "版本加载失败");
       setLoading(false);
     }
-  }, []);
-
-  const language = detectLanguage(currentArtifact);
+  }, [language]);
 
   return (
     <div
@@ -164,14 +169,14 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           <span className="text-sm font-medium text-fg truncate">
             {currentArtifact.title}
           </span>
-          <span className="text-[10px] text-muted shrink-0">
+          <span className="text-4xs text-muted shrink-0">
             v{currentArtifact.version}
           </span>
-          <span className="text-[10px] text-muted shrink-0">
+          <span className="text-4xs text-muted shrink-0">
             {language}
           </span>
           {hasChanges && (
-            <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+            <span className="text-4xs text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
               未保存的修改
             </span>
           )}
@@ -179,17 +184,17 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
 
         <div className="flex items-center gap-2 shrink-0">
           {saveStatus === "success" && (
-            <span className="text-xs text-emerald-400/80">已保存</span>
+            <span className="text-xs text-success">已保存</span>
           )}
           {saveStatus === "error" && (
-            <span className="text-xs text-red-500/80 max-w-64 truncate" title={saveError ?? ""}>
+            <span className="text-xs text-danger max-w-64 truncate" title={saveError ?? ""}>
               保存失败：{saveError ?? "可重试"}
             </span>
           )}
           <button
             type="button"
             onClick={() => setShowHistory(!showHistory)}
-            className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md border transition-colors ${
+            className={`px-2.5 py-1.5 text-3xs font-medium rounded-md border transition-colors ${
               showHistory
                 ? "border-accent/30 text-accent bg-accent/5"
                 : "border-border text-muted hover:text-fg hover:bg-bg"
@@ -201,7 +206,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
             type="button"
             onClick={handleSave}
             disabled={saveStatus === "saving" || content === null || !hasChanges}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saveStatus === "saving" ? "保存中…" : hasChanges ? "保存 (Ctrl+S)" : "已是最新"}
           </button>
@@ -218,7 +223,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
           )}
           {loadError && (
             <div className="flex flex-col items-center justify-center h-full gap-3">
-              <div className="text-sm text-red-500/80">{loadError}</div>
+              <div className="text-sm text-danger">{loadError}</div>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
@@ -234,7 +239,7 @@ export function ArtifactEditor({ artifact, conversationId, onClose, onSaved }: P
               language={language}
               value={content}
               onChange={(v) => setContent(v ?? "")}
-              theme="vs-dark"
+              theme={theme === "dark" ? "vs-dark" : "vs"}
               options={{
                 fontSize: 13,
                 fontFamily: "'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace",

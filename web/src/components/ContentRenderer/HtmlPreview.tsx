@@ -8,7 +8,7 @@ export function HtmlPreview({ code }: Props) {
   const [showPreview, setShowPreview] = useState(true);
 
   return (
-    <div className="my-2 rounded-xl border border-border bg-panel overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
+    <div className="my-2 rounded-xl border border-border bg-panel overflow-hidden shadow-lg">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-bg/40">
         <div className="flex items-center gap-2 min-w-0">
           <div className="h-6 w-6 rounded-md bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400 text-xs shrink-0">
@@ -35,7 +35,7 @@ export function HtmlPreview({ code }: Props) {
           />
         </div>
       ) : (
-        <div className="max-h-[480px] overflow-auto p-3 bg-[#1e1e2e] rounded-b-xl">
+        <div className="max-h-[480px] overflow-auto p-3 bg-panel rounded-b-xl">
           <pre className="text-sm text-gray-300 whitespace-pre-wrap break-words font-mono leading-relaxed">
             <code>{code}</code>
           </pre>

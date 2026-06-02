@@ -61,7 +61,7 @@ Write-Host "→ 启动 BFF (端口 $BffPort)..." -ForegroundColor Yellow
 $BffJob = Start-Job -ScriptBlock {
   param($Dir, $Port)
   Set-Location $Dir
-  python -m uvicorn main:app --host 127.0.0.1 --port $Port --reload --log-level info
+  python dev_server.py --host 127.0.0.1 --port $Port --reload --log-level info
 } -ArgumentList $ServerDir, $BffPort
 
 # 等待 BFF 就绪

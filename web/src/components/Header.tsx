@@ -1,36 +1,68 @@
 import { useChatStore } from "../stores/useChatStore";
+import { ThemeToggle } from "./ThemeToggle";
+import { Menu } from "./icons";
 
-const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
-  connected: { label: "在线", cls: "bg-emerald-900/70 text-emerald-300" },
-  connecting: { label: "连接中", cls: "bg-amber-900/60 text-amber-200" },
-  disconnected: { label: "离线", cls: "bg-rose-900/60 text-rose-200" },
+const STATUS_LABELS: Record<string, { label: string; cls: string; dot: string }> = {
+  connected: {
+    label: "Online",
+    cls: "border-success/30 bg-success/10 text-success/80",
+    dot: "bg-success",
+  },
+  connecting: {
+    label: "Connecting",
+    cls: "border-warning/30 bg-warning/10 text-warning/80",
+    dot: "bg-warning",
+  },
+  disconnected: {
+    label: "Offline",
+    cls: "border-danger/30 bg-danger/10 text-danger/80",
+    dot: "bg-danger",
+  },
 };
 
 export function Header() {
   const status = useChatStore((s) => s.status);
   const serverInfo = useChatStore((s) => s.serverInfo);
   const cur = useChatStore((s) => s.currentConvId);
-  const { label, cls } = STATUS_LABELS[status] ?? STATUS_LABELS.disconnected;
+  const { label, cls, dot } = STATUS_LABELS[status] ?? STATUS_LABELS.disconnected;
 
   return (
-    <header className="flex items-center gap-4 px-6 h-12 bg-panel border-b border-border shrink-0">
-      <span className="text-sm font-semibold text-fg">
-        AgentHub <span className="text-muted font-normal">· 多 Agent 协作平台</span>
-      </span>
-      <span className={`text-xs px-2.5 py-1 rounded-full select-none ${cls}`}>
+    <header className="flex h-12 shrink-0 items-center gap-4 border-b border-border bg-bg/90 backdrop-blur-lg px-5">
+      <button
+        type="button"
+        onClick={() => useChatStore.getState().toggleSidebar?.()}
+        className="md:hidden mr-1 rounded p-1 text-muted hover:text-fg"
+        aria-label="切换侧边栏"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+      <div className="flex min-w-0 items-baseline gap-2">
+        <span className="text-sm font-semibold tracking-wide text-fg">Agentia</span>
+        <span className="text-2xs uppercase tracking-[0.22em] text-muted">
+          Swarm workspace
+        </span>
+      </div>
+
+      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-2xs ${cls}`}>
+        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
         {label}
       </span>
+
       {serverInfo && (
-        <span className="text-xs text-muted truncate">via {serverInfo}</span>
+        <span className="hidden truncate text-xs text-muted md:inline">via {serverInfo}</span>
       )}
-      <div className="ml-auto text-xs text-muted truncate">
-        {cur ? (
-          <>
-            当前会话 · <span className="text-fg">{cur}</span>
-          </>
-        ) : (
-          <span className="opacity-60">未选会话</span>
-        )}
+
+      <div className="ml-auto flex items-center gap-3">
+        <ThemeToggle />
+        <div className="min-w-0 truncate text-xs text-muted">
+          {cur ? (
+            <>
+              Conversation <span className="font-mono text-fg/80">{cur}</span>
+            </>
+          ) : (
+            <span className="opacity-60">No conversation selected</span>
+          )}
+        </div>
       </div>
     </header>
   );
