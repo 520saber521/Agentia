@@ -362,7 +362,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
         )}
 
         {/* Capabilities display */}
-        {agent && agent.tools.length > 0 && (
+        {agent && agent.tools?.length > 0 && (
           <div className="mt-4">
             <div className="text-xs text-muted mb-1.5">Enabled tools</div>
             <div className="flex flex-wrap gap-1">
@@ -378,7 +378,7 @@ export function AgentCreateDialog({ open, agent, onClose }: Props) {
           </div>
         )}
 
-        {agent && agent.capabilities.length > 0 && (
+        {agent && agent.capabilities?.length > 0 && (
           <div className="mt-4">
             <div className="text-xs text-muted mb-1.5">Capabilities</div>
             <div className="flex flex-wrap gap-1">
