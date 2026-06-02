@@ -876,8 +876,43 @@ def _ensure_preview_collaboration_domains(user_text: str, domains: set[str]) -> 
 
 
 def _build_subtask_description(subtask: Any, decompose_result: Any) -> str:
-    # Keep the decomposer-provided task details intact for agent assignment.
-    return subtask.description or ""
+    return re.sub(r"@Orchestrator\b", "", subtask.description or "", flags=re.IGNORECASE).strip()
+
+
+def _subtask_display_title(subtask: Any) -> str:
+    domain_names = {
+        "frontend": "前端",
+        "backend": "后端",
+        "database": "数据库",
+        "test": "测试",
+        "docs": "文档",
+        "devops": "部署",
+        "product": "产品",
+        "code": "通用代码",
+    }
+    domain_actions = {
+        "frontend": "实现前端页面与交互",
+        "backend": "实现后端接口与业务逻辑",
+        "database": "设计数据库表结构",
+        "test": "编写测试建议与验收清单",
+        "docs": "整理文档与说明",
+        "devops": "处理部署与运行配置",
+        "product": "梳理产品需求介绍",
+        "code": "实现代码交付",
+    }
+    domain = getattr(subtask, "domain", "") or "code"
+    raw_desc = re.sub(
+        r"@Orchestrator\b",
+        "",
+        str(getattr(subtask, "description", "") or ""),
+        flags=re.IGNORECASE,
+    ).strip()
+    first_line = next((line.strip() for line in raw_desc.splitlines() if line.strip()), "")
+    first_line = re.sub(r"^\[[^\]]+\]\s*", "", first_line).strip()
+    first_line = re.sub(r"^Original requirement:\s*", "", first_line, flags=re.IGNORECASE).strip()
+    if first_line and "@Orchestrator" not in first_line and len(first_line) <= 70:
+        return f"{domain_names.get(domain, domain)}：{first_line}"
+    return f"{domain_names.get(domain, domain)}：{domain_actions.get(domain, '完成领域相关任务')}"
 
 
 def _agent_config(agent: Agent) -> dict[str, Any]:
@@ -1456,6 +1491,8 @@ async def _llm_analyze_and_decompose(
         'non_software = \u6570\u5b66\u5efa\u6a21\u3001\u6570\u636e\u5206\u6790\u3001\u8bba\u6587\u3001\u7814\u7a76\u3001\u5b66\u672f\u95ee\u9898\uff08\u4f7f\u7528domain "code"\uff09\u3002\n\n'
         "\u5b50\u4efb\u52a1\u62c6\u5206\u89c4\u5219\uff1a\n"
         "- \u6bcf\u4e2a\u5b50\u4efb\u52a1\u8981\u6709\u5177\u4f53\u7684\u3001\u53ef\u76f4\u63a5\u6267\u884c\u7684\u63cf\u8ff0\n"
+        "- \u4e25\u7981\u5728\u5b50\u4efb\u52a1 description \u4e2d\u590d\u5236\u6216\u91cd\u590d\u5b8c\u6574\u7528\u6237\u9700\u6c42\uff1b\u53ea\u5199\u8be5 domain \u9700\u8981\u5b8c\u6210\u7684\u4e13\u5c5e\u5de5\u4f5c\n"
+        "- \u4f8b\u5982 frontend \u53ea\u5199\u9875\u9762\u548c\u4ea4\u4e92\uff0cbackend \u53ea\u5199\u63a5\u53e3\u548c\u4e1a\u52a1\u903b\u8f91\uff0cdatabase \u53ea\u5199\u8868\u7ed3\u6784\uff0ctest \u53ea\u5199\u6d4b\u8bd5\u4e0e\u9a8c\u6536\n"
         "- dependencies\u59cb\u7ec8\u4e3a\u7a7a\u6570\u7ec4[]\uff0c\u6240\u6709\u5b50\u4efb\u52a1\u5fc5\u987b\u5e76\u884c\u6267\u884c\uff0c\u4e0d\u6dfb\u52a0\u4efb\u4f55\u4f9d\u8d56\n"
         "- \u5b50\u4efb\u52a1ID\u4f7f\u7528\u6709\u610f\u4e49\u7684\u82f1\u6587\u6807\u8bc6\n"
         "- entities/apis/components\u6839\u636e\u9700\u6c42\u5b9e\u9645\u63d0\u53d6\uff0c\u53ef\u4ee5\u4e3a\u7a7a\u6570\u7ec4\n"
@@ -1790,7 +1827,7 @@ async def handle_orchestrator_mention(
         decompose_subtasks = decompose_result.subtasks
     else:
         decomposer = EnhancedTaskDecomposer()
-        task_input = TaskInput(description=user_text, context=context_str or None)
+        task_input = TaskInput(description=_clean_requirement(user_text), context=context_str or None)
         decompose_result = decomposer.decompose_with_contract(
             task=task_input,
             domains=complexity_domains,
@@ -1829,17 +1866,18 @@ async def handle_orchestrator_mention(
             )
 
             enhanced_desc = _build_subtask_description(subtask, decompose_result)
+            subtask_title = _subtask_display_title(subtask)
             depends_on_list = subtask.dependencies if hasattr(subtask, "dependencies") and subtask.dependencies else []
             input_summary = (
                 f"Domain: {subtask.domain}. "
-                f"{'Depends on: ' + ', '.join(depends_on_list) + '. ' if depends_on_list else ''}"
-                f"{subtask.description[:100]}"
+                f"Task: {subtask_title}. "
+                f"Details: {enhanced_desc[:300]}"
             )
 
             st = await create_task(
                 s,
                 conversation_id=conversation_id,
-                title=subtask.description[:80],
+                title=subtask_title[:80],
                 description=enhanced_desc,
                 domain=subtask.domain,
                 assigned_agent_id=agent_id,
@@ -1856,7 +1894,7 @@ async def handle_orchestrator_mention(
                 agent_name,
                 agent_id,
                 input_summary,
-                [subtask_id_map[d] for d in depends_on_list if d in subtask_id_map],
+                [],
             )
             for st, agent_name, agent_id, input_summary, depends_on_list in subtask_records
         ]
@@ -1932,8 +1970,42 @@ async def handle_orchestrator_mention(
             action="created",
         ))
 
+    subtask_message_ids: dict[str, str] = {}
+    for st, _agent_name, agent_id, _is, _dep in subtask_records:
+        msg_id = await _create_subtask_placeholder_message(
+            conn,
+            st,
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+        )
+        subtask_message_ids[st.id] = msg_id
+        async with Session() as s:
+            updated = await update_task_status(s, st.id, "running")
+        if updated is not None:
+            await conn.send(event(
+                "task_update",
+                conversation_id=conversation_id,
+                task=task_to_dict(updated),
+                task_id=updated.parent_task_id or updated.id,
+                subtask_id=updated.id if updated.parent_task_id else None,
+                status=updated.status,
+                progress=updated.progress_pct,
+                message_id=msg_id,
+                action="status_changed",
+            ))
+        animation_bus.agent_status(
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            status="BUSY",
+        )
+        animation_bus.viz_event(
+            conversation_id=conversation_id,
+            kind="llm",
+            label=f"{_agent_name}: 开始执行",
+        )
+
     # 7. Build DAG and execute via event-driven DAG engine
-    #     (no barrier: nodes dispatch as soon as dependencies are met)
+    #     (all subtasks have placeholders and running status before model calls start)
     dag = DAG()
     for st, _agent_name, _agent_id, _input_summary, deps in subtask_records:
         dag.add_node(DAGNode(
@@ -1950,30 +2022,6 @@ async def handle_orchestrator_mention(
 
     async def _dispatch_node(node: DAGNode) -> str:
         st = node.metadata["task_record"]
-        async with Session() as s:
-            updated = await update_task_status(s, st.id, "running")
-        if updated is not None:
-            await conn.send(event(
-                "task_update",
-                conversation_id=conversation_id,
-                task=task_to_dict(updated),
-                task_id=updated.parent_task_id or updated.id,
-                subtask_id=updated.id if updated.parent_task_id else None,
-                status=updated.status,
-                progress=updated.progress_pct,
-                message_id=None,
-                action="status_changed",
-            ))
-        animation_bus.agent_status(
-            conversation_id=conversation_id,
-            agent_id=node.assigned_agent_id,
-            status="BUSY",
-        )
-        animation_bus.viz_event(
-            conversation_id=conversation_id,
-            kind="llm",
-            label=f"{node.assigned_agent_name}: 开始执行",
-        )
         try:
             result_message_id = await _dispatch_subtask_with_retry(
                 conn, st,
@@ -1983,6 +2031,7 @@ async def handle_orchestrator_mention(
                     f"[Orchestrator] Subtask: {node.title}\nInput: {node.input_summary}"
                 ),
                 pinned_context=pinned_context,
+                message_id=subtask_message_ids.get(st.id),
             )
             animation_bus.viz_event(
                 conversation_id=conversation_id,
@@ -2411,21 +2460,13 @@ def _extract_domain_instructions(domain: str, description: str) -> str:
     return guard
 
 
-async def _dispatch_subtask_with_result(
+async def _create_subtask_placeholder_message(
     conn: Connection,
     st: Any,
     agent_id: str,
     conversation_id: str,
-    user_text: str,
-    pinned_context: list[str] | None = None,
 ) -> str:
-    """Dispatch a subtask to an agent and create a message bubble for it.
-
-    Returns the message_id of the agent's reply message.
-    """
     Session = get_sessionmaker()
-
-    # Create agent placeholder message for this subtask
     async with Session() as s:
         agent_msg = await create_service_message(
             s,
@@ -2439,6 +2480,25 @@ async def _dispatch_subtask_with_result(
 
     await conn.send(event("message_created", message=msg_dict))
     await conn.send(event("agent_typing", agent_id=agent_id, conversation_id=conversation_id))
+    return msg_id
+
+
+async def _dispatch_subtask_with_result(
+    conn: Connection,
+    st: Any,
+    agent_id: str,
+    conversation_id: str,
+    user_text: str,
+    pinned_context: list[str] | None = None,
+    message_id: str | None = None,
+) -> str:
+    Session = get_sessionmaker()
+
+    if message_id is None:
+        msg_id = await _create_subtask_placeholder_message(conn, st, agent_id, conversation_id)
+    else:
+        msg_id = message_id
+        await conn.send(event("agent_typing", agent_id=agent_id, conversation_id=conversation_id))
 
     # Build a concise subtask message with pinned context
     pinned_block = ""
@@ -2906,6 +2966,7 @@ async def _dispatch_subtask_with_retry(
     conversation_id: str,
     user_text: str,
     pinned_context: list[str] | None = None,
+    message_id: str | None = None,
 ) -> str:
     last_exc: Exception | None = None
     for attempt in range(RETRY_LIMIT + 1):
@@ -2917,6 +2978,7 @@ async def _dispatch_subtask_with_retry(
                 conversation_id=conversation_id,
                 user_text=user_text,
                 pinned_context=pinned_context,
+                message_id=message_id,
             )
         except Exception as exc:
             last_exc = exc

@@ -485,6 +485,7 @@ class EnhancedTaskDecomposer(TaskDecomposer):
             "test": "测试",
             "docs": "文档",
             "devops": "运维部署",
+            "product": "产品",
             "code": "通用代码",
         }
         domain_name = domain_names.get(domain, domain)
@@ -495,7 +496,18 @@ class EnhancedTaskDecomposer(TaskDecomposer):
                 parts.append(f"\n\n负责契约部分: {contract_section}")
             return "".join(parts)
 
-        return f"[{domain_name}] {task.description}"
+        domain_focus = {
+            "frontend": "实现前端页面、视觉布局、交互状态、组件结构和可预览效果；使用 mock 数据独立完成页面，不要设计后端接口或数据库表。",
+            "backend": "实现后端接口、业务流程、请求响应结构、错误处理和服务端校验；只引用必要的数据模型，不要实现前端页面。",
+            "database": "设计数据库表、字段、类型、约束、索引、关系和迁移/建表建议；不要实现前端页面或后端路由。",
+            "test": "制定测试用例、验收标准、边界场景、接口联调检查和质量风险；不要实现前端页面、后端接口或数据库表。",
+            "docs": "整理产品/技术说明、使用流程、交付清单和集成说明；不要实现代码。",
+            "devops": "设计部署、构建、环境变量、运行检查和发布流程；不要实现业务功能。",
+            "product": "梳理产品需求、核心功能、用户角色、业务流程、页面信息架构和验收口径；不要实现前端页面、后端接口或数据库表。",
+            "code": "根据需求实现通用代码方案，并明确输出可执行交付内容。",
+        }
+        focus = domain_focus.get(domain, "完成该领域相关的具体工作。")
+        return f"[{domain_name}] {focus}\n\n原始需求背景: {task.description}"
     
     def _generate_success_criteria_with_contract(
         self,
