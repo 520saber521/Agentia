@@ -1,0 +1,75 @@
+---
+description: AgentHub Web 前端硬性规则
+globs: ["web/src/**/*.{ts,tsx}"]
+alwaysApply: true
+---
+
+# 前端规则
+
+这些规则约束 `web/src` 中的 React、TypeScript、Zustand、WebSocket、富媒体渲染和交互状态。目标是在网络抖动、流式事件乱序、用户取消和多 Agent 并发时保持界面稳定。
+
+## R-F-1 ServerEvent 必须进入 reducer
+
+- WebSocket 收到服务端事件后，不得在回调里直接散落 `set(...)`。
+- 事件到状态的映射必须集中在 `web/src/stores/reducer.ts`。
+- reducer 必须保持纯函数，不读时间、不发请求、不访问 DOM、不打印日志。
+- 副作用通过 `effects` 或 store action 在 reducer 外执行。
+
+## R-F-2 reducer 变更必须有测试
+
+- 修改 reducer 前，先在 `web/src/stores/reducer.test.ts` 添加能暴露目标行为的用例。
+- 至少覆盖本会话、其他会话、重复事件、未知事件、错误事件等边界。
+- 流式消息必须按 `message_id` 更新，不能按“最后一条 Agent 消息”猜测。
+
+## R-F-3 API 调用必须集中封装
+
+- 组件中禁止直接 `fetch(...)`。
+- REST 调用统一放在 `web/src/api/client.ts`。
+- 组件只调用 store action 或 API client，不拼接后端 URL。
+- API 失败必须反馈给用户或进入可观察状态，不得静默吞掉。
+
+## R-F-4 WebSocket 客户端只能有一个实例
+
+- `WSClient` 必须由 store 或模块级单例持有。
+- 禁止组件挂载时 `new WSClient()`。
+- 重连、心跳、join 当前会话必须在单一位置维护。
+- 断线重连后必须重新 join 当前会话并避免重复追加历史。
+
+## R-F-5 异步请求必须防旧响应覆盖新状态
+
+- 任何依赖 `currentConversationId` 的异步请求，返回时必须确认会话仍然匹配。
+- 切换会话时，应清理旧会话临时状态，例如 streaming、mentions、错误提示。
+- 用户取消生成后，UI 必须立即反映取消中或已取消状态。
+
+## R-F-6 消息内容渲染必须显式分支
+
+- `ContentRenderer` 必须覆盖所有合法 `content.type`。
+- 未知类型只能显示错误占位，不能白屏或抛出未捕获异常。
+- 代码、Diff、iframe、文件卡片必须限制尺寸，避免撑破消息流。
+- iframe 预览必须有加载失败和重试状态。
+
+## R-F-7 `@mention` 状态必须可验证
+
+- Composer 文本中的有效 mention 与发送 payload 的 `mentions` 必须一致。
+- mention 去重应保持首次插入顺序。
+- 删除 mention token 时必须同步删除对应 `agent_id`。
+- 单聊中 `@` 是普通文本，不弹出 Agent 候选。
+
+## R-F-8 样式遵循项目设计系统
+
+- 优先使用已有 Tailwind token 和组件样式，不新增随机 hex 色值。
+- 不把页面级区域做成嵌套卡片；卡片只用于消息、产物、模态和重复项。
+- 按钮、输入框、面板在移动和桌面宽度下不能出现文字溢出或遮挡。
+- 富媒体面板必须有稳定尺寸，动态内容不能导致布局跳动。
+
+## R-F-9 文件规模与职责
+
+- 单个组件文件超过 250 行时，应考虑拆分子组件、hook 或纯函数。
+- store 文件只保存状态与动作，不放复杂 UI 计算。
+- 组件 props 应表达明确数据边界，避免把整个全局 store 传入深层组件。
+
+## R-F-10 测试要求
+
+- reducer 逻辑必须用 Vitest 覆盖。
+- 新 content type 至少测试一次 `message_created` 能正确进入消息列表。
+- 关键交互如 mention、取消、Artifact 保存，应优先补组件或 store 层测试。

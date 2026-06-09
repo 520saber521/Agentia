@@ -1,0 +1,27 @@
+# 环境变量文件（敏感信息）
+.env
+.env.*
+!.env.example
+
+# AgentHub 运行时文件
+.codex_team/
+
+# 其他临时文件
+*.pyc
+__pycache__/
+.DS_Store
+**/__pycache__/
+
+# BFF (server/) 鏈湴杩愯鏃?
+server/.venv/
+server/*.db
+server/*.db-journal
+server/**/*.db
+server/**/*.db-journal
+server/.agenthub/
+.agenthub/
+
+# Debug / logs
+.dbg/
+debug-*.md
+server.log

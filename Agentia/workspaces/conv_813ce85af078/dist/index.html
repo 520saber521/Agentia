@@ -1,0 +1,1902 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>小红书</title>
+  <style>
+    /* ===== CSS Variables ===== */
+    :root {
+      --primary: #FF2442;
+      --primary-light: #FF6B81;
+      --primary-dark: #D91B34;
+      --secondary: #FFB6C1;
+      --accent-gold: #FFB347;
+      --accent-purple: #9B59B6;
+      --accent-teal: #1ABC9C;
+      --bg-dark: #0D0D0D;
+      --bg-card: #1A1A2E;
+      --bg-glass: rgba(255, 255, 255, 0.06);
+      --bg-glass-hover: rgba(255, 255, 255, 0.12);
+      --text-primary: #FFF;
+      --text-secondary: rgba(255, 255, 255, 0.75);
+      --text-muted: rgba(255, 255, 255, 0.45);
+      --border-glass: rgba(255, 255, 255, 0.5);
+      --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
+      --shadow-glow: 0 0 40px rgba(255, 36, 66, 0.75);
+      --radius-sm: 8px;
+      --radius-md: 16px;
+      --radius-lg: 24px;
+      --radius-xl: 32px;
+      --radius-full: 9999px;
+      --font-sans: 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
+      --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+      --ease-bounce: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      --nav-height: 64px;
+      --max-width: 1280px;
+    }
+
+    /* ===== Reset & Base ===== */
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html {
+      scroll-behavior: smooth;
+      font-size: 16px;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      line-height: 1.6;
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+    a {
+      text-decoration: none;
+      color: inherit;
+    }
+    img {
+      display: block;
+      max-width: 100%;
+      width: 100%;
+      height: auto;
+    }
+    ul { list-style: none; }
+
+    /* ===== Scrollbar ===== */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-dark); }
+    ::-webkit-scrollbar-thumb { background: var(--primary); border-radius: var(--radius-full); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--primary-light); }
+
+    /* ===== Keyframes ===== */
+    @keyframes fadeInUp {
+      0% { opacity: 0; transform: translateY(40px) scale(0.98); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes fadeInScale {
+      0% { opacity: 0; transform: scale(0.92); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    @keyframes slideDown {
+      0% { opacity: 0; transform: translateY(-20px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 20px rgba(255, 36, 66, 0.2); }
+      50% { box-shadow: 0 0 40px rgba(255, 36, 66, 0.5); }
+    }
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @keyframes floatY {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-12px); }
+    }
+    @keyframes rotateSlow {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes typewriterCursor {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    @keyframes heartBeat {
+      0% { transform: scale(1); }
+      15% { transform: scale(1.3); }
+      30% { transform: scale(1); }
+      45% { transform: scale(1.15); }
+      60% { transform: scale(1); }
+    }
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    @keyframes blob {
+      0% { transform: translate(0, 0) scale(1); }
+      25% { transform: translate(30px, -50px) scale(1.1); }
+      50% { transform: translate(-20px, 20px) scale(0.9); }
+      75% { transform: translate(40px, 30px) scale(1.05); }
+      100% { transform: translate(0, 0) scale(1); }
+    }
+    @keyframes slideInRight {
+      0% { opacity: 0; transform: translateX(40px); }
+      100% { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes slideInLeft {
+      0% { opacity: 0; transform: translateX(-40px); }
+      100% { opacity: 1; transform: translateX(0); }
+    }
+
+    /* ===== Background Blobs ===== */
+    .bg-blob {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.15;
+      pointer-events: none;
+      z-index: 0;
+      animation: blob 18s ease-in-out infinite alternate;
+    }
+    .bg-blob--1 {
+      width: 500px;
+      height: 500px;
+      background: var(--primary);
+      top: -100px;
+      left: -100px;
+      animation-delay: 0s;
+    }
+    .bg-blob--2 {
+      width: 400px;
+      height: 400px;
+      background: var(--accent-purple);
+      top: 40%;
+      right: -80px;
+      animation-delay: -6s;
+    }
+    .bg-blob--3 {
+      width: 350px;
+      height: 350px;
+      background: var(--accent-teal);
+      bottom: -80px;
+      left: 30%;
+      animation-delay: -12s;
+    }
+
+    /* ===== Navigation ===== */
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: var(--nav-height);
+      z-index: 1000;
+      background: rgba(13, 13, 13, 0.75);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border-bottom: 1px solid var(--border-glass);
+      transition: background 0.4s var(--ease-out-expo), box-shadow 0.4s var(--ease-out-expo);
+    }
+    .nav.scrolled {
+      background: rgba(13, 13, 13, 0.92);
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+    }
+    .nav__inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav__logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: opacity 0.3s ease;
+    }
+    .nav__logo:hover { opacity: 0.85; }
+    .nav__logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .nav__links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+    }
+    .nav__link {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      position: relative;
+      padding: 4px 0;
+      transition: color 0.3s var(--ease-out-expo);
+    }
+    .nav__link::after {
+      content: '';
+      position: absolute;
+      bottom: -2px;
+      left: 0;
+      width: 0;
+      height: 2px;
+      background: var(--primary);
+      border-radius: var(--radius-full);
+      transition: width 0.4s var(--ease-out-expo);
+    }
+    .nav__link:hover { color: var(--text-primary); }
+    .nav__link:hover::after { width: 100%; }
+    .nav__link--active {
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .nav__link--active::after { width: 100%; }
+
+    .nav__actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .nav__search {
+      display: flex;
+      align-items: center;
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-full);
+      padding: 6px 16px 6px 20px;
+      gap: 8px;
+      transition: all 0.3s var(--ease-out-expo);
+      cursor: pointer;
+    }
+    .nav__search:hover {
+      background: var(--bg-glass-hover);
+      border-color: rgba(255,255,255,0.2);
+    }
+    .nav__search-icon {
+      font-size: 14px;
+      opacity: 0.6;
+    }
+    .nav__search-text {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .nav__search-shortcut {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 12px;
+    }
+    .nav__avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--primary), var(--accent-purple));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: all 0.3s var(--ease-bounce);
+      overflow: hidden;
+    }
+    .nav__avatar:hover {
+      border-color: var(--primary);
+      transform: scale(1.08);
+    }
+    .nav__avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* Hamburger */
+    .nav__hamburger {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      cursor: pointer;
+      padding: 4px;
+      z-index: 1001;
+    }
+    .nav__hamburger span {
+      display: block;
+      width: 24px;
+      height: 2px;
+      background: var(--text-primary);
+      border-radius: 2px;
+      transition: all 0.4s var(--ease-out-expo);
+      transform-origin: center;
+    }
+    .nav__hamburger.active span:nth-child(1) {
+      transform: rotate(45deg) translate(5px, 5px);
+    }
+    .nav__hamburger.active span:nth-child(2) {
+      opacity: 0;
+      transform: scaleX(0);
+    }
+    .nav__hamburger.active span:nth-child(3) {
+      transform: rotate(-45deg) translate(5px, -5px);
+    }
+
+    /* Mobile Menu */
+    .mobile-menu {
+      position: fixed;
+      top: 0;
+      right: -100%;
+      width: 300px;
+      height: 100vh;
+      background: rgba(13, 13, 13, 0.98);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      border-left: 1px solid var(--border-glass);
+      z-index: 999;
+      padding: 100px 40px 40px;
+      transition: right 0.5s var(--ease-out-expo);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .mobile-menu.open { right: 0; }
+    .mobile-menu__overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 998;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+    .mobile-menu__overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .mobile-menu__link {
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      transition: color 0.3s ease, padding-left 0.3s var(--ease-out-expo);
+      cursor: pointer;
+    }
+    .mobile-menu__link:hover {
+      color: var(--primary);
+      padding-left: 12px;
+    }
+
+    /* ===== Hero Section ===== */
+    .hero {
+      position: relative;
+      min-height: 90vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 120px 24px 80px;
+      overflow: hidden;
+      z-index: 1;
+    }
+    .hero__bg {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+    }
+    .hero__bg img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0.2;
+      filter: blur(4px) brightness(0.4);
+    }
+    .hero__overlay {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, rgba(13,13,13,0.2) 0%, var(--bg-dark) 80%);
+      z-index: 0;
+    }
+    .hero__content {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      max-width: 720px;
+      animation: fadeInUp 1.2s var(--ease-out-expo) both;
+    }
+    .hero__badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-full);
+      padding: 6px 20px 6px 12px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+      backdrop-filter: blur(10px);
+    }
+    .hero__badge-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--primary);
+      border-radius: 50%;
+      animation: pulseGlow 2s ease-in-out infinite;
+    }
+    .hero__title {
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-weight: 800;
+      line-height: 1.12;
+      letter-spacing: -1.5px;
+      margin-bottom: 20px;
+    }
+    .hero__title-gradient {
+      background: linear-gradient(135deg, var(--primary), var(--secondary), var(--accent-gold));
+      background-size: 200% 200%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: gradientShift 6s ease infinite;
+    }
+    .hero__typewriter {
+      font-size: clamp(1rem, 2vw, 1.25rem);
+      color: var(--text-secondary);
+      margin-bottom: 36px;
+      min-height: 1.6em;
+    }
+    .hero__typewriter-text {
+      display: inline;
+    }
+    .hero__typewriter-cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1.2em;
+      background: var(--primary);
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: typewriterCursor 0.8s step-end infinite;
+    }
+    .hero__actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 32px;
+      border-radius: var(--radius-full);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.4s var(--ease-out-expo);
+      font-family: var(--font-sans);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(255, 36, 66, 0.35);
+    }
+    .btn-primary:hover {
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 8px 35px rgba(255, 36, 66, 0.5);
+    }
+    .btn-ghost {
+      background: var(--bg-glass);
+      color: var(--text-primary);
+      border: 1px solid var(--border-glass);
+    }
+    .btn-ghost:hover {
+      background: var(--bg-glass-hover);
+      transform: translateY(-3px);
+      border-color: rgba(255,255,255,0.2);
+    }
+    .hero__stats {
+      display: flex;
+      justify-content: center;
+      gap: 48px;
+      margin-top: 48px;
+      flex-wrap: wrap;
+    }
+    .hero__stat {
+      text-align: center;
+    }
+    .hero__stat-number {
+      font-size: 1.8rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--text-primary), var(--text-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero__stat-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* ===== Category Tabs ===== */
+    .section {
+      padding: 80px 24px;
+      position: relative;
+      z-index: 1;
+    }
+    .section__inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+    .section__header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 40px;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .section__title {
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .section__subtitle {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-top: 6px;
+    }
+    .section__link {
+      color: var(--primary);
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: gap 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .section__link:hover { gap: 8px; }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 32px;
+    }
+    .tab {
+      padding: 8px 20px;
+      border-radius: var(--radius-full);
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      color: var(--text-secondary);
+      transition: all 0.3s var(--ease-out-expo);
+    }
+    .tab:hover {
+      background: var(--bg-glass-hover);
+      color: var(--text-primary);
+    }
+    .tab--active {
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 4px 15px rgba(255, 36, 66, 0.3);
+    }
+
+    /* ===== Masonry Grid ===== */
+    .masonry {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .masonry--2 { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+
+    .card {
+      background: var(--bg-card);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 1px solid var(--border-glass);
+      transition: all 0.5s var(--ease-out-expo);
+      cursor: pointer;
+      opacity: 0;
+      transform: translateY(30px);
+    }
+    .card.revealed {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .card:hover {
+      transform: translateY(-8px) scale(1.01);
+      box-shadow: var(--shadow-card), var(--shadow-glow);
+      border-color: rgba(255, 36, 66, 0.2);
+    }
+    .card__image {
+      position: relative;
+      overflow: hidden;
+      aspect-ratio: 3/4;
+    }
+    .card__image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.6s var(--ease-out-expo);
+    }
+    .card:hover .card__image img {
+      transform: scale(1.08);
+    }
+    .card__image-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+    .card:hover .card__image-overlay { opacity: 1; }
+    .card__like {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 36px;
+      height: 36px;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(10px);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      color: #fff;
+      opacity: 0;
+      transform: scale(0.8);
+      transition: all 0.3s var(--ease-bounce);
+      border: none;
+      cursor: pointer;
+    }
+    .card:hover .card__like {
+      opacity: 1;
+      transform: scale(1);
+    }
+    .card__like:hover { background: var(--primary); }
+    .card__like.liked {
+      opacity: 1 !important;
+      transform: scale(1) !important;
+      background: var(--primary);
+    }
+    .card__like.liked .heart-icon { animation: heartBeat 0.6s ease; }
+
+    .card__body {
+      padding: 16px;
+    }
+    .card__title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .card__desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .card__meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card__author {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card__avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .card__avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .card__name {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+    }
+    .card__actions {
+      display: flex;
+      gap: 12px;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+    .card__actions span {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: color 0.3s ease;
+    }
+    .card__actions span:hover { color: var(--text-secondary); }
+
+    /* ===== Featured / Horizontal Cards ===== */
+    .featured-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 768px) {
+      .featured-grid { grid-template-columns: 1fr; }
+    }
+    .featured-card {
+      display: flex;
+      background: var(--bg-card);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 1px solid var(--border-glass);
+      transition: all 0.5s var(--ease-out-expo);
+      cursor: pointer;
+      opacity: 0;
+      transform: translateY(30px);
+    }
+    .featured-card.revealed {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .featured-card:hover {
+      transform: translateY(-6px);
+      box-shadow: var(--shadow-card);
+      border-color: rgba(255, 36, 66, 0.15);
+    }
+    .featured-card__image {
+      width: 200px;
+      min-height: 200px;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .featured-card__image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.6s var(--ease-out-expo);
+    }
+    .featured-card:hover .featured-card__image img { transform: scale(1.06); }
+    .featured-card__body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      flex: 1;
+    }
+    .featured-card__tag {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: var(--radius-full);
+      font-size: 0.7rem;
+      font-weight: 600;
+      background: rgba(255, 36, 66, 0.15);
+      color: var(--primary);
+      margin-bottom: 8px;
+      width: fit-content;
+    }
+    .featured-card__title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .featured-card__desc {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .featured-card__footer {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    @media (max-width: 640px) {
+      .featured-card { flex-direction: column; }
+      .featured-card__image { width: 100%; min-height: 180px; }
+    }
+
+    /* ===== Carousel ===== */
+    .carousel {
+      position: relative;
+      overflow: hidden;
+      border-radius: var(--radius-lg);
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+    }
+    .carousel__track {
+      display: flex;
+      transition: transform 0.6s var(--ease-out-expo);
+    }
+    .carousel__slide {
+      min-width: 100%;
+      padding: 40px;
+      display: flex;
+      align-items: center;
+      gap: 40px;
+    }
+    .carousel__content {
+      flex: 1;
+    }
+    .carousel__quote {
+      font-size: 1.3rem;
+      font-weight: 500;
+      line-height: 1.6;
+      margin-bottom: 20px;
+      color: var(--text-primary);
+    }
+    .carousel__author {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .carousel__author-img {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      overflow: hidden;
+    }
+    .carousel__author-img img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .carousel__author-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .carousel__author-title {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .carousel__image {
+      width: 240px;
+      height: 240px;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .carousel__image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .carousel__controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 16px 40px 24px;
+    }
+    .carousel__btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid var(--border-glass);
+      background: var(--bg-glass);
+      color: var(--text-primary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      transition: all 0.3s var(--ease-out-expo);
+    }
+    .carousel__btn:hover {
+      background: var(--bg-glass-hover);
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    .carousel__dots {
+      display: flex;
+      gap: 8px;
+    }
+    .carousel__dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.3s var(--ease-out-expo);
+      border: none;
+    }
+    .carousel__dot--active {
+      background: var(--primary);
+      width: 24px;
+      border-radius: 4px;
+    }
+    @media (max-width: 768px) {
+      .carousel__slide { flex-direction: column; text-align: center; padding: 24px; }
+      .carousel__image { width: 160px; height: 160px; }
+      .carousel__author { justify-content: center; }
+    }
+
+    /* ===== Newsletter ===== */
+    .newsletter {
+      background: linear-gradient(135deg, rgba(255, 36, 66, 0.08), rgba(155, 89, 182, 0.08));
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 60px 40px;
+      text-align: center;
+      margin-top: 40px;
+      position: relative;
+      overflow: hidden;
+    }
+    .newsletter::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 30% 50%, rgba(255,36,66,0.1), transparent 60%);
+      pointer-events: none;
+    }
+    .newsletter__title {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .newsletter__desc {
+      color: var(--text-muted);
+      margin-bottom: 28px;
+      max-width: 480px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .newsletter__form {
+      display: flex;
+      gap: 12px;
+      max-width: 480px;
+      margin: 0 auto;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .newsletter__input {
+      flex: 1;
+      min-width: 200px;
+      padding: 14px 20px;
+      border-radius: var(--radius-full);
+      border: 1px solid var(--border-glass);
+      background: var(--bg-glass);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+      font-family: var(--font-sans);
+      outline: none;
+      transition: all 0.3s var(--ease-out-expo);
+    }
+    .newsletter__input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 20px rgba(255, 36, 66, 0.15);
+    }
+    .newsletter__input::placeholder { color: var(--text-muted); }
+
+    /* ===== Footer ===== */
+    .footer {
+      border-top: 1px solid var(--border-glass);
+      padding: 60px 24px 30px;
+      position: relative;
+      z-index: 1;
+    }
+    .footer__inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 40px;
+    }
+    .footer__brand {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .footer__desc {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      line-height: 1.7;
+      max-width: 320px;
+    }
+    .footer__social {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+    .footer__social-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s var(--ease-bounce);
+    }
+    .footer__social-icon:hover {
+      background: var(--primary);
+      border-color: var(--primary);
+      transform: translateY(-3px) scale(1.1);
+    }
+    .footer__heading {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text-primary);
+    }
+    .footer__link {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      padding: 6px 0;
+      transition: color 0.3s ease, padding-left 0.3s var(--ease-out-expo);
+      cursor: pointer;
+    }
+    .footer__link:hover {
+      color: var(--primary);
+      padding-left: 6px;
+    }
+    .footer__bottom {
+      max-width: var(--max-width);
+      margin: 40px auto 0;
+      padding-top: 20px;
+      border-top: 1px solid var(--border-glass);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    @media (max-width: 768px) {
+      .footer__inner { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 480px) {
+      .footer__inner { grid-template-columns: 1fr; }
+    }
+
+    /* ===== Back to Top ===== */
+    .back-to-top {
+      position: fixed;
+      bottom: 32px;
+      right: 32px;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-size: 20px;
+      box-shadow: 0 4px 20px rgba(255, 36, 66, 0.4);
+      z-index: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transform: translateY(20px) scale(0.8);
+      transition: all 0.4s var(--ease-out-expo);
+      pointer-events: none;
+    }
+    .back-to-top.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+    .back-to-top:hover {
+      transform: translateY(-4px) scale(1.08);
+      box-shadow: 0 8px 30px rgba(255, 36, 66, 0.6);
+    }
+
+    /* ===== Toast Notification ===== */
+    .toast {
+      position: fixed;
+      top: 80px;
+      right: 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: var(--shadow-card);
+      z-index: 2000;
+      transform: translateX(120%);
+      transition: transform 0.5s var(--ease-out-expo);
+      max-width: 360px;
+      backdrop-filter: blur(20px);
+    }
+    .toast.show { transform: translateX(0); }
+    .toast__icon {
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .toast__text {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    /* ===== Loading Shimmer ===== */
+    .shimmer {
+      background: linear-gradient(90deg, var(--bg-card) 25%, rgba(255,255,255,0.04) 50%, var(--bg-card) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 2s ease-in-out infinite;
+    }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 1024px) {
+      .nav__links { gap: 20px; }
+      .nav__search-text { display: none; }
+    }
+    @media (max-width: 768px) {
+      .nav__links { display: none; }
+      .nav__hamburger { display: flex; }
+      .nav__search-shortcut { display: none; }
+      .hero__stats { gap: 24px; }
+      .masonry { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+    }
+    @media (max-width: 480px) {
+      .nav__inner { padding: 0 16px; }
+      .section { padding: 48px 16px; }
+      .masonry { grid-template-columns: 1fr; }
+      .hero__actions { flex-direction: column; }
+      .hero__actions .btn { width: 100%; justify-content: center; }
+      .newsletter { padding: 40px 20px; }
+      .back-to-top { bottom: 20px; right: 20px; width: 44px; height: 44px; font-size: 18px; }
+    }
+
+    /* ===== Utility ===== */
+    .text-gradient {
+      background: linear-gradient(135deg, var(--primary), var(--accent-purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      white-space: nowrap;
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Background Blobs -->
+  <div class="bg-blob bg-blob--1"></div>
+  <div class="bg-blob bg-blob--2"></div>
+  <div class="bg-blob bg-blob--3"></div>
+
+  <!-- Navigation -->
+  <nav class="nav" id="navbar" role="navigation" aria-label="主导航">
+    <div class="nav__inner">
+      <div class="nav__logo" onclick="location.href='#'">
+        <div class="nav__logo-icon">📕</div>
+        <span>小红书</span>
+      </div>
+      <div class="nav__links">
+        <a class="nav__link nav__link--active" data-section="explore">发现</a>
+        <a class="nav__link" data-section="trending">热门</a>
+        <a class="nav__link" data-section="featured">精选</a>
+        <a class="nav__link" data-section="community">社区</a>
+        <a class="nav__link" data-section="about">关于</a>
+      </div>
+      <div class="nav__actions">
+        <div class="nav__search" onclick="showToast('🔍', '搜索功能即将上线')">
+          <span class="nav__search-icon">🔍</span>
+          <span class="nav__search-text">搜索生活灵感...</span>
+          <span class="nav__search-shortcut">⌘K</span>
+        </div>
+        <div class="nav__avatar" onclick="showToast('👤', '个人中心开发中')">
+          <img src="https://picsum.photos/seed/avatar1/100/100" alt="用户头像">
+        </div>
+        <div class="nav__hamburger" id="hamburger" aria-label="菜单" role="button" tabindex="0">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Mobile Menu Overlay -->
+  <div class="mobile-menu__overlay" id="menuOverlay"></div>
+  <!-- Mobile Menu -->
+  <div class="mobile-menu" id="mobileMenu">
+    <a class="mobile-menu__link nav__link--active" data-section="explore">🌟 发现</a>
+    <a class="mobile-menu__link" data-section="trending">🔥 热门</a>
+    <a class="mobile-menu__link" data-section="featured">✨ 精选</a>
+    <a class="mobile-menu__link" data-section="community">💬 社区</a>
+    <a class="mobile-menu__link" data-section="about">📖 关于</a>
+    <div style="margin-top:auto;padding-top:20px;border-top:1px solid var(--border-glass);">
+      <a class="mobile-menu__link" onclick="showToast('⚙️', '设置页面开发中')">⚙️ 设置</a>
+      <a class="mobile-menu__link" onclick="showToast('🚪', '已退出登录')">🚪 退出</a>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast">
+    <span class="toast__icon" id="toastIcon">✅</span>
+    <span class="toast__text" id="toastText">操作成功</span>
+  </div>
+
+  <!-- Back to Top -->
+  <button class="back-to-top" id="backToTop" aria-label="回到顶部" title="回到顶部">↑</button>
+
+  <!-- Hero Section -->
+  <section class="hero" id="hero">
+    <div class="hero__bg">
+      <img src="https://picsum.photos/seed/xiaohongshu-bg/1920/1080" alt="背景图">
+    </div>
+    <div class="hero__overlay"></div>
+    <div class="hero__content">
+      <div class="hero__badge">
+        <span class="hero__badge-dot"></span>
+        3亿+年轻人都爱用的生活社区
+      </div>
+      <h1 class="hero__title">
+        标记你的<br>
+        <span class="hero__title-gradient">美好生活</span>
+      </h1>
+      <div class="hero__typewriter">
+        <span class="hero__typewriter-text" id="typewriterText"></span>
+        <span class="hero__typewriter-cursor"></span>
+      </div>
+      <div class="hero__actions">
+        <button class="btn btn-primary" onclick="scrollToSection('explore')">
+          ✨ 开始探索
+        </button>
+        <button class="btn btn-ghost" onclick="showToast('📹', '视频教程即将上线')">
+          ▶ 观看视频
+        </button>
+      </div>
+      <div class="hero__stats">
+        <div class="hero__stat">
+          <div class="hero__stat-number">300M+</div>
+          <div class="hero__stat-label">注册用户</div>
+        </div>
+        <div class="hero__stat">
+          <div class="hero__stat-number">100M+</div>
+          <div class="hero__stat-label">日活用户</div>
+        </div>
+        <div class="hero__stat">
+          <div class="hero__stat-number">50M+</div>
+          <div class="hero__stat-label">每日笔记</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Explore Section -->
+  <section class="section" id="explore" data-reveal>
+    <div class="section__inner">
+      <div class="section__header">
+        <div>
+          <h2 class="section__title">🔥 热门推荐</h2>
+          <p class="section__subtitle">发现当下最受欢迎的生活笔记</p>
+        </div>
+        <span class="section__link" onclick="showToast('📋', '查看更多')">查看全部 →</span>
+      </div>
+      <div class="tabs" id="categoryTabs">
+        <span class="tab tab--active" data-category="all">全部</span>
+        <span class="tab" data-category="food">美食</span>
+        <span class="tab" data-category="travel">旅行</span>
+        <span class="tab" data-category="fashion">穿搭</span>
+        <span class="tab" data-category="beauty">美妆</span>
+        <span class="tab" data-category="home">家居</span>
+        <span class="tab" data-category="fitness">健身</span>
+      </div>
+      <div class="masonry" id="exploreGrid">
+        <!-- Cards injected by JS -->
+      </div>
+    </div>
+  </section>
+
+  <!-- Featured Section -->
+  <section class="section" id="featured" data-reveal style="background: rgba(255,36,66,0.02);">
+    <div class="section__inner">
+      <div class="section__header">
+        <div>
+          <h2 class="section__title">✨ 精选专栏</h2>
+          <p class="section__subtitle">编辑精选的优质内容合集</p>
+        </div>
+        <span class="section__link" onclick="showToast('📋', '查看更多专栏')">查看全部 →</span>
+      </div>
+      <div class="featured-grid">
+        <div class="featured-card" data-reveal-item>
+          <div class="featured-card__image">
+            <img src="https://picsum.photos/seed/featured1/400/400" alt="精选">
+          </div>
+          <div class="featured-card__body">
+            <span class="featured-card__tag">🔥 热门话题</span>
+            <h3 class="featured-card__title">城市漫游指南 · 北京</h3>
+            <p class="featured-card__desc">探索胡同深处的文艺咖啡馆与隐世小店，发现不一样的京城之美。</p>
+            <div class="featured-card__footer">
+              <span>📅 3天前</span>
+              <span>❤️ 12.8k</span>
+              <span>💬 892</span>
+            </div>
+          </div>
+        </div>
+        <div class="featured-card" data-reveal-item>
+          <div class="featured-card__image">
+            <img src="https://picsum.photos/seed/featured2/400/400" alt="精选">
+          </div>
+          <div class="featured-card__body">
+            <span class="featured-card__tag">🍳 美食</span>
+            <h3 class="featured-card__title">一周不重样 · 健康早餐</h3>
+            <p class="featured-card__desc">10分钟快手早餐食谱合集，营养美味又省时，上班族必备。</p>
+            <div class="featured-card__footer">
+              <span>📅 5天前</span>
+              <span>❤️ 9.2k</span>
+              <span>💬 645</span>
+            </div>
+          </div>
+        </div>
+        <div class="featured-card" data-reveal-item>
+          <div class="featured-card__image">
+            <img src="https://picsum.photos/seed/featured3/400/400" alt="精选">
+          </div>
+          <div class="featured-card__body">
+            <span class="featured-card__tag">👗 穿搭</span>
+            <h3 class="featured-card__title">春季衣橱必备单品TOP10</h3>
+            <p class="featured-card__desc">从基础款到设计感单品，打造永不过时的春日胶囊衣橱。</p>
+            <div class="featured-card__footer">
+              <span>📅 1周前</span>
+              <span>❤️ 15.3k</span>
+              <span>💬 1.2k</span>
+            </div>
+          </div>
+        </div>
+        <div class="featured-card" data-reveal-item>
+          <div class="featured-card__image">
+            <img src="https://picsum.photos/seed/featured4/400/400" alt="精选">
+          </div>
+          <div class="featured-card__body">
+            <span class="featured-card__tag">💄 美妆</span>
+            <h3 class="featured-card__title">新手必学 · 日常通勤妆</h3>
+            <p class="featured-card__desc">五分钟快速出门妆容教程，自然清透，手残党也能轻松掌握。</p>
+            <div class="featured-card__footer">
+              <span>📅 4天前</span>
+              <span>❤️ 21.5k</span>
+              <span>💬 1.8k</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Carousel / Testimonial Section -->
+  <section class="section" id="community" data-reveal>
+    <div class="section__inner">
+      <div class="section__header">
+        <div>
+          <h2 class="section__title">💬 社区声音</h2>
+          <p class="section__subtitle">听听小红薯们的真实分享</p>
+        </div>
+      </div>
+      <div class="carousel" id="testimonialCarousel">
+        <div class="carousel__track" id="carouselTrack">
+          <div class="carousel__slide">
+            <div class="carousel__content">
+              <div class="carousel__quote">"在小红书找到了最适合自己的穿搭风格，从穿搭小白变成了朋友眼中的时尚达人！真的太感谢这个平台了 🌟"</div>
+              <div class="carousel__author">
+                <div class="carousel__author-img">
+                  <img src="https://picsum.photos/seed/user1/100/100" alt="用户">
+                </div>
+                <div>
+                  <div class="carousel__author-name">@时尚小番茄</div>
+                  <div class="carousel__author-title">穿搭博主 · 粉丝 12.6w</div>
+                </div>
+              </div>
+            </div>
+            <div class="carousel__image">
+              <img src="https://picsum.photos/seed/style1/400/400" alt="穿搭">
+            </div>
+          </div>
+          <div class="carousel__slide">
+            <div class="carousel__content">
+              <div class="carousel__quote">"跟着小红书上的食谱学做饭，现在已经能做出满满一桌菜了！从黑暗料理到美食达人的蜕变 🍳"</div>
+              <div class="carousel__author">
+                <div class="carousel__author-img">
+                  <img src="https://picsum.photos/seed/user2/100/100" alt="用户">
+                </div>
+                <div>
+                  <div class="carousel__author-name">@厨房小能手</div>
+                  <div class="carousel__author-title">美食博主 · 粉丝 8.3w</div>
+                </div>
+              </div>
+            </div>
+            <div class="carousel__image">
+              <img src="https://picsum.photos/seed/food1/400/400" alt="美食">
+            </div>
+          </div>
+          <div class="carousel__slide">
+            <div class="carousel__content">
+              <div class="carousel__quote">"每次旅行前都要来小红书做攻略，跟着博主的路线走，从来没踩过雷！分享让旅行更美好 ✈️"</div>
+              <div class="carousel__author">
+                <div class="carousel__author-img">
+                  <img src="https://picsum.photos/seed/user3/100/100" alt="用户">
+                </div>
+                <div>
+                  <div class="carousel__author-name">@旅行梦想家</div>
+                  <div class="carousel__author-title">旅行博主 · 粉丝 15.2w</div>
+                </div>
+              </div>
+            </div>
+            <div class="carousel__image">
+              <img src="https://picsum.photos/seed/travel1/400/400" alt="旅行">
+            </div>
+          </div>
+        </div>
+        <div class="carousel__controls">
+          <button class="carousel__btn" id="carouselPrev" aria-label="上一页">‹</button>
+          <div class="carousel__dots" id="carouselDots">
+            <button class="carousel__dot carousel__dot--active" data-index="0"></button>
+            <button class="carousel__dot" data-index="1"></button>
+            <button class="carousel__dot" data-index="2"></button>
+          </div>
+          <button class="carousel__btn" id="carouselNext" aria-label="下一页">›</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Newsletter / CTA -->
+  <section class="section" data-reveal>
+    <div class="section__inner">
+      <div class="newsletter">
+        <h3 class="newsletter__title">📬 订阅每日灵感</h3>
+        <p class="newsletter__desc">订阅我们的精选推送，每日获取最新生活方式、穿搭美妆和旅行攻略</p>
+        <form class="newsletter__form" id="newsletterForm" onsubmit="handleSubscribe(event)">
+          <input class="newsletter__input" type="email" placeholder="输入你的邮箱地址" required aria-label="邮箱地址">
+          <button class="btn btn-primary" type="submit">立即订阅 ✨</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer" id="about">
+    <div class="footer__inner">
+      <div>
+        <div class="footer__brand">📕 小红书</div>
+        <p class="footer__desc">小红书是年轻人的生活方式平台，由毛文超和瞿芳于2013年创立。在这里，用户通过图文、视频等形式分享生活经验与美好瞬间。</p>
+        <div class="footer__social">
+          <span class="footer__social-icon" onclick="showToast('📱', '微博')">📱</span>
+          <span class="footer__social-icon" onclick="showToast('💚', '微信')">💚</span>
+          <span class="footer__social-icon" onclick="showToast('🎵', '抖音')">🎵</span>
+          <span class="footer__social-icon" onclick="showToast('🐦', 'Twitter')">🐦</span>
+          <span class="footer__social-icon" onclick="showToast('📺', 'B站')">📺</span>
+        </div>
+      </div>
+      <div>
+        <h4 class="footer__heading">发现</h4>
+        <a class="footer__link" onclick="scrollToSection('explore')">热门推荐</a>
+        <a class="footer__link" onclick="scrollToSection('featured')">精选专栏</a>
+        <a class="footer__link" onclick="showToast('📊', '排行榜')">排行榜</a>
+        <a class="footer__link" onclick="showToast('🏷️', '话题')">热门话题</a>
+        <a class="footer__link" onclick="showToast('📍', '同城')">同城</a>
+      </div>
+      <div>
+        <h4 class="footer__heading">社区</h4>
+        <a class="footer__link" onclick="showToast('👥', '社区')">社区规范</a>
+        <a class="footer__link" onclick="showToast('🏆', '创作者')">创作者中心</a>
+        <a class="footer__link" onclick="showToast('🎓', '学院')">小红书学院</a>
+        <a class="footer__link" onclick="showToast('💡', '反馈')">意见反馈</a>
+        <a class="footer__link" onclick="showToast('🤝', '合作')">商务合作</a>
+      </div>
+      <div>
+        <h4 class="footer__heading">支持</h4>
+        <a class="footer__link" onclick="showToast('❓', '帮助')">帮助中心</a>
+        <a class="footer__link" onclick="showToast('🔒', '隐私')">隐私政策</a>
+        <a class="footer__link" onclick="showToast('📄', '条款')">服务条款</a>
+        <a class="footer__link" onclick="showToast('📞', '客服')">联系客服</a>
+        <a class="footer__link" onclick="showToast('📝', '招聘')">加入我们</a>
+      </div>
+    </div>
+    <div class="footer__bottom">
+      <span>© 2025 小红书 · 标记我的生活</span>
+      <span>❤️ 用爱发电 · 前端演示版</span>
+    </div>
+  </footer>
+
+  <script>
+    (function() {
+      'use strict';
+
+      // ===== Data =====
+      const exploreData = [
+        { category: 'food', seed: 'food2', title: '周末brunch好去处 · 北京三里屯', desc: '藏在巷子里的宝藏早午餐，班尼迪克蛋绝了', author: '美食猎人', likes: 3280, comments: 256 },
+        { category: 'travel', seed: 'travel2', title: '云南大理 · 环洱海攻略', desc: '三天两晚深度游，打卡绝美日落地点', author: '旅行日记', likes: 5610, comments: 423 },
+        { category: 'fashion', seed: 'fashion1', title: 'ZARA春季新款试穿报告', desc: '本期入手了8件单品，最推荐这件西装外套', author: '穿搭达人', likes: 4200, comments: 312 },
+        { category: 'beauty', seed: 'beauty1', title: '春夏口红合集 · 显白不踩雷', desc: '黄皮亲测！这10支口红谁涂谁好看', author: '美妆研究室', likes: 7890, comments: 624 },
+        { category: 'home', seed: 'home1', title: '租房改造 · 奶油风卧室', desc: '1500元打造温馨小窝，附购物清单', author: '家居控', likes: 9320, comments: 715 },
+        { category: 'fitness', seed: 'fitness1', title: '7天马甲线挑战 · 跟练版', desc: '每天15分钟，在家就能练出马甲线', author: '健身教练', likes: 12450, comments: 983 },
+        { category: 'food', seed: 'food3', title: '自制提拉米苏·免烤箱版', desc: '零失败甜品配方，入口即化超好吃', author: '甜品师', likes: 4560, comments: 389 },
+        { category: 'travel', seed: 'travel3', title: '日本关西 · 红叶季必去', desc: '京都奈良大阪，8天7晚深度游攻略', author: '旅行规划师', likes: 6780, comments: 521 },
+        { category: 'fashion', seed: 'fashion2', title: '韩系穿搭 · 温柔风搭配', desc: '基础款穿出高级感，日常通勤都合适', author: '韩系穿搭', likes: 5120, comments: 401 },
+      ];
+
+      // ===== Typewriter =====
+      const typewriterEl = document.getElementById('typewriterText');
+      const phrases = [
+        '分享你的生活灵感 ✨',
+        '发现世界的美好 🌍',
+        '记录每一个瞬间 📸',
+        '找到属于你的生活方式 💫',
+        '和3亿人一起标记生活 ❤️'
+      ];
+      let phraseIndex = 0;
+      let charIndex = 0;
+      let isDeleting = false;
+      let typewriterTimer = null;
+
+      function typeEffect() {
+        const currentPhrase = phrases[phraseIndex];
+        if (!isDeleting) {
+          typewriterEl.textContent = currentPhrase.substring(0, charIndex + 1);
+          charIndex++;
+          if (charIndex === currentPhrase.length) {
+            isDeleting = true;
+            typewriterTimer = setTimeout(typeEffect, 2000);
+            return;
+          }
+          typewriterTimer = setTimeout(typeEffect, 60 + Math.random() * 40);
+        } else {
+          typewriterEl.textContent = currentPhrase.substring(0, charIndex);
+          charIndex--;
+          if (charIndex < 0) {
+            isDeleting = false;
+            charIndex = 0;
+            phraseIndex = (phraseIndex + 1) % phrases.length;
+            typewriterTimer = setTimeout(typeEffect, 400);
+            return;
+          }
+          typewriterTimer = setTimeout(typeEffect, 30);
+        }
+      }
+      typeEffect();
+
+      // ===== Render Explore Cards =====
+      const exploreGrid = document.getElementById('exploreGrid');
+      let currentCategory = 'all';
+
+      function renderExploreCards(category) {
+        const filtered = category === 'all'
+          ? exploreData
+          : exploreData.filter(item => item.category === category);
+        
+        exploreGrid.innerHTML = '';
+        filtered.forEach((item, index) => {
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.dataset.revealItem = '';
+          card.style.transitionDelay = (index * 0.08) + 's';
+          card.innerHTML = `
+            <div class="card__image">
+              <img src="https://picsum.photos/seed/${item.seed}/600/800" alt="${item.title}" loading="lazy">
+              <div class="card__image-overlay"></div>
+              <button class="card__like" onclick="toggleLike(this)" aria-label="点赞">
+                <span class="heart-icon">🤍</span>
+              </button>
+            </div>
+            <div class="card__body">
+              <h3 class="card__title">${item.title}</h3>
+              <p class="card__desc">${item.desc}</p>
+              <div class="card__meta">
+                <div class="card__author">
+                  <div class="card__avatar">
+                    <img src="https://picsum.photos/seed/author${index + 10}/100/100" alt="${item.author}" loading="lazy">
+                  </div>
+                  <span class="card__name">${item.author}</span>
+                </div>
+                <div class="card__actions">
+                  <span>❤️ ${formatNum(item.likes)}</span>
+                  <span>💬 ${formatNum(item.comments)}</span>
+                </div>
+              </div>
+            </div>
+          `;
+          exploreGrid.appendChild(card);
+        });
+        // Re-trigger reveal for new cards
+        setTimeout(() => {
+          document.querySelectorAll('#exploreGrid .card').forEach(el => {
+            if (isInViewport(el)) el.classList.add('revealed');
+          });
+        }, 100);
+      }
+
+      function formatNum(n) {
+        if (n >= 10000) return (n / 10000).toFixed(1) + 'w';
+        if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+        return n;
+      }
+
+      renderExploreCards('all');
+
+      // ===== Category Tabs =====
+      const tabs = document.querySelectorAll('#categoryTabs .tab');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+          tabs.forEach(t => t.classList.remove('tab--active'));
+          this.classList.add('tab--active');
+          currentCategory = this.dataset.category;
+          renderExploreCards(currentCategory);
+        });
+      });
+
+      // ===== Carousel =====
+      const track = document.getElementById('carouselTrack');
+      const dots = document.querySelectorAll('#carouselDots .carousel__dot');
+      const prevBtn = document.getElementById('carouselPrev');
+      const nextBtn = document.getElementById('carouselNext');
+      let currentSlide = 0;
+      const totalSlides = dots.length;
+
+      function goToSlide(index) {
+        if (index < 0) index = totalSlides - 1;
+        if (index >= totalSlides) index = 0;
+        currentSlide = index;
+        track.style.transform = `translateX(-${currentSlide * 100}%)`;
+        dots.forEach((d, i) => {
+          d.classList.toggle('carousel__dot--active', i === currentSlide);
+        });
+      }
+
+      prevBtn.addEventListener('click', () => goToSlide(currentSlide - 1));
+      nextBtn.addEventListener('click', () => goToSlide(currentSlide + 1));
+      dots.forEach((dot, i) => {
+        dot.addEventListener('click', () => goToSlide(i));
+      });
+
+      // Auto-play
+      let carouselInterval = setInterval(() => goToSlide(currentSlide + 1), 5000);
+      track.addEventListener('mouseenter', () => clearInterval(carouselInterval));
+      track.addEventListener('mouseleave', () => {
+        carouselInterval = setInterval(() => goToSlide(currentSlide + 1), 5000);
+      });
+      // Touch support
+      let touchStartX = 0;
+      let touchEndX = 0;
+      track.addEventListener('touchstart', (e) => {
+        touchStartX = e.changedTouches[0].screenX;
+        clearInterval(carouselInterval);
+      }, { passive: true });
+      track.addEventListener('touchend', (e) => {
+        touchEndX = e.changedTouches[0].screenX;
+        const diff = touchStartX - touchEndX;
+        if (Math.abs(diff) > 50) {
+          if (diff > 0) goToSlide(currentSlide + 1);
+          else goToSlide(currentSlide - 1);
+        }
+        carouselInterval = setInterval(() => goToSlide(currentSlide + 1), 5000);
+      }, { passive: true });
+
+      // ===== Hamburger Menu =====
+      const hamburger = document.getElementById('hamburger');
+      const mobileMenu = document.getElementById('mobileMenu');
+      const menuOverlay = document.getElementById('menuOverlay');
+
+      function toggleMenu(open) {
+        hamburger.classList.toggle('active', open);
+        mobileMenu.classList.toggle('open', open);
+        menuOverlay.classList.toggle('active', open);
+        document.body.style.overflow = open ? 'hidden' : '';
+      }
+
+      hamburger.addEventListener('click', () => {
+        const isOpen = mobileMenu.classList.contains('open');
+        toggleMenu(!isOpen);
+      });
+      menuOverlay.addEventListener('click', () => toggleMenu(false));
+
+      // Mobile menu links
+      document.querySelectorAll('.mobile-menu__link').forEach(link => {
+        link.addEventListener('click', function() {
+          toggleMenu(false);
+          const section = this.dataset.section;
+          if (section) scrollToSection(section);
+        });
+      });
+
+      // ===== Nav Links Scroll =====
+      document.querySelectorAll('.nav__link').forEach(link => {
+        link.addEventListener('click', function(e) {
+          e.preventDefault();
+          document.querySelectorAll('.nav__link').forEach(l => l.classList.remove('nav__link--active'));
+          this.classList.add('nav__link--active');
+          const section = this.dataset.section;
+          if (section) scrollToSection(section);
+        });
+      });
+
+      function scrollToSection(id) {
+        const el = document.getElementById(id);
+        if (el) {
+          const offset = 80;
+          const top = el.getBoundingClientRect().top + window.pageYOffset - offset;
+          window.scrollTo({ top, behavior: 'smooth' });
+        }
+      }
+
+      // ===== Back to Top =====
+      const backToTop = document.getElementById('backToTop');
+      let lastScrollY = 0;
+
+      window.addEventListener('scroll', function() {
+        const scrollY = window.pageYOffset;
+        backToTop.classList.toggle('visible', scrollY > 500);
+        // Navbar shadow
+        document.getElementById('navbar').classList.toggle('scrolled', scrollY > 50);
+        lastScrollY = scrollY;
+      }, { passive: true });
+
+      backToTop.addEventListener('click', function() {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      // ===== Toast =====
+      const toast = document.getElementById('toast');
+      const toastIcon = document.getElementById('toastIcon');
+      const toastText = document.getElementById('toastText');
+      let toastTimer = null;
+
+      window.showToast = function(icon, text) {
+        toastIcon.textContent = icon || '✅';
+        toastText.textContent = text || '操作成功';
+        toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          toast.classList.remove('show');
+        }, 2800);
+      };
+
+      // ===== Like Toggle =====
+      window.toggleLike = function(btn) {
+        btn.classList.toggle('liked');
+        const icon = btn.querySelector('.heart-icon');
+        if (btn.classList.contains('liked')) {
+          icon.textContent = '❤️';
+          showToast('❤️', '已收藏');
+        } else {
+          icon.textContent = '🤍';
+          showToast('💔', '已取消收藏');
+        }
+      };
+
+      // ===== Newsletter Subscribe =====
+      window.handleSubscribe = function(e) {
+        e.preventDefault();
+        const input = e.target.querySelector('input');
+        if (input.value.trim()) {
+          showToast('🎉', '订阅成功！欢迎加入小红书社区');
+          input.value = '';
+        } else {
+          showToast('⚠️', '请输入有效的邮箱地址');
+        }
+      };
+
+      // ===== IntersectionObserver for Reveal =====
+      function isInViewport(el) {
+        const rect = el.getBoundingClientRect();
+        return rect.top < window.innerHeight - 60 && rect.bottom > 0;
+      }
+
+      const revealObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('revealed');
+            // Also reveal children
+            const items = entry.target.querySelectorAll('[data-reveal-item]');
+            items.forEach((item, i) => {
+              setTimeout(() => {
+                item.classList.add('revealed');
+              }, i * 100);
+            });
+          }
+        });
+      }, {
+        threshold: 0.1,
+        rootMargin: '0px 0px -40px 0px'
+      });
+
+      // Observe sections with data-reveal
+      document.querySelectorAll('[data-reveal]').forEach(el => {
+        revealObserver.observe(el);
+      });
+
+      // Also observe individual cards
+      document.querySelectorAll('[data-reveal-item]').forEach(el => {
+        revealObserver.observe(el);
+      });
+
+      // Initial check for cards already in view
+      setTimeout(() => {
+        document.querySelectorAll('.card, .featured-card').forEach(el => {
+          if (isInViewport(el)) el.classList.add('revealed');
+        });
+      }, 300);
+
+      // ===== Smooth Nav Active on Scroll =====
+      const sections = ['explore', 'featured', 'community', 'about'];
+      const navLinks = document.querySelectorAll('.nav__link');
+
+      function updateActiveNav() {
+        const scrollY = window.pageYOffset + 120;
+        let activeSection = 'explore';
+        
+        sections.forEach(id => {
+          const el = document.getElementById(id);
+          if (el && el.offsetTop <= scrollY) {
+            activeSection = id;
+          }
+        });
+
+        navLinks.forEach(link => {
+          link.classList.toggle('nav__link--active', link.dataset.section === activeSection);
+        });
+      }
+
+      window.addEventListener('scroll', updateActiveNav, { passive: true });
+
+      // ===== Keyboard shortcut: Escape closes menu =====
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && mobileMenu.classList.contains('open')) {
+          toggleMenu(false);
+        }
+        if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          showToast('🔍', '搜索功能即将上线');
+        }
+      });
+
+      console.log('📕 小红书 · 前端演示版已加载');
+      console.log('✨ 特色功能: 打字机 | 轮播 | 瀑布流 | 分类筛选 | 深色模式 | 响应式');
+    })();
+  </script>
+</body>
+</html>

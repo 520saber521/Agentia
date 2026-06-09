@@ -1,0 +1,579 @@
+/**
+ * 纯 reducer：把 `ServerEvent` + 当前 store 状态切片 ⇒ 新状态切片（或 ``null`` 表示不变）。
+ *
+ * 把它抽出来主要是为了：
+ *   1. 单元可测（Vitest 里不需要起 WS、不需要 Zustand）；
+ *   2. 之后多 store 拆分时（task / artifact）可以复用这套消费契约；
+ *   3. 强制约束"只有 reducer 能写消息列表 / 流式状态"，避免散落的 set 调用。
+ *
+ * `handleEvent` 中的副作用（`refreshConversations` / `console.error`）通过返回的
+ * `sideEffects` 字段告知调用方，由 store 那一层实际执行 —— reducer 自身保持纯。
+ */
+
+import type {
+  Agent,
+  AgentGraphBeam,
+  AgentGraphEvent,
+  AgentGraphNode,
+  AgentGraphStatus,
+  Conversation,
+  Message,
+  MessageContent,
+  ServerEvent,
+  Task,
+  ToolCallInfo,
+} from "../types";
+
+/** Reducer 关心的状态切片：仅包含被事件影响的那部分字段。
+ *
+ * W2 F-W2-1 起：``streamingMessageIds`` 从单值升级为数组，
+ * 因为群聊 fan-out 时多个 agent 可能同时流；任意一个 done/cancelled/error
+ * 只从该数组中移除其 ``message_id``，其他兄弟仍在流。
+ */
+export interface ChatSlice {
+  serverInfo: string | null;
+  currentConvId: string | null;
+  conversations: Conversation[];
+  messages: Message[];
+  streamingMessageIds: string[];
+  /** Per-agent typing indicator: agent_id → is typing */
+  agentTyping: Record<string, boolean>;
+  agents: Agent[];
+  /** W3 F-W3-3: task_id → Task map for the current conversation. */
+  tasks: Record<string, Task>;
+  /** Context stats for current conversation. */
+  contextStats: {
+    total: number;
+    pinned: number;
+    pinnedTruncated?: number;
+    historyCount?: number;
+    estimatedTokens?: number;
+    strategy?: string;
+  } | null;
+  agentGraphNodes: Record<string, AgentGraphNode>;
+  agentGraphBeams: AgentGraphBeam[];
+  agentGraphEvents: AgentGraphEvent[];
+  agentGraphStatuses: Record<string, AgentGraphStatus>;
+}
+
+function addStreaming(arr: string[], id: string): string[] {
+  if (arr.includes(id)) return arr;
+  return [...arr, id];
+}
+
+function removeStreaming(arr: string[], id: string): string[] {
+  const idx = arr.indexOf(id);
+  if (idx < 0) return arr;
+  const next = arr.slice();
+  next.splice(idx, 1);
+  return next;
+}
+
+function isPendingAgentTextMessage(message: Message): boolean {
+  return (
+    message.sender_type === "agent" &&
+    message.content.type === "text" &&
+    getText(message.content).trim() === ""
+  );
+}
+
+export type SideEffect = "refresh_conversations";
+
+export interface ReduceResult {
+  next: ChatSlice;
+  effects: SideEffect[];
+}
+
+function getText(content: MessageContent | undefined | null): string {
+  if (
+    content &&
+    typeof content === "object" &&
+    "text" in content &&
+    typeof (content as { text?: unknown }).text === "string"
+  ) {
+    return (content as { text: string }).text;
+  }
+  return "";
+}
+
+function mergeDefinedToolCall(prev: ToolCallInfo, next: ToolCallInfo): ToolCallInfo {
+  return {
+    ...prev,
+    ...Object.fromEntries(
+      Object.entries(next).filter(([, value]) => value !== undefined),
+    ),
+  } as ToolCallInfo;
+}
+
+function normalizeToolCalls(toolCalls: ToolCallInfo[] | undefined): ToolCallInfo[] | undefined {
+  if (!toolCalls || toolCalls.length === 0) return toolCalls;
+  const normalized: ToolCallInfo[] = [];
+  const indexByTool = new Map<string, number>();
+  for (const call of toolCalls) {
+    const key = call.toolName.trim().toLowerCase();
+    const idx = indexByTool.get(key);
+    if (idx == null) {
+      indexByTool.set(key, normalized.length);
+      normalized.push(call);
+    } else {
+      normalized[idx] = mergeDefinedToolCall(normalized[idx], call);
+    }
+  }
+  return normalized.length === toolCalls.length ? toolCalls : normalized;
+}
+
+function upsertToolCall(toolCalls: ToolCallInfo[] | undefined, nextCall: ToolCallInfo): ToolCallInfo[] {
+  const normalized = normalizeToolCalls(toolCalls) ?? [];
+  const key = nextCall.toolName.trim().toLowerCase();
+  const idx = normalized.findIndex((call) => call.toolName.trim().toLowerCase() === key);
+  if (idx < 0) return [...normalized, nextCall];
+  const merged = normalized.slice();
+  merged[idx] = mergeDefinedToolCall(merged[idx], nextCall);
+  return merged;
+}
+
+function normalizeMessageToolCalls(message: Message): Message {
+  const toolCalls = normalizeToolCalls(message.toolCalls);
+  return toolCalls === message.toolCalls ? message : { ...message, toolCalls };
+}
+
+function markTasksDoneByMessageId(tasks: Record<string, Task>, messageId: string): Record<string, Task> {
+  let next = tasks;
+  const completable = new Set(["planning", "pending", "running"]);
+  for (const [taskId, task] of Object.entries(tasks)) {
+    if (task.message_id === messageId && completable.has(task.status)) {
+      if (next === tasks) next = { ...tasks };
+      next[taskId] = {
+        ...task,
+        status: "done",
+        progress_pct: 100,
+        result_summary: task.result_summary ?? "Agent message completed",
+        updated_at: Date.now(),
+      };
+    }
+  }
+  if (next === tasks) return tasks;
+  for (const [taskId, task] of Object.entries(next)) {
+    if (task.parent_task_id != null || !completable.has(task.status)) continue;
+    const children = Object.values(next).filter((item) => item.parent_task_id === task.id);
+    if (children.length > 0 && children.every((item) => item.status === "done")) {
+      next[taskId] = {
+        ...task,
+        status: "done",
+        progress_pct: 100,
+        result_summary: task.result_summary ?? `All ${children.length} subtasks completed`,
+        updated_at: Date.now(),
+      };
+    }
+  }
+  return next;
+}
+
+function dedupConsecutiveChars(text: string): string {
+  return text.replace(/([\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af])\1+/g, "$1")
+    .replace(/([A-Za-z_][A-Za-z0-9_]{1,32})\1{2,}/g, "$1");
+}
+
+function appendStreamDelta(currentText: string, delta: string): string {
+  if (!delta) return currentText;
+  const cleanDelta = dedupConsecutiveChars(delta);
+  if (!currentText) return cleanDelta;
+  if (currentText.endsWith(cleanDelta)) return currentText;
+  if (cleanDelta.length > 12 && currentText.includes(cleanDelta)) return currentText;
+
+  const suffixLen = Math.min(256, currentText.length);
+  const suffix = currentText.slice(-suffixLen);
+  const maxOverlap = Math.min(suffixLen, cleanDelta.length);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    if (suffix.endsWith(cleanDelta.slice(0, size))) {
+      return dedupConsecutiveChars(currentText + cleanDelta.slice(size));
+    }
+  }
+
+  return dedupConsecutiveChars(currentText + cleanDelta);
+}
+
+function visibleErrorText(code: string, message: string): string {
+  if (code === "output_truncated") {
+    return "\n\n---\n[提示] 输出达到模型长度上限，当前内容可能不完整。请发送“继续生成”，或提高该 Agent 的 max_tokens 后重新生成。";
+  }
+  return `\n\n---\n[提示] 生成中断：${message || code}`;
+}
+
+/** 主入口。永远返回新的 slice 对象（即使内容相同），便于调用方一律走相等性判断。 */
+export function reduceEvent(state: ChatSlice, evt: ServerEvent): ReduceResult {
+  const effects: SideEffect[] = [];
+
+  switch (evt.type) {
+    case "hello":
+      return { next: { ...state, serverInfo: evt.server }, effects };
+
+    case "history": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const messages = evt.messages.map(normalizeMessageToolCalls);
+      const historyStreamingIds = messages
+        .filter(isPendingAgentTextMessage)
+        .map((message) => message.id);
+      const streamingMessageIds = Array.from(
+        new Set([...state.streamingMessageIds, ...historyStreamingIds]),
+      );
+      let tasks = state.tasks;
+      if (evt.tasks && evt.tasks.length > 0 && Object.keys(tasks).length === 0) {
+        for (const t of evt.tasks) {
+          tasks = { ...tasks, [t.id]: t };
+        }
+      }
+      return { next: { ...state, messages, streamingMessageIds, tasks }, effects };
+    }
+
+    case "message_created": {
+      const m = normalizeMessageToolCalls(evt.message);
+      if (m.conversation_id !== state.currentConvId) {
+        effects.push("refresh_conversations");
+        return { next: state, effects };
+      }
+      if (state.messages.some((x) => x.id === m.id)) {
+        return { next: state, effects };
+      }
+      if (m.sender_type === "user") {
+        const tempIdx = state.messages.findIndex(
+          (x) => x.id.startsWith("temp-") && x.sender_type === "user",
+        );
+        if (tempIdx >= 0) {
+          const messages = state.messages.slice();
+          messages[tempIdx] = m;
+          return { next: { ...state, messages }, effects };
+        }
+      }
+      const messages = [...state.messages, m];
+      const next: ChatSlice =
+        m.sender_type === "agent"
+          ? (() => {
+              const nextTyping = { ...state.agentTyping };
+              delete nextTyping[m.sender_id];
+              return {
+                ...state,
+                messages,
+                streamingMessageIds: addStreaming(state.streamingMessageIds, m.id),
+                agentTyping: nextTyping,
+              };
+            })()
+          : { ...state, messages };
+      return { next, effects };
+    }
+
+    case "agents": {
+      return { next: { ...state, agents: evt.agents }, effects };
+    }
+
+    case "task_update": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const existing = state.tasks[evt.task.id];
+      const incoming: Task = evt.message_id !== undefined
+        ? { ...evt.task, message_id: evt.message_id }
+        : evt.task;
+      const merged: Task = {
+        ...incoming,
+        ...(existing?.depends_on != null && incoming.depends_on == null ? { depends_on: existing.depends_on } : {}),
+        ...(existing?.message_id != null && incoming.message_id == null ? { message_id: existing.message_id } : {}),
+      };
+      const tasks = { ...state.tasks, [evt.task.id]: merged };
+      return {
+        next: { ...state, tasks },
+        effects: evt.action === "completed" ? ["refresh_conversations"] : effects,
+      };
+    }
+
+    case "agent_typing": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const typing = { ...state.agentTyping, [evt.agent_id]: true };
+      return { next: { ...state, agentTyping: typing }, effects };
+    }
+
+    case "stream_chunk": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+      if (idx < 0) return { next: state, effects };
+      const messages = state.messages.slice();
+      const prev = messages[idx];
+      messages[idx] = {
+        ...prev,
+        content: {
+          type: "text",
+          text: appendStreamDelta(getText(prev.content), evt.delta),
+        },
+      };
+      return { next: { ...state, messages }, effects };
+    }
+
+    case "message_done":
+    case "message_cancelled": {
+      const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+      let messages = state.messages;
+      if (idx >= 0) {
+        messages = state.messages.slice();
+        const cleanFinal = { ...evt.final_content };
+        if (cleanFinal && typeof cleanFinal === "object" && "text" in cleanFinal && typeof cleanFinal.text === "string") {
+          cleanFinal.text = dedupConsecutiveChars(cleanFinal.text);
+        }
+        messages[idx] = { ...messages[idx], content: cleanFinal };
+      }
+      const nextStreaming = removeStreaming(
+        state.streamingMessageIds,
+        evt.message_id,
+      );
+      const tasks = evt.type === "message_done"
+        ? markTasksDoneByMessageId(state.tasks, evt.message_id)
+        : state.tasks;
+      effects.push("refresh_conversations");
+      return {
+        next: {
+          ...state,
+          messages,
+          streamingMessageIds: nextStreaming,
+          tasks,
+        },
+        effects,
+      };
+    }
+
+    case "error": {
+      // 服务端报错：若 message_id 命中正在流的列表，仅从中移除该条。
+      if (
+        typeof evt.message_id === "string" &&
+        state.streamingMessageIds.includes(evt.message_id)
+      ) {
+        const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+        let messages = state.messages;
+        if (idx >= 0) {
+          const current = state.messages[idx];
+          const text = getText(current.content);
+          const note = visibleErrorText(evt.code, evt.message);
+          messages = state.messages.slice();
+          messages[idx] = {
+            ...current,
+            content: {
+              type: "text",
+              text: text.includes(note) ? text : `${text}${note}`,
+            },
+          };
+        }
+        const nextStreaming = removeStreaming(
+          state.streamingMessageIds,
+          evt.message_id,
+        );
+        return {
+          next: {
+            ...state,
+            messages,
+            streamingMessageIds: nextStreaming,
+          },
+          effects,
+        };
+      }
+      return { next: state, effects };
+    }
+
+    case "artifact_ready": {
+      if (
+        evt.conversation_id !== state.currentConvId ||
+        !evt.message_id
+      ) {
+        return { next: state, effects };
+      }
+      const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+      if (idx < 0) return { next: state, effects };
+      const messages = state.messages.slice();
+      const current = messages[idx];
+      const content = current.content.type === "preview"
+        ? {
+            ...current.content,
+            artifact_id: evt.artifact.id,
+            title: current.content.title || evt.artifact.title,
+            mimeType: current.content.mimeType || evt.artifact.mime_type,
+            fileSize: current.content.fileSize || evt.artifact.file_size,
+            url: current.content.url || evt.artifact.url,
+            previewUrl: current.content.previewUrl || evt.artifact.preview_url,
+            version: current.content.version || evt.artifact.version,
+          }
+        : current.content;
+      messages[idx] = { ...current, artifact_id: evt.artifact.id, content };
+      return { next: { ...state, messages }, effects };
+    }
+
+    case "message_pinned":
+    case "message_unpinned": {
+      const convId = evt.message.conversation_id;
+      if (convId !== state.currentConvId) return { next: state, effects };
+      const pinned = evt.type === "message_pinned";
+      const messages = state.messages.map((m) =>
+        m.id === evt.message.id ? { ...m, pinned } : m
+      );
+      const delta = pinned ? 1 : -1;
+      const currentPinned = state.contextStats?.pinned ?? 0;
+      const contextStats = state.contextStats
+        ? { ...state.contextStats, pinned: Math.max(0, currentPinned + delta) }
+        : null;
+      return { next: { ...state, messages, contextStats }, effects };
+    }
+
+    case "context_info": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      return {
+        next: {
+          ...state,
+          contextStats: {
+            total: evt.total_messages,
+            pinned: evt.pinned_messages,
+            pinnedTruncated: evt.pinned_truncated,
+            historyCount: evt.history_count,
+            estimatedTokens: evt.estimated_tokens,
+            strategy: evt.strategy,
+          },
+        },
+        effects,
+      };
+    }
+
+    case "deploy_status": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const content = evt.content as MessageContent;
+      // Update existing deploy message by deploy_id lookup
+      const existingIdx = state.messages.findIndex(
+        (m) =>
+          m.content.type === "deploy_status" &&
+          m.content.deploy_id === evt.deploy_id
+      );
+      if (existingIdx >= 0) {
+        const messages = state.messages.slice();
+        messages[existingIdx] = {
+          ...messages[existingIdx],
+          content: { ...messages[existingIdx].content, ...content },
+        } as Message;
+        return { next: { ...state, messages }, effects };
+      }
+      return { next: state, effects };
+    }
+
+    case "tool_call": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const idx = state.messages.findIndex((m) => m.id === evt.message_id);
+      if (idx < 0) return { next: state, effects };
+      const messages = state.messages.slice();
+      const current = messages[idx];
+      const nextCall: ToolCallInfo = {
+        toolName: evt.tool_name,
+        status: evt.status,
+        ...(evt.result_summary !== undefined ? { resultSummary: evt.result_summary } : {}),
+      };
+      const toolCalls = upsertToolCall(current.toolCalls, nextCall);
+      messages[idx] = { ...current, toolCalls };
+      return { next: { ...state, messages }, effects };
+    }
+
+    case "anim_agent_created": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const existing = state.agentGraphNodes[evt.agent.id];
+      const status = state.agentGraphStatuses[evt.agent.id] ?? existing?.status ?? "IDLE";
+      const node: AgentGraphNode = {
+        id: evt.agent.id,
+        role: evt.agent.role,
+        parentId: evt.agent.parentId,
+        status,
+        domain: evt.agent.domain || undefined,
+        agentName: evt.agent.agentName || undefined,
+      };
+      return {
+        next: {
+          ...state,
+          agentGraphNodes: { ...state.agentGraphNodes, [node.id]: node },
+        },
+        effects,
+      };
+    }
+
+    case "anim_agent_status": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const existing = state.agentGraphNodes[evt.agentId];
+      const nodes = existing
+        ? {
+            ...state.agentGraphNodes,
+            [evt.agentId]: { ...existing, status: evt.status },
+          }
+        : state.agentGraphNodes;
+      return {
+        next: {
+          ...state,
+          agentGraphStatuses: { ...state.agentGraphStatuses, [evt.agentId]: evt.status },
+          agentGraphNodes: nodes,
+        },
+        effects,
+      };
+    }
+
+    case "anim_beam": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const beam: AgentGraphBeam = {
+        id: evt.beam.id,
+        fromId: evt.beam.fromId,
+        toId: evt.beam.toId,
+        kind: evt.beam.kind,
+        label: evt.beam.label || undefined,
+        createdAt: evt.ts,
+      };
+      return {
+        next: {
+          ...state,
+          agentGraphBeams: [...state.agentGraphBeams.filter((b) => b.id !== beam.id), beam].slice(-100),
+        },
+        effects,
+      };
+    }
+
+    case "anim_event": {
+      if (evt.conversation_id !== state.currentConvId) return { next: state, effects };
+      const item: AgentGraphEvent = {
+        id: evt.event.id,
+        kind: evt.event.kind,
+        label: evt.event.label,
+        at: evt.ts,
+      };
+      return {
+        next: {
+          ...state,
+          agentGraphEvents: [item, ...state.agentGraphEvents.filter((e) => e.id !== item.id)].slice(0, 80),
+        },
+        effects,
+      };
+    }
+
+    case "workspace_file_changed": {
+      // File changed in workspace — no state mutation needed,
+      // the WorkspacePanel listens for new messages to auto-refresh.
+      return { next: state, effects };
+    }
+
+    default:
+      // pong / echo / usage 等不更新 UI 状态。
+      return { next: state, effects };
+  }
+}
+
+/** 初始状态工厂，主要给测试用。 */
+export function emptySlice(): ChatSlice {
+  return {
+    serverInfo: null,
+    currentConvId: null,
+    conversations: [],
+    messages: [],
+    streamingMessageIds: [],
+    agentTyping: {},
+    agents: [],
+    tasks: {},
+    contextStats: null,
+    agentGraphNodes: {},
+    agentGraphBeams: [],
+    agentGraphEvents: [],
+    agentGraphStatuses: {},
+  };
+}

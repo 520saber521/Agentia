@@ -1,0 +1,68 @@
+---
+description: AgentHub Adapter 实现硬性规则
+globs: ["server/adapters/**/*.py"]
+alwaysApply: true
+---
+
+# Adapter 规则
+
+Adapter 是 BFF 与外部模型、SDK 或本地 Agent 进程之间的薄边界。它必须稳定、可取消、可测试、无状态，保证上层不被某个供应商协议污染。
+
+## R-A-1 Adapter 必须无会话状态
+
+- Adapter 实例不得保存本次对话的消息历史、partial buffer、当前 message id 或 token 计数。
+- 上下文由调用方传入，输出由调用方消费和持久化。
+- 同一个 Adapter 实例应能并发服务多个会话而不串流。
+
+## R-A-2 输出必须流式 yield
+
+- `send()` 必须返回 `AsyncIterator` 或等价异步流。
+- 即使上游只返回完整文本，也必须按 token、句子或标点切分后 yield。
+- 不允许等待完整响应后一次性返回给 BFF。
+
+## R-A-3 取消必须 return，不得 raise
+
+- 收到 `cancel` 信号后，`send()` 应尽快自然 `return`。
+- 禁止把用户取消作为 `RuntimeError` 或未捕获 `CancelledError` 抛给上层。
+- 如果正在等待上游 IO，必须让 cancel 与 IO 等待可竞争退出。
+
+## R-A-4 错误也必须 yield
+
+- 429、5xx、超时、网络断开、配置缺失等预期错误必须 yield `{type:"error", code, message}`。
+- 错误 chunk 应是该次流的终止信号之一。
+- message 中不得包含密钥、完整请求头或供应商内部敏感内容。
+
+## R-A-5 能力枚举必须稳定
+
+- `capabilities()` 返回 `list[str]`。
+- 允许值仅包括：`text`、`tool_use`、`vision`、`code`、`web_search`、`file`。
+- 新能力必须先更新规格、前端展示和 Orchestrator 分派策略。
+
+## R-A-6 配置由 BFF 注入
+
+- Adapter 内禁止直接读取 `os.environ[...]`。
+- `api_key`、`base_url`、`model`、`endpoint` 必须作为构造参数或配置对象传入。
+- 配置缺失时返回稳定错误，不得泄漏 Python 异常给用户。
+
+## R-A-7 必须注册到工厂
+
+- 新 Adapter 完成后必须注册到 `server/adapters/__init__.py` 的工厂或注册表。
+- BFF 只能通过统一 `build_adapter(...)` 路径创建实例。
+- 禁止在 `main.py`、handler 或 service 中硬编码导入某个 Adapter 类。
+
+## R-A-8 禁止访问数据库和 WebSocket
+
+- Adapter 不得直接读写 ORM、SQLite、本地会话表或 WebSocket。
+- Artifact 写入由 BFF 或 service 层完成。
+- Adapter 可以 yield artifact 意图或内容 chunk，但不决定持久化策略。
+
+## R-A-9 测试最低要求
+
+新增 Adapter 必须覆盖：
+
+- 成功流式输出。
+- 取消能在约定时间内退出。
+- 上游超时。
+- 上游错误或限流。
+- 配置缺失。
+- `capabilities()` 和注册表可用。

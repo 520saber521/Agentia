@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "session": "sess-123",
+  "epoch": 2,
+  "seq": 103,
+  "id": "sess-123-2-103",
+  "agent_instance": "MAIN-01",
+  "from": "MAIN",
+  "to": ["C"],
+  "type": "ask",
+  "action": "assign",
+  "task_id": "FEAT-001-C",
+  "owner": "MAIN",
+  "deadline": 1690003600,
+  "ts": 1690000300,
+  "body_encoding": "json",
+  "body": "{\"task_type\":\"implement\",\"files\":[\"src/router.py\",\"src/state.py\"],\"success_criteria\":[\"Update seq/id rules\",\"Add validation tests\"],\"dependencies\":[\"DOC-20240318-0001\"]}"
+}

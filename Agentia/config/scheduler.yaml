@@ -1,0 +1,297 @@
+# 智能任务调度器配置
+# AgentHub Scheduler Configuration
+
+# ========================================
+# 复杂度判断阈值
+# ========================================
+complexity:
+  # 简单任务的最大文件数
+  simple_max_files: 2
+  # 简单任务的最大领域数
+  simple_max_domains: 1
+  # 复杂任务的最小文件数
+  complex_min_files: 3
+  # 复杂任务的最小领域数
+  complex_min_domains: 2
+  # 复杂度判断分数阈值（>= 此值判定为复杂任务）
+  complexity_threshold: 0.5
+
+# ========================================
+# 专用 Agent 配置
+# ========================================
+agents:
+  A:
+    name: "前端专家"
+    specialty: frontend
+    domains:
+      - frontend
+    patterns:
+      - "*.tsx"
+      - "*.jsx"
+      - "*.css"
+      - "*.scss"
+      - "*.vue"
+      - "src/ui/*"
+      - "src/components/*"
+      - "src/pages/*"
+    skills:
+      - "React"
+      - "Vue"
+      - "CSS"
+      - "UI/UX"
+    prompt_template: "prompts/agent_frontend.txt"
+
+  B:
+    name: "后端专家"
+    specialty: backend
+    domains:
+      - backend
+      - devops
+    patterns:
+      - "*.py"
+      - "src/api/*"
+      - "src/router/*"
+      - "src/services/*"
+      - "src/cli/*"
+    skills:
+      - "Python"
+      - "API"
+      - "业务逻辑"
+    prompt_template: "prompts/agent_backend.txt"
+
+  C:
+    name: "数据专家"
+    specialty: database
+    domains:
+      - database
+    patterns:
+      - "*.sql"
+      - "src/models/*"
+      - "src/storage/*"
+      - "src/state/*"
+      - "migrations/*"
+    skills:
+      - "SQL"
+      - "数据模型"
+      - "ORM"
+    prompt_template: "prompts/agent_database.txt"
+
+  D:
+    name: "辅助专家"
+    specialty: support
+    domains:
+      - test
+      - docs
+      - devops
+    patterns:
+      - "tests/*"
+      - "test/*"
+      - "*_test.py"
+      - "test_*.py"
+      - "docs/*"
+      - "*.md"
+      - "Dockerfile"
+      - ".github/*"
+      - "scripts/*"
+    skills:
+      - "测试"
+      - "文档"
+      - "CI/CD"
+      - "代码审查"
+    is_helper: true
+    prompt_template: "prompts/agent_helper.txt"
+
+# ========================================
+# 领域配置
+# ========================================
+domains:
+  frontend:
+    keywords:
+      - "前端"
+      - "ui"
+      - "界面"
+      - "组件"
+      - "react"
+      - "vue"
+      - "css"
+    default_agent: A
+
+  backend:
+    keywords:
+      - "后端"
+      - "api"
+      - "接口"
+      - "服务"
+      - "路由"
+    default_agent: B
+
+  database:
+    keywords:
+      - "数据库"
+      - "数据"
+      - "模型"
+      - "sql"
+      - "存储"
+    default_agent: C
+
+  test:
+    keywords:
+      - "测试"
+      - "test"
+      - "单元测试"
+    default_agent: D
+
+  docs:
+    keywords:
+      - "文档"
+      - "readme"
+      - "doc"
+    default_agent: D
+
+  devops:
+    keywords:
+      - "部署"
+      - "ci"
+      - "cd"
+      - "docker"
+    default_agent: D
+
+# ========================================
+# 调度配置
+# ========================================
+scheduler:
+  # 并行执行超时时间（秒）
+  parallel_timeout: 3600
+  # 轮询间隔（秒）
+  poll_interval: 1.0
+  # 最大重试次数
+  max_retries: 3
+  # 默认 deadline（秒）
+  default_deadline: 3600
+
+# ========================================
+# 聚合器配置
+# ========================================
+aggregator:
+  # 等待超时（秒）
+  wait_timeout: 3600
+  # 轮询间隔（秒）
+  poll_interval: 1.0
+  # 是否检测文件冲突
+  detect_conflicts: true
+
+# ========================================
+# 任务分解配置
+# ========================================
+decomposer:
+  # 是否自动推断文件
+  auto_infer_files: true
+  # 是否自动生成成功标准
+  auto_success_criteria: true
+  # 最大子任务数
+  max_subtasks: 4
+
+# ========================================
+# Pipeline 流水线配置 (7-Stage Actor-Critic)
+# 借鉴 Cowork Forge 多 Agent 协作架构
+# ========================================
+pipeline:
+  # 是否启用流水线模式（Idea → PRD → Design → Plan → Coding → Check → Delivery）
+  enabled: true
+  # 默认流程: "default" (7 stages) 或 "quick" (4 stages)
+  default_flow: "default"
+  # 是否在失败时停止
+  stop_on_failure: true
+  # 最大用户反馈轮数
+  max_feedback_loops: 5
+  # 阶段失败最大重试次数
+  max_stage_retries: 3
+  # 重试间隔（毫秒）
+  retry_delay_ms: 5000
+  # Actor-Critic 默认最大迭代次数
+  default_max_iterations: 1
+  # Coding 阶段最大迭代次数（允许更多次审查修复）
+  coding_max_iterations: 2
+
+# ========================================
+# Pipeline Stage Agents 配置
+# ========================================
+pipeline_agents:
+  idea:
+    prompt_template: "prompts/agent_idea.txt"
+    temperature: 0.7
+
+  prd_actor:
+    prompt_template: "prompts/agent_prd_actor.txt"
+    temperature: 0.7
+
+  prd_critic:
+    prompt_template: "prompts/agent_prd_critic.txt"
+    temperature: 0.3
+
+  design_actor:
+    prompt_template: "prompts/agent_design_actor.txt"
+    temperature: 0.7
+
+  design_critic:
+    prompt_template: "prompts/agent_design_critic.txt"
+    temperature: 0.3
+
+  plan_actor:
+    prompt_template: "prompts/agent_plan_actor.txt"
+    temperature: 0.7
+
+  plan_critic:
+    prompt_template: "prompts/agent_plan_critic.txt"
+    temperature: 0.3
+
+  coding_actor:
+    prompt_template: "prompts/agent_coding_actor.txt"
+    temperature: 0.7
+
+  coding_critic:
+    prompt_template: "prompts/agent_coding_critic.txt"
+    temperature: 0.3
+
+  check_agent:
+    prompt_template: "prompts/agent_check.txt"
+    temperature: 0.3
+
+  delivery_agent:
+    prompt_template: "prompts/agent_delivery.txt"
+    temperature: 0.5
+
+# ========================================
+# 关键阶段配置（需要人工确认）
+# ========================================
+critical_stages:
+  - idea
+  - prd
+  - design
+  - plan
+  - coding
+
+# ========================================
+# Artifact 预注入配置
+# 每个阶段自动从上下文注入的前序阶段产出物
+# ========================================
+artifact_injection:
+  prd:
+    - idea.md
+  design:
+    - prd.md
+  plan:
+    - design.md
+  coding:
+    - plan.md
+    - design.md
+  check:
+    - prd.md
+    - design.md
+    - plan.md
+  delivery:
+    - idea.md
+    - prd.md
+    - design.md
+    - plan.md
+    - check_report.md

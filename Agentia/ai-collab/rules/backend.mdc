@@ -1,0 +1,75 @@
+---
+description: AgentHub 后端 BFF/Gateway 硬性规则
+globs: ["server/**/*.py"]
+alwaysApply: true
+---
+
+# 后端规则
+
+这些规则约束 `server/` 中的 FastAPI、WebSocket、服务层、数据库和 Artifact 逻辑。后端的职责是连接 Web 前端、会话服务、Agent Adapter、Orchestrator、本地存储和实时事件，不得把职责扩散到前端或外部模型实现中。
+
+## R-B-1 异步优先，禁止阻塞事件循环
+
+- HTTP、数据库、文件、子进程等外部 IO 必须使用异步 API，或显式放入 `asyncio.to_thread(...)`。
+- 禁止在协程中使用 `time.sleep()`；必须使用 `await asyncio.sleep()`。
+- 禁止新增 `requests`；外部 HTTP 调用统一使用 `httpx.AsyncClient`。
+- 大文件读写不得直接堵塞 WebSocket handler。
+
+## R-B-2 路由和 WS handler 不直接写业务规则
+
+- `server/api/*.py` 只做请求解析、权限边界、响应组装。
+- `server/handlers/*.py` 只做 WebSocket 事件编排。
+- 数据库读写、校验、状态变化必须放入 `server/services/*.py`。
+- 如果一个 handler 超过 200 行或出现三段以上业务分支，应拆到 service。
+
+## R-B-3 数据库访问必须集中在服务层
+
+- API 路由和 WS handler 禁止直接散落 `select(...)`、`session.add(...)`、`commit()`。
+- ORM 模型只表达数据结构，不承载复杂业务流程。
+- 时间戳必须由服务层显式生成，避免依赖 flush 后自动回填。
+
+## R-B-4 WebSocket 发送只能走连接封装
+
+- 向客户端发送事件必须走项目已有连接封装或 Hub 方法，不得绕过队列直接 `ws.send_json(...)`。
+- 同一连接必须保持单写者语义，避免并发协程抢写导致事件乱序。
+- 事件必须携带足够路由字段，例如 `conversation_id`、`message_id`、`sender_id`、`trace_id`。
+
+## R-B-5 取消、超时和断连是契约
+
+- 触发 Agent 的任务必须持有可取消状态。
+- 用户取消、WebSocket 断开、服务端超时都必须停止对应 in-flight 任务。
+- 取消指定 `message_id` 时，只能影响对应 Agent 消息。
+- 已经推送给前端的 partial 内容必须尽量持久化，不能静默丢弃。
+
+## R-B-6 错误协议稳定
+
+- 可预期失败必须返回或推送稳定错误码，不得让未捕获异常穿透到事件循环。
+- 错误事件格式使用 `{type:"error", code, message, message_id?, conversation_id?}`。
+- `code` 使用小写蛇形枚举，例如 `bad_request`、`not_found`、`invalid_content`、`timeout`、`upstream_error`、`artifact_conflict`。
+- 后端日志不得输出 API key、用户密钥、完整 Authorization 头。
+
+## R-B-7 内容 schema 必须服务端校验
+
+- 写入 `message.content` 前必须通过 `server/services/content_schema.py` 或等价集中校验。
+- 新增 `content.type` 时，必须同步更新后端校验、前端类型、渲染组件和测试。
+- 大型正文不得直接塞入消息 JSON；必须落为 Artifact，消息只保存引用和预览元数据。
+
+## R-B-8 Artifact 写入必须可追溯
+
+- Artifact 必须包含 `conversation_id`、`kind`、`title`、`mime_type`、`storage_path`、版本或 `parent_id`。
+- 保存新版本不得覆盖旧版本。
+- Diff 应用必须校验 base artifact，冲突返回 `artifact_conflict`。
+- 文件路径必须限制在项目配置的 artifact 根目录内。
+
+## R-B-9 Orchestrator 与 Adapter 边界清晰
+
+- Orchestrator 负责拆解、分派、聚合和任务状态。
+- Adapter 只负责把上下文交给外部模型并流式返回 chunk。
+- BFF 不得把某个外部模型的特殊字段泄漏到通用消息协议中；必须转换为统一事件。
+
+## R-B-10 测试要求
+
+- 新增 REST endpoint：至少覆盖成功路径和一个校验失败路径。
+- 新增 WS 事件：至少覆盖事件输入、状态变化、输出事件。
+- 新增 service：至少覆盖核心业务分支和失败分支。
+- 新增 Adapter 或 content type：必须按对应 Skill 的测试清单执行。

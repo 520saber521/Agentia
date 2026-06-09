@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "session": "sess-123",
+  "epoch": 2,
+  "seq": 106,
+  "id": "sess-123-2-106",
+  "agent_instance": "C-01",
+  "from": "C",
+  "to": ["MAIN"],
+  "type": "fail",
+  "task_id": "FEAT-001-C",
+  "corr": "sess-123-2-103",
+  "ts": 1690000600,
+  "body_encoding": "json",
+  "body": "{\"reason\":\"missing_dependency\",\"blocked_by\":[\"DOC-20240318-0001\"]}"
+}
