@@ -1,5 +1,8 @@
 # Agentia — 多 Agent 协作平台
 
+（一）项目沉淀出ai协作的Spec、skill、rules等协作规范在https://github.com/520saber521/Agentia/tree/main/ai-collab
+
+（二）已部署生成的产物样例https://6a258dd4926549e469893760--hilarious-twilight-b6a787.netlify.app/
 Agentia 是一个以 **IM 聊天为核心交互范式**的多 Agent 协作平台。用户可以像使用飞书或微信一样新建会话、选择 Agent、发送消息，在群聊中通过 `@` 提及多个 Agent，让它们并行或串行协作完成复杂任务。
 
 ## 目录
